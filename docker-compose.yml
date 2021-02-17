@@ -33,9 +33,9 @@ services:
   # Nginx (Web Server)
   # ------------------------------------------------------------
   nginx:
-    image: ghcr.io/aliasproject/nginx
+    image: aliasproject/nginx
     volumes:
-      # - certs:/etc/nginx/ssl
+      - alias-certs:/etc/nginx/ssl
       - .:/app:ro
     ports:
       - 80:80
@@ -52,7 +52,7 @@ services:
   # MySQL (Database)
   # ------------------------------------------------------------
   mysql:
-    image: mysql:${MYSQL_SERVER}
+    image: mysql:${MYSQL_SERVER:-8.0}
     restart: always
     environment:
       - MYSQL_ROOT_PASSWORD
@@ -62,7 +62,7 @@ services:
     networks:
       - dev-network
     volumes:
-      - alias-mysql-${MYSQL_SERVER}:/var/lib/mysql
+      - alias-mysql-${MYSQL_SERVER:-8.0}:/var/lib/mysql
     depends_on:
       - dns
       - php
@@ -83,10 +83,15 @@ services:
 
 volumes:
   # ------------------------------------------------------------
+  # NGINX
+  # ------------------------------------------------------------
+  alias-certs:
+    
+  # ------------------------------------------------------------
   # MySQL
   # ------------------------------------------------------------
   alias-mysql-8.0:
-
+    
 networks:
   dev-network:
     driver: bridge
