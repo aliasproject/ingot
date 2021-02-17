@@ -33,7 +33,7 @@ services:
   # Nginx (Web Server)
   # ------------------------------------------------------------
   nginx:
-    image: aliasproject/nginx
+    image: ghcr.io/aliasproject/nginx
     volumes:
       - alias-certs:/etc/nginx/ssl
       - ${PROJECT_ROOT:-./}:/home/alias:ro
