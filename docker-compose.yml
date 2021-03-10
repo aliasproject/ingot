@@ -6,7 +6,7 @@ services:
   # ------------------------------------------------------------
   dns:
     image: ghcr.io/aliasproject/dnsmasq:latest
-    restart: always
+    restart: unless-stopped
     ports:
       - "5354:53/udp"
     networks:
@@ -16,26 +16,29 @@ services:
       - "--server=1.1.1.1" # Forward to Cloudflare DNS
       - "--server=8.8.8.8" # Forward to Google DNS.
       - "--log-facility=-" # Logs
-    
+
   # ------------------------------------------------------------
   # PHP
   # ------------------------------------------------------------
   php:
     image: ghcr.io/aliasproject/php:8.0-dev
+    restart: unless-stopped
     volumes:
       - ${PROJECT_ROOT:-./}:/home/alias
     networks:
       - dev-network
     depends_on:
       - dns
-         
+
   # ------------------------------------------------------------
   # Nginx (Web Server)
   # ------------------------------------------------------------
   nginx:
-    image: ghcr.io/aliasproject/nginx
+    image: aliasproject/nginx
+    restart: unless-stopped
     volumes:
       - alias-certs:/etc/nginx/ssl
+      - alias-vhosts:/etc/nginx/conf.d
       - ${PROJECT_ROOT:-./}:/home/alias:ro
     ports:
       - 80:80
@@ -49,11 +52,27 @@ services:
       - php
 
   # ------------------------------------------------------------
+  # Watchman (Vhost Gen)
+  # ------------------------------------------------------------
+  watchman:
+    image: aliasproject/watchman
+    restart: unless-stopped
+    volumes:
+      - alias-certs:/certs
+      - alias-vhosts:/vhosts
+      - ${PROJECT_ROOT:-./}:/home/alias:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - dev-network
+    depends_on:
+      - nginx
+
+  # ------------------------------------------------------------
   # MySQL (Database)
   # ------------------------------------------------------------
   mysql:
     image: mysql:${MYSQL_SERVER:-8.0}
-    restart: always
+    restart: unless-stopped
     environment:
       - MYSQL_ROOT_PASSWORD
       - MYSQL_ALLOW_EMPTY_PASSWORD=yes
@@ -86,12 +105,13 @@ volumes:
   # NGINX
   # ------------------------------------------------------------
   alias-certs:
-    
+  alias-vhosts:
+
   # ------------------------------------------------------------
   # MySQL
   # ------------------------------------------------------------
   alias-mysql-8.0:
-    
+
 networks:
   dev-network:
     driver: bridge
