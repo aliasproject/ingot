@@ -45,8 +45,6 @@ services:
       - 443:443
     networks:
       - dev-network
-    environment:
-      - DOMAIN=win.test
     depends_on:
       - dns
       - php
@@ -92,7 +90,6 @@ services:
   # ------------------------------------------------------------
   mail:
     image: mailhog/mailhog:latest
-    container_name: "mail"
     restart: on-failure
     ports:
       - 1025:1025
