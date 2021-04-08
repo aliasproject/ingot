@@ -1,114 +1,120 @@
 version: "3.8"
 
 services:
-  # ------------------------------------------------------------
-  # Dnsmasq (DNS Server)
-  # ------------------------------------------------------------
-  dns:
-    image: ghcr.io/aliasproject/dnsmasq:latest
-    restart: unless-stopped
-    ports:
-      - "5354:53/udp"
-    networks:
-      - dev-network
-    command:
-      - "--address=/test/127.0.0.1"
-      - "--server=1.1.1.1" # Forward to Cloudflare DNS
-      - "--server=8.8.8.8" # Forward to Google DNS.
-      - "--log-facility=-" # Logs
+    # ------------------------------------------------------------
+    # Dnsmasq (DNS Server)
+    # ------------------------------------------------------------
+    dns:
+        image: ghcr.io/aliasproject/dnsmasq:latest
+        restart: unless-stopped
+        ports:
+            - "5354:53/udp"
+        networks:
+            - internal
+        # volumes:
+        # - /etc/resolver:/config/resolver
+        command:
+            - "--address=/test/127.0.0.1"
+            - "--server=1.1.1.1" # Forward to Cloudflare DNS
+            - "--server=8.8.8.8" # Forward to Google DNS.
+            - "--log-facility=-" # Logs
 
-  # ------------------------------------------------------------
-  # PHP
-  # ------------------------------------------------------------
-  php:
-    image: ghcr.io/aliasproject/php:8.0-dev
-    restart: unless-stopped
-    volumes:
-      - ${PROJECT_ROOT:-./}:/home/alias
-    networks:
-      - dev-network
-    depends_on:
-      - dns
+    # ------------------------------------------------------------
+    # PHP
+    # ------------------------------------------------------------
+    php:
+        image: ghcr.io/aliasproject/php:8.0-dev
+        restart: unless-stopped
+        volumes:
+            - ${PROJECT_ROOT:-./}:/home/alias
+        networks:
+            - internal
+        depends_on:
+            - dns
 
-  # ------------------------------------------------------------
-  # Nginx (Web Server)
-  # ------------------------------------------------------------
-  nginx:
-    image: aliasproject/nginx
-    restart: unless-stopped
-    volumes:
-      - alias-certs:/etc/nginx/ssl
-      - alias-vhosts:/etc/nginx/conf.d
-      - ${PROJECT_ROOT:-./}:/home/alias:ro
-    ports:
-      - 80:80
-      - 443:443
-    networks:
-      - dev-network
-    depends_on:
-      - dns
-      - php
+    # ------------------------------------------------------------
+    # Nginx (Web Server)
+    # ------------------------------------------------------------
+    nginx:
+        image: ghcr.io/aliasproject/nginx
+        restart: unless-stopped
+        volumes:
+            - alias-certs:/etc/nginx/ssl
+            - alias-vhosts:/etc/nginx/conf.d
+            - ${PROJECT_ROOT:-./}:/home/alias:ro
+        ports:
+            - 80:80
+            - 443:443
+        networks:
+            - dev-network
+            - internal
+        depends_on:
+            - dns
+            - php
 
-  # ------------------------------------------------------------
-  # Watchman (Vhost Gen)
-  # ------------------------------------------------------------
-  watchman:
-    image: aliasproject/watchman
-    restart: unless-stopped
-    volumes:
-      - alias-certs:/certs
-      - alias-vhosts:/vhosts
-      - ${PROJECT_ROOT:-./}:/home/alias:ro
-      - /var/run/docker.sock:/var/run/docker.sock
-    networks:
-      - dev-network
-    depends_on:
-      - nginx
+    # ------------------------------------------------------------
+    # Watchman (Vhost Gen)
+    # ------------------------------------------------------------
+    watchman:
+        image: ghcr.io/aliasproject/watchman
+        restart: unless-stopped
+        volumes:
+            - alias-certs:/certs
+            - alias-vhosts:/vhosts
+            - .:/public
+            - ${PROJECT_ROOT:-./}:/home/alias:ro
+            - /var/run/docker.sock:/var/run/docker.sock
+        networks:
+            - internal
+        depends_on:
+            - nginx
 
-  # ------------------------------------------------------------
-  # MySQL (Database)
-  # ------------------------------------------------------------
-  mysql:
-    image: mysql:${MYSQL_SERVER:-8.0}
-    restart: unless-stopped
-    environment:
-      - MYSQL_ROOT_PASSWORD
-      - MYSQL_ALLOW_EMPTY_PASSWORD=yes
-    ports:
-      - 3306:3306
-    networks:
-      - dev-network
-    volumes:
-      - alias-mysql-${MYSQL_SERVER:-8.0}:/var/lib/mysql
-    depends_on:
-      - dns
-      - php
-      - nginx
+    # ------------------------------------------------------------
+    # MySQL (Database)
+    # ------------------------------------------------------------
+    mysql:
+        image: mysql:${MYSQL_SERVER:-8.0}
+        restart: unless-stopped
+        environment:
+            - MYSQL_ROOT_PASSWORD
+            - MYSQL_ALLOW_EMPTY_PASSWORD=yes
+        ports:
+            - 3306:3306
+        networks:
+            - internal
+        volumes:
+            - alias-mysql-${MYSQL_SERVER:-8.0}:/var/lib/mysql
+        depends_on:
+            - dns
+            - php
+            - nginx
 
-  # ------------------------------------------------------------
-  # Mailhog (Mail)
-  # ------------------------------------------------------------
-  mail:
-    image: mailhog/mailhog:latest
-    restart: on-failure
-    ports:
-      - 1025:1025
-      - 8025:8025
-    networks:
-      - dev-network
+    # ------------------------------------------------------------
+    # Mailhog (Mail)
+    # ------------------------------------------------------------
+    mail:
+        image: mailhog/mailhog:latest
+        restart: on-failure
+        ports:
+            - 1025:1025
+            - 8025:8025
+        networks:
+            - internal
 
 volumes:
-  # ------------------------------------------------------------
-  # NGINX
-  # ------------------------------------------------------------
-  alias-certs:
-  alias-vhosts:
+    # ------------------------------------------------------------
+    # NGINX
+    # ------------------------------------------------------------
+    alias-certs:
+    alias-vhosts:
 
-  # ------------------------------------------------------------
-  # MySQL
-  # ------------------------------------------------------------
-  alias-mysql-8.0:
+    # ------------------------------------------------------------
+    # MySQL
+    # ------------------------------------------------------------
+    alias-mysql-8.0:
 
 networks:
-  dev-network:
-    driver: bridge
+    internal:
+        driver: bridge
+    dev-network:
+        driver: bridge
