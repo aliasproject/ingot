@@ -81,6 +81,7 @@ services:
         ports:
             - 3306:3306
         networks:
+            - dev-network
             - internal
         volumes:
             - alias-mysql-${MYSQL_SERVER:-8.0}:/var/lib/mysql
