@@ -25,7 +25,7 @@ services:
   # ------------------------------------------------------------
   php:
     container_name: devbox_php
-    image: ghcr.io/aliasproject/php:7.4-fpm
+    image: ghcr.io/aliasproject/php:8.0-fpm
     restart: unless-stopped
     volumes:
       - ${PROJECT_ROOT:-./}:/home/alias
