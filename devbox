@@ -1,46 +1,55 @@
 #!/usr/bin/env bash
 
+set -e
+
 # Set environment variables
 export APP_PORT=${APP_PORT:-80}
 export DB_PORT=${DB_PORT:-3306}
 
-if [ -d "$HOME/.devbox" -a -f "/usr/local/bin/devbox" ]; then
-    if [ $# -gt 0 ]; then
-        COMPOSE="docker compose -f $HOME/.devbox/docker-compose.yml"
-        DIR=$(pwd | sed 's/.*\///')
-        DIR_EXISTS=$($COMPOSE exec php sh -c "test -d /home/alias/$DIR && echo true")
-        APP_EXEC="$COMPOSE exec -w /home/alias/$DIR php sh -c"
+VERSION=0.1.0
 
-        if [ $DIR_EXISTS ]; then
-            # Artisan
-            if [ "$1" == "artisan" ]; then
-                shift 1
-                $APP_EXEC "php artisan $@"
-                exit 0
-            fi
-
-            # Composer
-            if [ "$1" == "composer" ]; then
-                shift 1
-                $APP_EXEC "composer $@"
-                exit 0
-            fi
-
-            # Composer
-            if [ "$1" == "npm" ]; then
-                shift 1
-                $APP_EXEC "npm $@"
-                exit 0
-            fi
-
-            $APP_EXEC "$(echo $@)"
-        else
-            echo "The directory $DIR doesn't exist!"
-
-            $COMPOSE "$@"
-        fi
+if [ -d "$HOME/.devbox" ] && [ -f "/usr/local/bin/devbox" ]; then
+    if [ "$1" == "-v" ] || [ "$1" == "--version" ]; then
+        echo $VERSION
+        exit 0
     else
-        $COMPOSE ps
+        if [ $# -gt 0 ]; then
+            COMPOSE="docker compose -f $HOME/.devbox/docker-compose.yml"
+            DIR=$(pwd | sed 's/.*\///')
+            DIR_EXISTS=$($COMPOSE exec php sh -c "test -d /home/alias/$DIR && echo true")
+            APP_EXEC="$COMPOSE exec -w /home/alias/$DIR php sh -c"
+
+            if [ $DIR_EXISTS ]; then
+                # Artisan
+                if [ "$1" == "artisan" ]; then
+                    shift 1
+                    $APP_EXEC "php artisan $@"
+                    exit 0
+                fi
+
+                # Composer
+                if [ "$1" == "composer" ]; then
+                    shift 1
+                    $APP_EXEC "composer $@"
+                    exit 0
+                fi
+
+                # Composer
+                if [ "$1" == "npm" ]; then
+                    shift 1
+                    $APP_EXEC "npm $@"
+                    exit 0
+                fi
+
+                $APP_EXEC "$(echo $@)"
+            else
+                echo "The directory $DIR doesn't exist!"
+
+                $COMPOSE "$@"
+            fi
+        else
+            $COMPOSE ps
+        fi
     fi
 else
     echo "devbox is not installed."
