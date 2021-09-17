@@ -40,8 +40,8 @@ services:
         image: ghcr.io/aliasproject/nginx:latest
         restart: unless-stopped
         volumes:
-            - alias-certs:/etc/nginx/ssl
-            - alias-vhosts:/etc/nginx/conf.d
+            - certs:/etc/nginx/ssl
+            - vhosts:/etc/nginx/conf.d
             - ${PROJECT_ROOT:-./}:/home/alias:ro
         ports:
             - 80:80
@@ -64,8 +64,8 @@ services:
             - DOCKER_USER=mike
             - DOCKER_TOKEN=test
         volumes:
-            - alias-certs:/certs
-            - alias-vhosts:/vhosts
+            - certs:/certs
+            - vhosts:/vhosts
             - .:/public
             - ${PROJECT_ROOT:-./}:/home/alias:ro
             - /var/run/docker.sock:/var/run/docker.sock
@@ -73,12 +73,15 @@ services:
             - internal
         depends_on:
             - nginx
+        healthcheck:
+            test: ash -c "[ -f /certs/AliasProjectCASelfSigned.pem ]"
 
     # ------------------------------------------------------------
     # MySQL (Database)
     # ------------------------------------------------------------
     mysql:
         container_name: devbox_mysql
+        platform: linux/x86_64
         image: mysql:${MYSQL_SERVER:-8.0}
         restart: unless-stopped
         environment:
@@ -90,7 +93,7 @@ services:
             - dev-network
             - internal
         volumes:
-            - alias-mysql-${MYSQL_SERVER:-8.0}:/var/lib/mysql
+            - mysql-${MYSQL_SERVER:-8.0}:/var/lib/mysql
         depends_on:
             - dns
             - php
@@ -113,13 +116,13 @@ volumes:
     # ------------------------------------------------------------
     # NGINX
     # ------------------------------------------------------------
-    alias-certs:
-    alias-vhosts:
+    certs:
+    vhosts:
 
     # ------------------------------------------------------------
     # MySQL
     # ------------------------------------------------------------
-    alias-mysql-8.0:
+    mysql-8.0:
 
 networks:
     internal:
