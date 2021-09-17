@@ -1,130 +1,128 @@
 version: "3.8"
 
 services:
-  # ------------------------------------------------------------
-  # Dnsmasq (DNS Server)
-  # ------------------------------------------------------------
-  dns:
-    container_name: devbox_dns
-    image: ghcr.io/aliasproject/dnsmasq:latest
-    restart: unless-stopped
-    ports:
-      - "5354:53/udp"
-    networks:
-      - internal
-    # volumes:
-    # - /etc/resolver:/config/resolver
-    command:
-      - "--address=/test/127.0.0.1"
-      - "--server=1.1.1.1" # Forward to Cloudflare DNS
-      - "--server=8.8.8.8" # Forward to Google DNS.
-      - "--log-facility=-" # Logs
+    # ------------------------------------------------------------
+    # Dnsmasq (DNS Server)
+    # ------------------------------------------------------------
+    dns:
+        container_name: devbox_dns
+        image: ghcr.io/aliasproject/dnsmasq:latest
+        restart: unless-stopped
+        ports:
+            - "5354:53/udp"
+        networks:
+            - internal
+        # volumes:
+        # - /etc/resolver:/config/resolver
+        command:
+            - "--address=/test/127.0.0.1"
+            - "--server=1.1.1.1" # Forward to Cloudflare DNS
+            - "--server=8.8.8.8" # Forward to Google DNS.
+            - "--log-facility=-" # Logs
 
-  # ------------------------------------------------------------
-  # PHP
-  # ------------------------------------------------------------
-  php:
-    container_name: devbox_php
-    image: ghcr.io/aliasproject/php:8.0-fpm
-    restart: unless-stopped
-    volumes:
-      - ${PROJECT_ROOT:-./}:/home/alias
-    networks:
-      - internal
-    depends_on:
-      - dns
+    # ------------------------------------------------------------
+    # PHP
+    # ------------------------------------------------------------
+    php:
+        container_name: devbox_php
+        image: ghcr.io/aliasproject/php:8.0-fpm
+        restart: unless-stopped
+        volumes:
+            - ${PROJECT_ROOT:-./}:/home/alias
+        networks:
+            - internal
 
-  # ------------------------------------------------------------
-  # Nginx (Web Server)
-  # ------------------------------------------------------------
-  nginx:
-    container_name: devbox_nginx
-    image: ghcr.io/aliasproject/nginx:latest
-    restart: unless-stopped
-    volumes:
-      - alias-certs:/etc/nginx/ssl
-      - alias-vhosts:/etc/nginx/conf.d
-      - ${PROJECT_ROOT:-./}:/home/alias:ro
-    ports:
-      - 80:80
-      - 443:443
-    networks:
-      - dev-network
-      - internal
-    depends_on:
-      - dns
-      - php
+    # ------------------------------------------------------------
+    # Nginx (Web Server)
+    # ------------------------------------------------------------
+    nginx:
+        container_name: devbox_nginx
+        image: ghcr.io/aliasproject/nginx:latest
+        restart: unless-stopped
+        volumes:
+            - alias-certs:/etc/nginx/ssl
+            - alias-vhosts:/etc/nginx/conf.d
+            - ${PROJECT_ROOT:-./}:/home/alias:ro
+        ports:
+            - 80:80
+            - 443:443
+        networks:
+            - dev-network
+            - internal
+        depends_on:
+            - dns
+            - php
 
-  # ------------------------------------------------------------
-  # Watchman (Vhost Gen)
-  # ------------------------------------------------------------
-  watchman:
-    container_name: devbox_watchman
-    image: ghcr.io/aliasproject/watchman:latest
-    restart: unless-stopped
-    environment:
-      - DOCKER_USER=mike
-      - DOCKER_TOKEN=test
-    volumes:
-      - alias-certs:/certs
-      - alias-vhosts:/vhosts
-      - .:/public
-      - ${PROJECT_ROOT:-./}:/home/alias:ro
-      - /var/run/docker.sock:/var/run/docker.sock
-    networks:
-      - internal
-    depends_on:
-      - nginx
+    # ------------------------------------------------------------
+    # Watchman (Vhost Gen)
+    # ------------------------------------------------------------
+    watchman:
+        container_name: devbox_watchman
+        image: ghcr.io/aliasproject/watchman:latest
+        restart: unless-stopped
+        environment:
+            - DOCKER_USER=mike
+            - DOCKER_TOKEN=test
+        volumes:
+            - alias-certs:/certs
+            - alias-vhosts:/vhosts
+            - .:/public
+            - ${PROJECT_ROOT:-./}:/home/alias:ro
+            - /var/run/docker.sock:/var/run/docker.sock
+        networks:
+            - internal
+        depends_on:
+            - nginx
 
-  # ------------------------------------------------------------
-  # MySQL (Database)
-  # ------------------------------------------------------------
-  mysql:
-    container_name: devbox_mysql
-    image: mysql:${MYSQL_SERVER:-8.0}
-    restart: unless-stopped
-    environment:
-      - MYSQL_ROOT_PASSWORD=""
-      - MYSQL_ALLOW_EMPTY_PASSWORD=yes
-    ports:
-      - 3306:3306
-    networks:
-      - dev-network
-      - internal
-    volumes:
-      - alias-mysql-${MYSQL_SERVER:-8.0}:/var/lib/mysql
-    depends_on:
-      - dns
-      - php
-      - nginx
+    # ------------------------------------------------------------
+    # MySQL (Database)
+    # ------------------------------------------------------------
+    mysql:
+        container_name: devbox_mysql
+        image: mysql:${MYSQL_SERVER:-8.0}
+        restart: unless-stopped
+        environment:
+            - MYSQL_ROOT_PASSWORD=""
+            - MYSQL_ALLOW_EMPTY_PASSWORD=yes
+        ports:
+            - 3306:3306
+        networks:
+            - dev-network
+            - internal
+        volumes:
+            - alias-mysql-${MYSQL_SERVER:-8.0}:/var/lib/mysql
+        depends_on:
+            - dns
+            - php
+            - nginx
 
-  # ------------------------------------------------------------
-  # Mailhog (Mail)
-  # ------------------------------------------------------------
-  mail:
-    container_name: devbox_mail
-    image: mailhog/mailhog:latest
-    restart: on-failure
-    ports:
-      - 1025:1025
-      - 8025:8025
-    networks:
-      - internal
+    # ------------------------------------------------------------
+    # Mailhog (Mail)
+    # ------------------------------------------------------------
+    mail:
+        container_name: devbox_mail
+        image: mailhog/mailhog:latest
+        restart: on-failure
+        ports:
+            - 1025:1025
+            - 8025:8025
+        networks:
+            - internal
 
 volumes:
-  # ------------------------------------------------------------
-  # NGINX
-  # ------------------------------------------------------------
-  alias-certs:
-  alias-vhosts:
+    # ------------------------------------------------------------
+    # NGINX
+    # ------------------------------------------------------------
+    alias-certs:
+    alias-vhosts:
 
-  # ------------------------------------------------------------
-  # MySQL
-  # ------------------------------------------------------------
-  alias-mysql-8.0:
+    # ------------------------------------------------------------
+    # MySQL
+    # ------------------------------------------------------------
+    alias-mysql-8.0:
 
 networks:
-  internal:
-    driver: bridge
-  dev-network:
-    driver: bridge
+    internal:
+        driver: bridge
+    dev-network:
+        driver: bridge
