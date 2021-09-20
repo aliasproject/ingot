@@ -91,12 +91,8 @@ else
             esac
         done
 
-        # Start environment
-        echo "Starting Containers..."
-        $COMPOSE up -d
-
         # Configure DNS
-        echo "Configuring DNS"
+        echo "Configuring DNS..."
         if [ ! -d "/etc/resolver" ]; then
             sudo mkdir /etc/resolver
         fi
@@ -105,8 +101,13 @@ else
            echo -e "port 5354\nnameserver 127.0.0.1" | sudo tee -a /etc/resolver/test > /dev/null
         fi
 
+        # Start environment
+        echo "Starting Containers..."
+        $COMPOSE up -d
+
         # Wait for Watchman container to start
-        while [ "`docker inspect -f {{.State.Health.Status}} devbox_watchman`" != "healthy" ]; do echo "Waiting."; sleep 0.1; done
+        echo "Preparing sites..."
+        while [ "`docker inspect -f {{.State.Health.Status}} devbox_watchman`" != "healthy" ]; do sleep 0.1; done
 
         # Trust SSL Root Authority
         echo "Trusting Certificate"

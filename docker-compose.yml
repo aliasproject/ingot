@@ -81,11 +81,10 @@ services:
     # ------------------------------------------------------------
     mysql:
         container_name: devbox_mysql
-        platform: linux/x86_64
         image: mysql:${MYSQL_SERVER:-8.0}
         restart: unless-stopped
         environment:
-            - MYSQL_ROOT_PASSWORD=""
+            - MYSQL_ROOT_PASSWORD=
             - MYSQL_ALLOW_EMPTY_PASSWORD=yes
         ports:
             - 3306:3306
@@ -123,6 +122,7 @@ volumes:
     # MySQL
     # ------------------------------------------------------------
     mysql-8.0:
+    mysql-5.7:
 
 networks:
     internal:
