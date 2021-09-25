@@ -12,36 +12,35 @@ if [ -d "$HOME/.devbox" ] && [ -f "/usr/local/bin/devbox" ]; then
         exit 0
     else
         if [ $# -gt 0 ]; then
-            if [ $DIR_EXISTS ]; then
-                DIR_EXISTS=$($COMPOSE exec php sh -c "test -d /home/alias/$DIR && echo true")
-                APP_EXEC="$COMPOSE exec -w /home/alias/$DIR php sh -c"
+            DIR_EXISTS=$($COMPOSE exec php sh -c "test -d /home/alias/$DIR && echo true")
+            APP_EXEC="$COMPOSE exec -w /home/alias/$DIR php sh -c"
 
+            if [ $DIR_EXISTS ]; then
                 # Artisan
                 if [ "$1" == "artisan" ]; then
                     shift 1
-                    $APP_EXEC "php artisan $@"
+                    $APP_EXEC "php artisan $(echo $@)"
                     exit 0
 
 
                 # Composer
                 elif [ "$1" == "composer" ]; then
                     shift 1
-                    $APP_EXEC "composer $@"
+                    $APP_EXEC "composer $(echo $@)"
                     exit 0
 
 
                 # Composer
                 elif [ "$1" == "npm" ]; then
                     shift 1
-                    $APP_EXEC "npm $@"
+                    $APP_EXEC "npm $(echo $@)"
                     exit 0
 
                 else
-                    echo "?????"
                     $APP_EXEC "$(echo $@)"
                 fi
             else
-                $COMPOSE "$@"
+                $COMPOSE "$(echo $@)"
             fi
         else
             $COMPOSE ps
@@ -115,6 +114,10 @@ else
 
         # macOS
         sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain $HOME/.devbox/AliasProjectCASelfSigned.pem
+
+        # Installing Composer
+        echo "Installing Composer"
+        $COMPOSE exec php sh -c "wget https://getcomposer.org/composer-stable.phar -O /usr/local/bin/composer && chmod +x /usr/local/bin/composer"
 
         echo "devbox installed!"
 
