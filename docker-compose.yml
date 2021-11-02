@@ -33,18 +33,6 @@ services:
       - internal
 
   # ------------------------------------------------------------
-  # PHP7
-  # ------------------------------------------------------------
-  php7:
-    container_name: devbox_php7
-    image: ghcr.io/aliasproject/php:7.4-fpm
-    restart: unless-stopped
-    volumes:
-      - ${PROJECT_ROOT:-./}:/home/alias
-    networks:
-      - internal
-
-  # ------------------------------------------------------------
   # Nginx (Web Server)
   # ------------------------------------------------------------
   nginx:
