@@ -2,17 +2,28 @@
 
 set -e
 
-VERSION=0.1.0
+VERSION=0.2.0
 COMPOSE="docker compose -f $HOME/.devbox/docker-compose.yml"
-DIR=$(pwd | sed 's/.*\///')
 
 if [ -d "$HOME/.devbox" ] && [ -f "/usr/local/bin/devbox" ]; then
+    # Set ENV Vars
+    source ~/.devbox/env_vars
+    
+    # Exit if not inside project directory
+    case $PWD/ in
+      ${DEVBOX_PROJECT_ROOT}*) ;;
+      *) echo "Please try again from inside projects directory: ${DEVBOX_PROJECT_ROOT}"; exit;;
+    esac
+    
+    # Set current path inside Project Root
+    DIR=${PWD#*$DEVBOX_PROJECT_ROOT}
+    
     if [ "$1" == "-v" ] || [ "$1" == "--version" ]; then
         echo $VERSION
         exit 0
     else
         if [ $# -gt 0 ]; then
-            DIR_EXISTS=$($COMPOSE exec php sh -c "test -d /home/alias/$DIR && echo true")
+            DIR_EXISTS=$($COMPOSE exec php sh -c "test -d /home/alias/${DIR} && echo true")
             APP_EXEC="$COMPOSE exec -w /home/alias/$DIR php sh -c"
 
             if [ $DIR_EXISTS ]; then
@@ -64,11 +75,13 @@ else
 
         # Projects Directory
         while true; do
-          read -erp "Please enter the path to your projects directory: " PROJECT_ROOT
-          if [[ "$PROJECT_ROOT"  != "" ]]
+          read -erp "Please enter the path to your projects directory: " DEVBOX_PROJECT_ROOT
+          if [[ "$DEVBOX_PROJECT_ROOT"  != "" ]]
           then
-            if [ -d "`eval echo ${PROJECT_ROOT//>}`" ]; then
-                export PROJECT_ROOT=$PROJECT_ROOT
+            if [ -d "`eval echo ${DEVBOX_PROJECT_ROOT//>}`" ]; then
+                DEVBOX_PROJECT_ROOT=$(echo "~/Projects/Web/" | sed 's![^/]$!&/!')
+                echo "export DEVBOX_PROJECT_ROOT=${DEVBOX_PROJECT_ROOT}" > ~/.devbox/env_vars
+                source ~/.devbox/env_vars
                 break
             fi
 
@@ -116,8 +129,19 @@ else
         sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain $HOME/.devbox/AliasProjectCASelfSigned.pem
 
         # Installing Composer
-        echo "Installing Composer"
+        echo "Installing Composer..."
         $COMPOSE exec php sh -c "wget https://getcomposer.org/composer-stable.phar -O /usr/local/bin/composer && chmod +x /usr/local/bin/composer"
+        
+        echo "Installing Build Tools..."
+        $COMPOSE exec php sh -c "apk add --no-cache python2 make g++"
+        
+        # Installing NPM
+        echo "Installing NPM..."
+        $COMPOSE exec php sh -c "apk add --no-cache npm"
+        
+        # Configure NPM
+        echo "Configuring NPM..."
+        $COMPOSE exec php sh -c "npm config set python /usr/bin/python2"
 
         echo "devbox installed!"
 

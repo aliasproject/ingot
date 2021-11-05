@@ -28,7 +28,7 @@ services:
     image: ghcr.io/aliasproject/php:8.0-fpm
     restart: unless-stopped
     volumes:
-      - ${PROJECT_ROOT:-./}:/home/alias
+      - ${DEVBOX_PROJECT_ROOT:-./}:/home/alias
     networks:
       - internal
 
@@ -42,7 +42,7 @@ services:
     volumes:
       - certs:/etc/nginx/ssl
       - vhosts:/etc/nginx/conf.d
-      - ${PROJECT_ROOT:-./}:/home/alias:ro
+      - ${DEVBOX_PROJECT_ROOT:-./}:/home/alias:ro
     ports:
       - 80:80
       - 443:443
@@ -67,7 +67,7 @@ services:
       - certs:/certs
       - vhosts:/vhosts
       - .:/public
-      - ${PROJECT_ROOT:-./}:/home/alias:ro
+      - ${DEVBOX_PROJECT_ROOT:-./}:/home/alias:ro
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - internal
