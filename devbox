@@ -79,7 +79,7 @@ else
           if [[ "$DEVBOX_PROJECT_ROOT"  != "" ]]
           then
             if [ -d "`eval echo ${DEVBOX_PROJECT_ROOT//>}`" ]; then
-                DEVBOX_PROJECT_ROOT=$(echo "~/Projects/Web/" | sed 's![^/]$!&/!')
+                DEVBOX_PROJECT_ROOT=$(echo ${DEVBOX_PROJECT_ROOT} | sed 's![^/]$!&/!')
                 echo "export DEVBOX_PROJECT_ROOT=${DEVBOX_PROJECT_ROOT}" > ~/.devbox/env_vars
                 source ~/.devbox/env_vars
                 break
