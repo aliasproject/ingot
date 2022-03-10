@@ -23,10 +23,10 @@ if [ -d "$HOME/.devbox" ] && [ -f "/usr/local/bin/devbox" ]; then
         exit 0
     else
         if [ $# -gt 0 ]; then
-            DIR_EXISTS=$($COMPOSE exec php sh -c "test -d /home/alias/${DIR} && echo true")
+            DIR_EXISTS=$($COMPOSE exec -T php sh -c "test -d /home/alias/${DIR} && echo true || echo false")
             APP_EXEC="$COMPOSE exec -w /home/alias/$DIR php sh -c"
 
-            if [ $DIR_EXISTS ]; then
+            if [ $DIR_EXISTS == true ]; then
                 # Artisan
                 if [ "$1" == "artisan" ]; then
                     shift 1
