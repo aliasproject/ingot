@@ -6,7 +6,7 @@ services:
     # ------------------------------------------------------------
     dns:
         container_name: devbox_dns
-        image: ghcr.io/aliasproject/dnsmasq:latest
+        image: ghcr.io/aliasproject/dns:latest
         restart: unless-stopped
         ports:
             - "5354:53/udp"
