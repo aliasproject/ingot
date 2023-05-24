@@ -8,16 +8,16 @@ COMPOSE="docker compose -f $HOME/.devbox/docker-compose.yml"
 if [ -d "$HOME/.devbox" ] && [ -f "/usr/local/bin/devbox" ]; then
     # Set ENV Vars
     source ~/.devbox/env_vars
-    
+
     # Exit if not inside project directory
     case $PWD/ in
       ${DEVBOX_PROJECT_ROOT}*) ;;
       *) echo "Please try again from inside projects directory: ${DEVBOX_PROJECT_ROOT}"; exit;;
     esac
-    
+
     # Set current path inside Project Root
     DIR=${PWD#*$DEVBOX_PROJECT_ROOT}
-    
+
     if [ "$1" == "-v" ] || [ "$1" == "--version" ]; then
         echo $VERSION
         exit 0
@@ -89,6 +89,20 @@ else
           fi
         done
 
+        # PHP Version
+        PS3="Select PHP Version: "
+        select php_version in 8.1 8.0; do
+            case $php_version in
+                8.0|8.1)
+                    export PHP_VERSION=$php_version;
+                    break
+                    ;;
+                *)
+                    echo "Invalid Option"
+                    ;;
+            esac
+        done
+
         # MySQL Version
         PS3="Select MySQL Version: "
         select mysql_version in 8.0 5.7; do
@@ -131,14 +145,14 @@ else
         # Installing Composer
         echo "Installing Composer..."
         $COMPOSE exec php sh -c "wget https://getcomposer.org/composer-stable.phar -O /usr/local/bin/composer && chmod +x /usr/local/bin/composer"
-        
+
         echo "Installing Build Tools..."
         $COMPOSE exec php sh -c "apk add --no-cache python2 make automake g++"
-        
+
         # Installing NPM
         echo "Installing NPM..."
         $COMPOSE exec php sh -c "apk add --no-cache npm"
-        
+
         # Configure NPM
         echo "Configuring NPM..."
         $COMPOSE exec php sh -c "npm config set python /usr/bin/python2"

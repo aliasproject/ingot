@@ -12,20 +12,18 @@ services:
             - "5354:53/udp"
         networks:
             - internal
-        # volumes:
-        # - /etc/resolver:/config/resolver
-        command:
-            - "--address=/test/127.0.0.1"
-            - "--server=1.1.1.1" # Forward to Cloudflare DNS
-            - "--server=8.8.8.8" # Forward to Google DNS.
-            - "--log-facility=-" # Logs
+        environment:
+            - COMMANDS=--address=/test/127.0.0.1 --server=1.1.1.1 --server=8.8.8.8 --log-facility=-
+        dns:
+            - 1.1.1.1
+            - 8.8.8.8
 
     # ------------------------------------------------------------
     # PHP
     # ------------------------------------------------------------
     php:
         container_name: devbox_php
-        image: ghcr.io/aliasproject/php:8.0-fpm
+        image: ghcr.io/aliasproject/php:${PHP_VERSION:-8.1}-fpm
         restart: unless-stopped
         volumes:
             - ${DEVBOX_PROJECT_ROOT:-./}:/home/alias
