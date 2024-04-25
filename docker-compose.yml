@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
     # ------------------------------------------------------------
     # Dnsmasq (DNS Server)
@@ -11,7 +9,8 @@ services:
         ports:
             - "5354:53/udp"
         networks:
-            - internal
+            internal:
+                ipv4_address: 192.168.237.4
         environment:
             - COMMANDS=--address=/test/127.0.0.1 --server=1.1.1.1 --server=8.8.8.8 --log-facility=-
         dns:
@@ -23,13 +22,17 @@ services:
     # ------------------------------------------------------------
     php:
         container_name: devbox_php
-        image: ghcr.io/aliasproject/php:${PHP_VERSION:-8.1}-fpm
+        image: ghcr.io/aliasproject/php:${PHP_VERSION:-8.2}-fpm
         restart: unless-stopped
         volumes:
             - ${DEVBOX_PROJECT_ROOT:-./}:/home/alias
             - /var/run/docker.sock:/var/run/docker.sock
+        dns:
+            - 192.168.237.4
         networks:
             - internal
+        depends_on:
+            - dns
 
     # ------------------------------------------------------------
     # Nginx (Web Server)
@@ -104,6 +107,7 @@ services:
     mail:
         container_name: devbox_mail
         image: mailhog/mailhog:latest
+        platform: linux/amd64
         restart: on-failure
         ports:
             - 1025:1025
