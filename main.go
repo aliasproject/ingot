@@ -143,19 +143,152 @@ func downloadAndInstall(tmpFile, url string) error {
 }
 
 func main() {
-	fmt.Println("Start.")
-	if _, err := os.Stat(filepath.Join(os.Getenv("HOME"), ".devbox")); os.IsNotExist(err) || !fileExists(devboxBinary) {
+
+	if _, err := os.Stat(filepath.Join(os.Getenv("HOME"), ".devbox")); os.IsNotExist(err) { // || !fileExists(devboxBinary)
 		fmt.Println("devbox is not installed.")
 		// Optionally, call installation logic here
 		install()
 		return
 	}
 
-	// Check for updates
-	checkForUpdates()
+	// Set ENV Vars
+	err := loadEnvVars()
+	if err != nil {
+		fmt.Println("Error loading environment variables:", err)
+		os.Exit(1)
+	}
+
+	// Set current path inside Project Root
+	pwd, err := os.Getwd()
+	dir := strings.TrimPrefix(pwd, os.Getenv("DEVBOX_PROJECT_ROOT"))
+	dir = strings.TrimPrefix(dir, "/")
+
+	args := os.Args[1:]
+	if len(args) > 0 {
+		if args[0] == "-v" || args[0] == "--version" {
+			fmt.Println("Devbox v" + version)
+			os.Exit(0)
+		}
+
+		// Check for updates
+		if args[0] == "update" {
+
+			checkForUpdates()
+			os.Exit(0)
+		}
+
+		// Exit if not inside project directory
+		if !isInsideProjectDir() {
+			fmt.Printf("Please try again from inside projects directory: %s\n", os.Getenv("DEVBOX_PROJECT_ROOT"))
+			os.Exit(1)
+		}
+
+		dirExists, err := directoryExists(dir)
+		if err != nil {
+			fmt.Println("Error checking directory existence:", err)
+			os.Exit(1)
+		}
+
+		appExec := fmt.Sprintf("docker compose -f "+composeFile+" exec -w /home/alias/%s php sh -c", dir)
+
+		if dirExists {
+			switch args[0] {
+			case "artisan":
+				runCommand(appExec, "php artisan "+strings.Join(args[1:], " "))
+			case "composer":
+				runCommand(appExec, "composer "+strings.Join(args[1:], " "))
+			case "npm":
+				runCommand(appExec, "npm "+strings.Join(args[1:], " "))
+			default:
+				runCommand(appExec, strings.Join(args, " "))
+			}
+		} else {
+			runCommand("docker compose -f "+composeFile, strings.Join(args, " "))
+		}
+	} else {
+		runCommand("docker compose -f "+composeFile, "ps")
+	}
 
 	// Additional functionality for docker compose commands
 	// Example: dockerComposeCommand([]string{"ps"})
+	//
+
+}
+
+func loadEnvVars() error {
+	file, err := os.Open(filepath.Join(os.Getenv("HOME"), ".devbox", "env_vars"))
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.TrimSpace(line) == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) == 2 {
+			os.Setenv(strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]))
+		}
+	}
+	return scanner.Err()
+}
+
+func isInsideProjectDir() bool {
+	pwd, err := os.Getwd()
+
+	if err != nil {
+		fmt.Println("Error getting current working directory:", err)
+		return false
+	}
+
+	return strings.HasPrefix(pwd, os.Getenv("DEVBOX_PROJECT_ROOT"))
+}
+
+func directoryExists(dir string) (bool, error) {
+	// Prepare the command to check if the directory exists
+	cmdStr := fmt.Sprintf("test -d /home/alias/%s && echo true || echo false", dir)
+	cmd := exec.Command("docker", "compose", "-f", composeFile, "exec", "-T", "php", "sh", "-c", cmdStr)
+
+	// Set up pipes to capture output and error
+	var output, stderr strings.Builder
+	cmd.Stdout = &output
+	cmd.Stderr = &stderr
+
+	// Execute the command
+	err := cmd.Run()
+	if err != nil {
+		// Print detailed error information
+		fmt.Printf("Command error: %s\n", stderr.String())
+		return false, err
+	}
+
+	// Check the output
+	result := strings.TrimSpace(output.String())
+
+	return result == "true", nil
+}
+
+func runCommand(cmdName string, args string) {
+	// Split the command name into parts
+	cmdParts := strings.Fields(cmdName)
+
+	// Wrap the command in a shell to ensure proper execution
+	cmdParts = append(cmdParts, args)
+
+	cmd := exec.Command(cmdParts[0], cmdParts[1:]...)
+
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+
+	err := cmd.Run()
+	if err != nil {
+		fmt.Println("Error executing command:", err)
+		os.Exit(1)
+	}
 }
 
 func install() {
