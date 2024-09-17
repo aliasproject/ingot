@@ -2,12 +2,65 @@
 
 set -e
 
-VERSION=0.2.0
+VERSION=0.3.0
 COMPOSE="docker compose -f $HOME/.devbox/docker-compose.yml"
+GITHUB_REPO="aliasproject/devbox"
+
+check_for_updates() {
+    echo "Checking for updates..."
+    LATEST_VERSION=$(curl --silent "https://api.github.com/repos/$GITHUB_REPO/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+    if [ $? -ne 0 ]; then
+        echo "Error: Failed to fetch the latest version. Please check your internet connection and try again."
+        return 1
+    fi
+    echo $LATEST_VERSION
+    echo $VERSION
+    if [ -z "$LATEST_VERSION" ]; then
+        echo "Error: Unable to parse the latest version information. Please try again later."
+        return 1
+    elif [ "$LATEST_VERSION" != "$VERSION" ]; then
+        echo "A new version is available: $LATEST_VERSION"
+        read -p "Do you want to update? (y/n) " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            update_devbox
+        fi
+    else
+        echo "You are using the latest version."
+    fi
+}
+
+update_devbox() {
+    echo "Updating devbox..."
+    if [ -z "$LATEST_VERSION" ]; then
+        echo "Error: Unable to determine the latest version. Update aborted."
+        exit 1
+    fi
+    curl -L "https://github.com/$GITHUB_REPO/releases/download/$LATEST_VERSION/devbox" -o /tmp/devbox
+    if [ $? -ne 0 ]; then
+        echo "Error: Failed to download the update. Please check your internet connection and try again."
+        exit 1
+    fi
+    sudo mv /tmp/devbox /usr/local/bin/devbox
+    if [ $? -ne 0 ]; then
+        echo "Error: Failed to move the updated file. Update aborted."
+        exit 1
+    fi
+    sudo chmod +x /usr/local/bin/devbox
+    if [ $? -ne 0 ]; then
+        echo "Error: Failed to set executable permissions. Please check your permissions and try again."
+        exit 1
+    fi
+    echo "Update completed. Please restart devbox."
+    exit 0
+}
 
 if [ -d "$HOME/.devbox" ] && [ -f "/usr/local/bin/devbox" ]; then
     # Set ENV Vars
     source ~/.devbox/env_vars
+
+    # Check for updates
+    check_for_updates
 
     # Exit if not inside project directory
     case $PWD/ in
