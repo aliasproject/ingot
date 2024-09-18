@@ -172,7 +172,6 @@ func main() {
 
 		// Check for updates
 		if args[0] == "update" {
-
 			checkForUpdates()
 			os.Exit(0)
 		}
@@ -217,6 +216,7 @@ func main() {
 
 func loadEnvVars() error {
 	file, err := os.Open(filepath.Join(os.Getenv("HOME"), ".devbox", "env_vars"))
+
 	if err != nil {
 		return err
 	}
@@ -233,6 +233,7 @@ func loadEnvVars() error {
 			os.Setenv(strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]))
 		}
 	}
+
 	return scanner.Err()
 }
 
@@ -333,7 +334,7 @@ func install() {
 
 		if _, err := os.Stat(input); !os.IsNotExist(err) {
 			devboxProjectRoot = filepath.Clean(input) + string(os.PathSeparator)
-			writeToFile(env_vars, fmt.Sprintf("export DEVBOX_PROJECT_ROOT=%s", devboxProjectRoot))
+			writeToFile(env_vars, fmt.Sprintf("DEVBOX_PROJECT_ROOT=%s", devboxProjectRoot))
 		} else {
 			fmt.Println("Invalid directory, please try again.")
 		}
@@ -341,11 +342,11 @@ func install() {
 
 	// PHP Version selection
 	phpVersion := selectOption("Select PHP Version", []string{"8.2", "8.1", "8.0"})
-	writeToFile(env_vars, fmt.Sprintf("export PHP_VERSION=%s", phpVersion))
+	writeToFile(env_vars, fmt.Sprintf("PHP_VERSION=%s", phpVersion))
 
 	// MySQL Version selection
 	mysqlVersion := selectOption("Select MySQL Version", []string{"8.0", "5.7"})
-	writeToFile(env_vars, fmt.Sprintf("export MYSQL_SERVER=%s", mysqlVersion))
+	writeToFile(env_vars, fmt.Sprintf("MYSQL_SERVER=%s", mysqlVersion))
 
 	// Reload ENV Vars
 	fmt.Println("Reloading environment variables...")
