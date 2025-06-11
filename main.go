@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	version      = "0.6.0"
+	version      = "0.6.1"
 	githubRepo   = "aliasproject/devbox"
 	devboxBinary = "/usr/local/bin/devbox"
 )
@@ -165,9 +165,26 @@ func getRelativeProjectPath() (string, error) {
 }
 
 func directoryExistsInContainer(path string) bool {
-	cmd := exec.Command("docker", "exec", "devbox-php", "test", "-d", path)
+	// Use docker compose exec to check if directory exists in the PHP container
+	cmdStr := fmt.Sprintf("test -d %s && echo true || echo false", path)
+	cmd := exec.Command("docker", "compose", "-f", composeFile, "exec", "-T", "php", "sh", "-c", cmdStr)
+
+	// Set up pipes to capture output and error
+	var output, stderr strings.Builder
+	cmd.Stdout = &output
+	cmd.Stderr = &stderr
+
+	// Execute the command
 	err := cmd.Run()
-	return err == nil
+	if err != nil {
+		// Print detailed error information for debugging
+		fmt.Printf("Directory check error: %s\n", stderr.String())
+		return false
+	}
+
+	// Check the output
+	result := strings.TrimSpace(output.String())
+	return result == "true"
 }
 
 func executeInContainer(args []string) error {
@@ -177,15 +194,15 @@ func executeInContainer(args []string) error {
 		return err
 	}
 
-	containerPath := "/var/www/html" + relPath
+	containerPath := "/home/alias" + relPath
 
 	// Check if directory exists in container
 	if !directoryExistsInContainer(containerPath) {
 		return fmt.Errorf("directory %s does not exist in container", containerPath)
 	}
 
-	// Build docker exec command
-	dockerArgs := []string{"exec", "-it", "-w", containerPath, "devbox-php"}
+	// Build docker compose exec command
+	dockerArgs := []string{"compose", "-f", composeFile, "exec", "-it", "-w", containerPath, "php"}
 	dockerArgs = append(dockerArgs, args...)
 
 	return runDockerCommand(dockerArgs)
@@ -635,8 +652,7 @@ func install() error {
 	}
 
 	// Create docker-compose.yml file
-	composeContent := `version: '3.8'
-services:
+	composeContent := `services:
   php:
     container_name: devbox-php
     image: aliasproject/devbox-php:${PHP_VERSION}
