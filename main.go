@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	version      = "v0.4.5"
+	version      = "0.5.0"
 	githubRepo   = "aliasproject/devbox"
 	devboxBinary = "/usr/local/bin/devbox"
 )
@@ -237,11 +237,11 @@ func handleUpdate() error {
 	}
 
 	if !hasUpdate {
-		fmt.Printf("You are using the latest version (%s).\n", version)
+		fmt.Printf("You are using the latest version (v%s).\n", version)
 		return nil
 	}
 
-	fmt.Printf("New version available: %s (current: %s)\n", latestVersion, version)
+	fmt.Printf("New version available: %s (current: v%s)\n", latestVersion, version)
 	if !promptYesNo("Do you want to update?") {
 		return nil
 	}
@@ -293,7 +293,7 @@ func checkForUpdates() (bool, string, error) {
 		return false, "", fmt.Errorf("no tag name found in release")
 	}
 
-	return rel.TagName != version, rel.TagName, nil
+	return rel.TagName != "v"+version, rel.TagName, nil
 }
 
 func performUpdate(newVersion string) error {
