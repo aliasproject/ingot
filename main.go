@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	version      = "0.7.5"
+	version      = "0.6.0"
 	githubRepo   = "aliasproject/devbox"
 	devboxBinary = "/usr/local/bin/devbox"
 )
@@ -367,7 +367,7 @@ func handleUpdate() error {
 }
 
 func checkForUpdates() (bool, string, error) {
-	// Get GitHub token (prompt if needed)
+	// Get GitHub token (try OAuth token first, then prompt if needed)
 	token, err := getGitHubToken()
 	if err != nil {
 		fmt.Printf("Warning: %v\n", err)
@@ -384,6 +384,9 @@ func checkForUpdates() (bool, string, error) {
 
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
+		fmt.Printf("Debug: Using authenticated request for %s\n", githubRepo)
+	} else {
+		fmt.Printf("Debug: Using unauthenticated request for %s\n", githubRepo)
 	}
 
 	resp, err := client.Do(req)
@@ -392,10 +395,22 @@ func checkForUpdates() (bool, string, error) {
 	}
 	defer resp.Body.Close()
 
+	fmt.Printf("Debug: GitHub API response status: %d\n", resp.StatusCode)
+
 	if resp.StatusCode == 404 {
-		// Repository might be private or doesn't exist, skip update check during install
-		fmt.Printf("Note: Cannot check for updates (repository not accessible)\n")
-		return false, version, nil
+		// Check if the repository itself exists by trying to access it
+		repoReq, _ := http.NewRequest("GET", fmt.Sprintf("https://api.github.com/repos/%s", githubRepo), nil)
+		if token != "" {
+			repoReq.Header.Set("Authorization", "Bearer "+token)
+		}
+		repoResp, _ := client.Do(repoReq)
+		if repoResp != nil {
+			defer repoResp.Body.Close()
+			if repoResp.StatusCode == 404 {
+				return false, "", fmt.Errorf("repository '%s' does not exist or is not accessible", githubRepo)
+			}
+		}
+		return false, "", fmt.Errorf("repository '%s' has no releases published", githubRepo)
 	}
 
 	if resp.StatusCode == 401 {
@@ -408,7 +423,8 @@ func checkForUpdates() (bool, string, error) {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return false, "", fmt.Errorf("API request failed with status %d", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		return false, "", fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
 	body, err := io.ReadAll(resp.Body)
@@ -425,6 +441,7 @@ func checkForUpdates() (bool, string, error) {
 		return false, "", fmt.Errorf("no tag name found in release")
 	}
 
+	fmt.Printf("Debug: Found latest release: %s (current: v%s)\n", rel.TagName, version)
 	return rel.TagName != "v"+version, rel.TagName, nil
 }
 
@@ -551,7 +568,7 @@ func performOAuthDeviceFlow() (string, error) {
 func requestDeviceCode() (*deviceCodeResponse, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
 
-	data := "client_id=178c6fc778ccc68e1d6a&scope=read:packages"
+	data := "client_id=178c6fc778ccc68e1d6a&scope=repo"
 	req, err := http.NewRequest("POST", "https://github.com/login/device/code", strings.NewReader(data))
 	if err != nil {
 		return nil, err
