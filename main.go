@@ -25,7 +25,6 @@ var (
 	devboxDir   = filepath.Join(homeDir, ".devbox")
 	composeFile = filepath.Join(devboxDir, "docker-compose.yml")
 	envVarsFile = filepath.Join(devboxDir, "env_vars")
-	certsPath   = filepath.Join(devboxDir, "AliasProjectCASelfSigned.pem")
 )
 
 type release struct {
@@ -1100,13 +1099,6 @@ func install() error {
 		}
 	}
 
-	// Configure DNS
-	fmt.Println()
-	fmt.Println("🌐 Configuring DNS...")
-	if err := configureDNS(); err != nil {
-		return fmt.Errorf("failed to configure DNS: %w", err)
-	}
-
 	// Copy binary to /usr/local/bin/devbox
 	fmt.Println()
 	fmt.Println("📦 Installing devbox binary...")
@@ -1138,13 +1130,6 @@ func install() error {
 		if err := os.Chmod(devboxBinary, 0755); err != nil {
 			return fmt.Errorf("failed to make binary executable: %w", err)
 		}
-	}
-
-	// Install additional tools
-	fmt.Println()
-	fmt.Println("🔧 Installing additional tools...")
-	if err := installTools(); err != nil {
-		return fmt.Errorf("failed to install tools: %w", err)
 	}
 
 	// Create docker-compose.yml file with Watchman container
@@ -1425,11 +1410,6 @@ func selectOption(prompt string, options []string) string {
 	}
 }
 
-func configureDNS() error {
-	fmt.Println("DNS configuration completed.")
-	return nil
-}
-
 func startContainers() error {
 	return runDockerComposeCommand([]string{"compose", "-f", composeFile, "up", "-d"})
 }
@@ -1522,11 +1502,6 @@ func setupSSL() error {
 		fmt.Println("✅ CA certificate installed successfully!")
 	}
 
-	return nil
-}
-
-func installTools() error {
-	fmt.Println("Additional tools installed.")
 	return nil
 }
 
@@ -1697,12 +1672,4 @@ func getStatus(exists bool) string {
 		return "✅ exists"
 	}
 	return "❌ missing"
-}
-
-func dockerComposeCommand(args []string) {
-	dockerArgs := []string{"compose", "-f", composeFile}
-	dockerArgs = append(dockerArgs, args...)
-	if err := runDockerComposeCommand(dockerArgs); err != nil {
-		fmt.Printf("Error running Docker Compose: %v\n", err)
-	}
 }
