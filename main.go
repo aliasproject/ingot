@@ -384,9 +384,6 @@ func checkForUpdates() (bool, string, error) {
 
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
-		fmt.Printf("Debug: Using authenticated request for %s\n", githubRepo)
-	} else {
-		fmt.Printf("Debug: Using unauthenticated request for %s\n", githubRepo)
 	}
 
 	resp, err := client.Do(req)
@@ -394,8 +391,6 @@ func checkForUpdates() (bool, string, error) {
 		return false, "", err
 	}
 	defer resp.Body.Close()
-
-	fmt.Printf("Debug: GitHub API response status: %d\n", resp.StatusCode)
 
 	if resp.StatusCode == 404 {
 		// Check if the repository itself exists by trying to access it
@@ -441,7 +436,6 @@ func checkForUpdates() (bool, string, error) {
 		return false, "", fmt.Errorf("no tag name found in release")
 	}
 
-	fmt.Printf("Debug: Found latest release: %s (current: v%s)\n", rel.TagName, version)
 	return rel.TagName != "v"+version, rel.TagName, nil
 }
 
@@ -537,10 +531,6 @@ func performOAuthDeviceFlow() (string, error) {
 
 	// Try to open the basic URL instead of the complete one (which has query params)
 	fmt.Printf("🌐 Opening URL: %s\n", deviceResp.VerificationURI)
-
-	// Debug: Show the URL we're trying to open
-	fmt.Printf("🔍 Debug: Basic URL: %s\n", deviceResp.VerificationURI)
-	fmt.Printf("🔍 Debug: Complete URL: %s\n", deviceResp.VerificationURIComplete)
 
 	err = openURL(deviceResp.VerificationURI)
 	if err != nil {
@@ -718,24 +708,16 @@ func ensureGitHubAuth() error {
 }
 
 func openURL(url string) error {
-	fmt.Printf("🔍 Debug: Attempting to open URL on macOS\n")
-
 	// For macOS, try multiple approaches
 	if _, err := exec.LookPath("open"); err == nil {
 		// Try method 1: open with URL flag (forces browser)
-		fmt.Printf("🔍 Debug: Trying 'open -u' command\n")
 		cmd := exec.Command("open", "-u", url)
-		cmd.Stderr = os.Stderr
-		cmd.Stdout = os.Stdout
 		if err := cmd.Run(); err == nil {
 			return nil
 		}
-		fmt.Printf("🔍 Debug: 'open -u' failed, trying regular 'open'\n")
 
 		// Try method 2: regular open
 		cmd = exec.Command("open", url)
-		cmd.Stderr = os.Stderr
-		cmd.Stdout = os.Stdout
 		return cmd.Run()
 	}
 
