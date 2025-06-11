@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	version      = "0.6.0"
+	version      = "0.7.5"
 	githubRepo   = "aliasproject/devbox"
 	devboxBinary = "/usr/local/bin/devbox"
 )
@@ -1309,12 +1309,6 @@ networks:
 	// Start containers
 	fmt.Println()
 	fmt.Println("🚀 Starting Docker containers...")
-
-	// Debug: Show environment variables that will be used
-	fmt.Printf("Debug: DEVBOX_PROJECT_ROOT=%s\n", os.Getenv("DEVBOX_PROJECT_ROOT"))
-	fmt.Printf("Debug: PHP_VERSION=%s\n", os.Getenv("PHP_VERSION"))
-	fmt.Printf("Debug: MYSQL_SERVER=%s\n", os.Getenv("MYSQL_SERVER"))
-	fmt.Printf("Debug: HOME=%s\n", os.Getenv("HOME"))
 
 	if err := startContainers(); err != nil {
 		return fmt.Errorf("failed to start containers: %w", err)
