@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	version      = "0.4.5"
+	version      = "v0.4.5"
 	githubRepo   = "aliasproject/devbox"
 	devboxBinary = "/usr/local/bin/devbox"
 )
