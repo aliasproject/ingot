@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	version      = "0.6.1"
+	version      = "0.7.5"
 	githubRepo   = "aliasproject/devbox"
 	devboxBinary = "/usr/local/bin/devbox"
 )
@@ -53,6 +53,44 @@ func main() {
 		return
 	}
 
+	// Handle help command
+	if len(args) > 0 && (args[0] == "help" || args[0] == "-h" || args[0] == "--help") {
+		showHelp()
+		return
+	}
+
+	// Handle status command
+	if len(args) > 0 && args[0] == "status" {
+		if err := showStatus(); err != nil {
+			fmt.Printf("Error getting status: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Handle install command (for when devbox is already installed)
+	if len(args) > 0 && args[0] == "install" {
+		fmt.Println("Devbox is already installed!")
+		fmt.Printf("Version: v%s\n", version)
+		fmt.Println()
+
+		// Show installation status
+		fmt.Println("Installation Status:")
+		fmt.Printf("  Config directory: %s (%s)\n", devboxDir, getStatus(dirExists(devboxDir)))
+		fmt.Printf("  Binary location: %s (%s)\n", devboxBinary, getStatus(fileExists(devboxBinary)))
+		fmt.Printf("  Env vars file: %s (%s)\n", envVarsFile, getStatus(fileExists(envVarsFile)))
+		fmt.Printf("  Docker compose: %s (%s)\n", composeFile, getStatus(fileExists(composeFile)))
+
+		currentBinary, err := os.Executable()
+		if err == nil {
+			fmt.Printf("  Current binary: %s\n", currentBinary)
+		}
+
+		fmt.Println()
+		fmt.Println("To reinstall, remove ~/.devbox directory and run devbox again.")
+		return
+	}
+
 	// Handle update command
 	if len(args) > 0 && args[0] == "update" {
 		if err := handleUpdate(); err != nil {
@@ -80,30 +118,53 @@ func main() {
 
 	// Handle different commands
 	if len(args) == 0 {
-		// Default behavior - start containers
+		// Default behavior - show container status
 		if !isInsideProjectDir() {
 			fmt.Println("Error: You must be inside a project directory to run devbox.")
 			fmt.Println("Navigate to your project root directory and try again.")
 			os.Exit(1)
 		}
 
-		if err := startContainers(); err != nil {
-			fmt.Printf("Failed to start containers: %v\n", err)
+		dockerArgs := []string{"compose", "-f", composeFile, "ps"}
+		if err := runDockerComposeCommand(dockerArgs); err != nil {
+			fmt.Printf("Failed to show container status: %v\n", err)
 			os.Exit(1)
 		}
 		return
 	}
 
-	// Execute commands inside the container
+	// Exit if not inside project directory
 	if !isInsideProjectDir() {
-		fmt.Println("Error: You must be inside a project directory to run devbox commands.")
-		fmt.Println("Navigate to your project root directory and try again.")
+		fmt.Printf("Please try again from inside projects directory: %s\n", os.Getenv("DEVBOX_PROJECT_ROOT"))
 		os.Exit(1)
 	}
 
-	if err := executeInContainer(args); err != nil {
-		fmt.Printf("Command failed: %v\n", err)
+	// Get relative path within project
+	relPath, err := getRelativeProjectPath()
+	if err != nil {
+		fmt.Printf("Error getting relative path: %v\n", err)
 		os.Exit(1)
+	}
+
+	containerPath := "/home/alias" + relPath
+
+	// Check if directory exists in container
+	dirExists := directoryExistsInContainer(containerPath)
+
+	if dirExists {
+		// Execute commands in container with shortcuts
+		if err := executeInContainer(args); err != nil {
+			fmt.Printf("Command failed: %v\n", err)
+			os.Exit(1)
+		}
+	} else {
+		// Directory doesn't exist in container, run docker compose command directly
+		dockerArgs := []string{"compose", "-f", composeFile}
+		dockerArgs = append(dockerArgs, args...)
+		if err := runDockerComposeCommand(dockerArgs); err != nil {
+			fmt.Printf("Docker compose command failed: %v\n", err)
+			os.Exit(1)
+		}
 	}
 }
 
@@ -201,9 +262,20 @@ func executeInContainer(args []string) error {
 		return fmt.Errorf("directory %s does not exist in container", containerPath)
 	}
 
-	// Build docker compose exec command
-	dockerArgs := []string{"compose", "-f", composeFile, "exec", "-it", "-w", containerPath, "php"}
-	dockerArgs = append(dockerArgs, args...)
+	// Handle specific shortcuts with shell commands
+	var dockerArgs []string
+	switch args[0] {
+	case "artisan":
+		dockerArgs = []string{"compose", "-f", composeFile, "exec", "-it", "-w", containerPath, "php", "sh", "-c", "php artisan " + strings.Join(args[1:], " ")}
+	case "composer":
+		dockerArgs = []string{"compose", "-f", composeFile, "exec", "-it", "-w", containerPath, "php", "sh", "-c", "composer " + strings.Join(args[1:], " ")}
+	case "npm":
+		dockerArgs = []string{"compose", "-f", composeFile, "exec", "-it", "-w", containerPath, "php", "sh", "-c", "npm " + strings.Join(args[1:], " ")}
+	default:
+		// Build docker compose exec command for other commands
+		dockerArgs = []string{"compose", "-f", composeFile, "exec", "-it", "-w", containerPath, "php"}
+		dockerArgs = append(dockerArgs, args...)
+	}
 
 	return runDockerCommand(dockerArgs)
 }
@@ -213,17 +285,69 @@ func runDockerCommand(args []string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
+
+	// Load environment variables if devbox is installed
+	if isInstalled() {
+		if err := loadEnvVars(); err != nil {
+			fmt.Printf("Warning: Failed to load environment variables: %v\n", err)
+		}
+	}
+
+	// Set environment variables for the command
+	cmd.Env = os.Environ()
+
+	return cmd.Run()
+}
+
+func runDockerComposeCommand(args []string) error {
+	// Check if this command might need to pull images
+	needsImagePull := false
+	for _, arg := range args {
+		if arg == "up" || arg == "pull" || arg == "create" {
+			needsImagePull = true
+			break
+		}
+	}
+
+	// If we might need to pull images, ensure GitHub authentication
+	if needsImagePull && isInstalled() {
+		if err := ensureGitHubAuth(); err != nil {
+			fmt.Printf("Warning: GitHub authentication failed: %v\n", err)
+			fmt.Println("Container pulls may fail. Continuing anyway...")
+		}
+	}
+
+	// Ensure we have all required environment variables set
+	envVars := []string{
+		"DEVBOX_PROJECT_ROOT",
+		"PHP_VERSION",
+		"MYSQL_SERVER",
+		"HOME",
+	}
+
+	for _, envVar := range envVars {
+		if os.Getenv(envVar) == "" {
+			// Try to load from env vars file if available
+			if isInstalled() {
+				if err := loadEnvVars(); err != nil {
+					return fmt.Errorf("failed to load environment variables: %w", err)
+				}
+			}
+			break
+		}
+	}
+
+	cmd := exec.Command("docker", args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+	cmd.Env = os.Environ()
+
 	return cmd.Run()
 }
 
 func handleUpdate() error {
 	fmt.Println("Checking for updates...")
-
-	// Check if GitHub token is available for private repos
-	if os.Getenv("GITHUB_TOKEN") == "" {
-		fmt.Println("Warning: No GITHUB_TOKEN found. If this is a private repository, updates may fail.")
-		fmt.Println("Set GITHUB_TOKEN environment variable for authenticated requests.")
-	}
 
 	hasUpdate, latestVersion, err := checkForUpdates()
 	if err != nil {
@@ -260,7 +384,7 @@ func checkForUpdates() (bool, string, error) {
 	}
 
 	if token != "" {
-		req.Header.Set("Authorization", "token "+token)
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
 	resp, err := client.Do(req)
@@ -270,7 +394,9 @@ func checkForUpdates() (bool, string, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode == 404 {
-		return false, "", fmt.Errorf("repository '%s' not found or has no releases", githubRepo)
+		// Repository might be private or doesn't exist, skip update check during install
+		fmt.Printf("Note: Cannot check for updates (repository not accessible)\n")
+		return false, version, nil
 	}
 
 	if resp.StatusCode == 401 {
@@ -317,18 +443,29 @@ func getGitHubToken() (string, error) {
 		}
 	}
 
-	// Prompt user for token
-	fmt.Println("\nGitHub token required for private repository access.")
-	fmt.Println("You can generate a token at: https://github.com/settings/tokens")
-	fmt.Println("Required scopes: repo (for private repositories)")
+	// Try to get token from GitHub CLI if available
+	if token, err := getGitHubCLIToken(); err == nil && token != "" {
+		fmt.Println("✅ Using GitHub token from GitHub CLI")
 
-	token, err := promptInput("Enter GitHub token: ")
-	if err != nil {
-		return "", fmt.Errorf("failed to read token: %w", err)
+		// Store token in env_vars file for future use
+		if err := writeEnvVar("GITHUB_TOKEN", token); err != nil {
+			fmt.Printf("Warning: Failed to save token for future use: %v\n", err)
+		} else {
+			// Set in current environment
+			os.Setenv("GITHUB_TOKEN", token)
+		}
+
+		return token, nil
 	}
 
-	if token == "" {
-		return "", fmt.Errorf("token cannot be empty")
+	// Fallback to OAuth device flow
+	fmt.Println("\nGitHub authentication required for container registry access.")
+	fmt.Println("Starting GitHub OAuth device flow...")
+	fmt.Println()
+
+	token, err := performOAuthDeviceFlow()
+	if err != nil {
+		return "", fmt.Errorf("OAuth device flow failed: %w", err)
 	}
 
 	// Store token in env_vars file for future use
@@ -337,7 +474,292 @@ func getGitHubToken() (string, error) {
 	} else {
 		// Set in current environment
 		os.Setenv("GITHUB_TOKEN", token)
-		fmt.Println("GitHub token saved successfully.")
+		fmt.Println("✅ GitHub token saved successfully.")
+	}
+
+	return token, nil
+}
+
+type deviceCodeResponse struct {
+	DeviceCode              string `json:"device_code"`
+	UserCode                string `json:"user_code"`
+	VerificationURI         string `json:"verification_uri"`
+	VerificationURIComplete string `json:"verification_uri_complete"`
+	ExpiresIn               int    `json:"expires_in"`
+	Interval                int    `json:"interval"`
+}
+
+type accessTokenResponse struct {
+	AccessToken string `json:"access_token"`
+	TokenType   string `json:"token_type"`
+	Scope       string `json:"scope"`
+	Error       string `json:"error"`
+}
+
+func performOAuthDeviceFlow() (string, error) {
+	// Step 1: Request device code
+	deviceResp, err := requestDeviceCode()
+	if err != nil {
+		return "", fmt.Errorf("failed to request device code: %w", err)
+	}
+
+	// Step 2: Show user instructions
+	fmt.Printf("🔗 Please visit: %s\n", deviceResp.VerificationURI)
+	fmt.Printf("📝 Enter code: %s\n", deviceResp.UserCode)
+	fmt.Println()
+	fmt.Println("💡 Or visit this direct link:")
+	fmt.Printf("   %s\n", deviceResp.VerificationURIComplete)
+	fmt.Println()
+	fmt.Print("Press Enter to open the URL in your browser...")
+
+	// Wait for user to press Enter
+	reader := bufio.NewReader(os.Stdin)
+	_, err = reader.ReadString('\n')
+	if err != nil {
+		fmt.Printf("Error reading input: %v\n", err)
+	}
+
+	// Try to open the basic URL instead of the complete one (which has query params)
+	fmt.Printf("🌐 Opening URL: %s\n", deviceResp.VerificationURI)
+
+	// Debug: Show the URL we're trying to open
+	fmt.Printf("🔍 Debug: Basic URL: %s\n", deviceResp.VerificationURI)
+	fmt.Printf("🔍 Debug: Complete URL: %s\n", deviceResp.VerificationURIComplete)
+
+	err = openURL(deviceResp.VerificationURI)
+	if err != nil {
+		fmt.Printf("❌ Could not open browser automatically: %v\n", err)
+		fmt.Println("Please manually copy and paste the URL above into your browser.")
+		fmt.Printf("Then enter this code: %s\n", deviceResp.UserCode)
+	} else {
+		fmt.Println("✅ Opened browser for GitHub authorization")
+		fmt.Printf("📝 You'll need to enter this code: %s\n", deviceResp.UserCode)
+	}
+
+	fmt.Println()
+	fmt.Println("⏳ Waiting for authorization... (this may take a moment)")
+
+	// Step 3: Poll for access token
+	token, err := pollForAccessToken(deviceResp)
+	if err != nil {
+		return "", fmt.Errorf("failed to get access token: %w", err)
+	}
+
+	fmt.Println("✅ GitHub authentication successful!")
+	return token, nil
+}
+
+func requestDeviceCode() (*deviceCodeResponse, error) {
+	client := &http.Client{Timeout: 10 * time.Second}
+
+	data := "client_id=178c6fc778ccc68e1d6a&scope=read:packages"
+	req, err := http.NewRequest("POST", "https://github.com/login/device/code", strings.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("device code request failed with status %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var deviceResp deviceCodeResponse
+	if err := json.Unmarshal(body, &deviceResp); err != nil {
+		return nil, fmt.Errorf("failed to parse device code response: %w", err)
+	}
+
+	return &deviceResp, nil
+}
+
+func pollForAccessToken(deviceResp *deviceCodeResponse) (string, error) {
+	interval := time.Duration(deviceResp.Interval) * time.Second
+	if interval < 5*time.Second {
+		interval = 5 * time.Second // Minimum interval
+	}
+	fmt.Printf("🔄 Starting polling with %v interval\n", interval)
+
+	timeout := time.After(time.Duration(deviceResp.ExpiresIn) * time.Second)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-timeout:
+			return "", fmt.Errorf("device flow timed out")
+		case <-ticker.C:
+			token, err := checkForAccessToken(deviceResp.DeviceCode)
+			if err != nil {
+				// Check if it's a "pending" error (user hasn't authorized yet)
+				if strings.Contains(err.Error(), "authorization_pending") {
+					continue // Keep polling
+				}
+				// Handle slow_down error by increasing interval
+				if strings.Contains(err.Error(), "slow_down") {
+					interval = interval * 2 // Double the interval
+					if interval > 30*time.Second {
+						interval = 30 * time.Second // Cap at 30 seconds
+					}
+					ticker.Stop()
+					ticker = time.NewTicker(interval)
+					defer ticker.Stop() // Ensure new ticker is also stopped
+					fmt.Printf("⏳ Slowing down polling (interval now %v)...\n", interval)
+					continue
+				}
+				return "", err
+			}
+			return token, nil
+		}
+	}
+}
+
+func checkForAccessToken(deviceCode string) (string, error) {
+	client := &http.Client{Timeout: 10 * time.Second}
+
+	data := fmt.Sprintf("client_id=178c6fc778ccc68e1d6a&device_code=%s&grant_type=urn:ietf:params:oauth:grant-type:device_code", deviceCode)
+	req, err := http.NewRequest("POST", "https://github.com/login/oauth/access_token", strings.NewReader(data))
+	if err != nil {
+		return "", err
+	}
+
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	var tokenResp accessTokenResponse
+	if err := json.Unmarshal(body, &tokenResp); err != nil {
+		return "", fmt.Errorf("failed to parse access token response: %w", err)
+	}
+
+	if tokenResp.Error != "" {
+		return "", fmt.Errorf(tokenResp.Error)
+	}
+
+	if tokenResp.AccessToken == "" {
+		return "", fmt.Errorf("no access token in response")
+	}
+
+	return tokenResp.AccessToken, nil
+}
+
+func ensureGitHubAuth() error {
+	// Check if we already have a valid token
+	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
+		return nil
+	}
+
+	// Try to load from env vars file
+	if isInstalled() {
+		if err := loadEnvVars(); err == nil {
+			if token := os.Getenv("GITHUB_TOKEN"); token != "" {
+				return nil
+			}
+		}
+	}
+
+	// No token found, try to get one
+	fmt.Println("🔑 GitHub authentication required for container registry access...")
+	token, err := getGitHubToken()
+	if err != nil {
+		return fmt.Errorf("failed to get GitHub token: %w", err)
+	}
+
+	// Login to GitHub Container Registry
+	fmt.Println("🔐 Logging into GitHub Container Registry...")
+	loginCmd := exec.Command("docker", "login", "ghcr.io", "-u", "token", "--password-stdin")
+	loginCmd.Stdin = strings.NewReader(token)
+	loginCmd.Stdout = os.Stdout
+	loginCmd.Stderr = os.Stderr
+
+	if err := loginCmd.Run(); err != nil {
+		return fmt.Errorf("failed to login to GitHub Container Registry: %w", err)
+	}
+
+	fmt.Println("✅ Successfully authenticated with GitHub Container Registry!")
+	return nil
+}
+
+func openURL(url string) error {
+	fmt.Printf("🔍 Debug: Attempting to open URL on macOS\n")
+
+	// For macOS, try multiple approaches
+	if _, err := exec.LookPath("open"); err == nil {
+		// Try method 1: open with URL flag (forces browser)
+		fmt.Printf("🔍 Debug: Trying 'open -u' command\n")
+		cmd := exec.Command("open", "-u", url)
+		cmd.Stderr = os.Stderr
+		cmd.Stdout = os.Stdout
+		if err := cmd.Run(); err == nil {
+			return nil
+		}
+		fmt.Printf("🔍 Debug: 'open -u' failed, trying regular 'open'\n")
+
+		// Try method 2: regular open
+		cmd = exec.Command("open", url)
+		cmd.Stderr = os.Stderr
+		cmd.Stdout = os.Stdout
+		return cmd.Run()
+	}
+
+	// Linux
+	if _, err := exec.LookPath("xdg-open"); err == nil {
+		cmd := exec.Command("xdg-open", url)
+		return cmd.Start()
+	}
+
+	// Windows
+	if _, err := exec.LookPath("cmd"); err == nil {
+		cmd := exec.Command("cmd", "/c", "start", url)
+		return cmd.Start()
+	}
+
+	return fmt.Errorf("unable to detect system browser opener")
+}
+
+func getGitHubCLIToken() (string, error) {
+	// Check if GitHub CLI is installed
+	if _, err := exec.LookPath("gh"); err != nil {
+		return "", fmt.Errorf("GitHub CLI not found")
+	}
+
+	// Check if user is authenticated
+	cmd := exec.Command("gh", "auth", "status")
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("GitHub CLI not authenticated")
+	}
+
+	// Get the token
+	cmd = exec.Command("gh", "auth", "token")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("failed to get token from GitHub CLI: %w", err)
+	}
+
+	token := strings.TrimSpace(string(output))
+	if token == "" {
+		return "", fmt.Errorf("empty token from GitHub CLI")
 	}
 
 	return token, nil
@@ -484,7 +906,7 @@ func getDownloadURL(newVersion, token string) (string, error) {
 	}
 
 	if token != "" {
-		req.Header.Set("Authorization", "token "+token)
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
 	resp, err := client.Do(req)
@@ -606,14 +1028,17 @@ func installBinary(tempFile string) error {
 }
 
 func install() error {
-	fmt.Println("Setting up Devbox...")
+	fmt.Println("🚀 Setting up Devbox...")
+	fmt.Println()
 
 	// Create devbox directory
+	fmt.Println("📁 Creating devbox directory...")
 	if err := os.MkdirAll(devboxDir, 0755); err != nil {
 		return fmt.Errorf("failed to create devbox directory: %w", err)
 	}
 
 	// Get project directory
+	fmt.Println("📂 Configuring project directory...")
 	projectDir, err := getProjectDirectory()
 	if err != nil {
 		return fmt.Errorf("failed to get project directory: %w", err)
@@ -624,77 +1049,296 @@ func install() error {
 		return fmt.Errorf("failed to write project root: %w", err)
 	}
 
+	// Set environment variable in current process for immediate use
+	os.Setenv("DEVBOX_PROJECT_ROOT", projectDir)
+
 	// Get PHP version
+	fmt.Println()
 	phpVersion := selectOption("Select PHP Version", []string{"8.2", "8.1", "8.0"})
 	if err := writeEnvVar("PHP_VERSION", phpVersion); err != nil {
 		return fmt.Errorf("failed to write PHP version: %w", err)
 	}
 
+	// Set environment variable in current process for immediate use
+	os.Setenv("PHP_VERSION", phpVersion)
+
 	// Get MySQL version
+	fmt.Println()
 	mysqlVersion := selectOption("Select MySQL Version", []string{"8.0", "5.7"})
 	if err := writeEnvVar("MYSQL_SERVER", mysqlVersion); err != nil {
 		return fmt.Errorf("failed to write MySQL version: %w", err)
 	}
 
+	// Set environment variable in current process for immediate use
+	os.Setenv("MYSQL_SERVER", mysqlVersion)
+
+	// Setup GitHub token for GHCR authentication
+	fmt.Println()
+	fmt.Println("🔑 Setting up GitHub authentication for container registry...")
+	fmt.Println("GitHub authentication is required to pull container images from ghcr.io")
+	fmt.Println("This is necessary because the devbox containers are hosted on GitHub Container Registry.")
+	fmt.Println()
+
+	token, err := getGitHubToken()
+	if err != nil {
+		fmt.Printf("❌ Error getting GitHub token: %v\n", err)
+		fmt.Println("⚠️  Proceeding without GitHub authentication...")
+		fmt.Println("   Container pulls may fail. You can set up authentication later.")
+	} else {
+		// Login to GitHub Container Registry
+		fmt.Println("🔐 Logging into GitHub Container Registry...")
+		loginCmd := exec.Command("docker", "login", "ghcr.io", "-u", "token", "--password-stdin")
+		loginCmd.Stdin = strings.NewReader(token)
+		loginCmd.Stdout = os.Stdout
+		loginCmd.Stderr = os.Stderr
+
+		if err := loginCmd.Run(); err != nil {
+			fmt.Printf("❌ Warning: Failed to login to GitHub Container Registry: %v\n", err)
+			fmt.Println("💡 Container pulls may fail. You can try authentication later with 'devbox update'.")
+		} else {
+			fmt.Println("✅ Successfully authenticated with GitHub Container Registry!")
+		}
+	}
+
 	// Configure DNS
+	fmt.Println()
+	fmt.Println("🌐 Configuring DNS...")
 	if err := configureDNS(); err != nil {
 		return fmt.Errorf("failed to configure DNS: %w", err)
 	}
 
-	// Setup SSL certificates
-	if err := setupSSL(); err != nil {
-		return fmt.Errorf("failed to setup SSL: %w", err)
+	// Copy binary to /usr/local/bin/devbox
+	fmt.Println()
+	fmt.Println("📦 Installing devbox binary...")
+	currentBinary, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("failed to get current executable path: %w", err)
+	}
+
+	// Check if we can write to /usr/local/bin, if not, use sudo
+	if err := copyFile(currentBinary, devboxBinary); err != nil {
+		fmt.Println("Permission denied installing to /usr/local/bin. Using sudo...")
+		fmt.Println("You may be prompted for your password to install the devbox binary.")
+
+		cmd := exec.Command("sudo", "cp", currentBinary, devboxBinary)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		cmd.Stdin = os.Stdin
+
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("failed to install binary to %s with sudo: %w", devboxBinary, err)
+		}
+
+		// Make it executable with sudo
+		cmd = exec.Command("sudo", "chmod", "755", devboxBinary)
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("failed to make binary executable: %w", err)
+		}
+	} else {
+		if err := os.Chmod(devboxBinary, 0755); err != nil {
+			return fmt.Errorf("failed to make binary executable: %w", err)
+		}
 	}
 
 	// Install additional tools
+	fmt.Println()
+	fmt.Println("🔧 Installing additional tools...")
 	if err := installTools(); err != nil {
 		return fmt.Errorf("failed to install tools: %w", err)
 	}
 
-	// Create docker-compose.yml file
+	// Create docker-compose.yml file with Watchman container
+	fmt.Println()
+	fmt.Println("🐳 Creating Docker configuration...")
 	composeContent := `services:
-  php:
-    container_name: devbox-php
-    image: aliasproject/devbox-php:${PHP_VERSION}
-    volumes:
-      - ${DEVBOX_PROJECT_ROOT}:/var/www/html
-      - ${HOME}/.devbox/AliasProjectCASelfSigned.pem:/usr/local/share/ca-certificates/AliasProjectCASelfSigned.crt
-    environment:
-      - MYSQL_HOST=mysql
-      - MYSQL_DATABASE=devbox
-      - MYSQL_USER=devbox
-      - MYSQL_PASSWORD=devbox
-    depends_on:
-      - mysql
-    networks:
-      - devbox
+    # ------------------------------------------------------------
+    # Dnsmasq (DNS Server)
+    # ------------------------------------------------------------
+    dns:
+        container_name: devbox_dns
+        image: ghcr.io/aliasproject/dns:latest
+        restart: unless-stopped
+        ports:
+            - "5354:53/udp"
+        networks:
+            internal:
+                ipv4_address: 192.168.237.4
+        environment:
+            - COMMANDS=--address=/test/127.0.0.1 --server=1.1.1.1 --server=8.8.8.8 --log-facility=-
+        dns:
+            - 1.1.1.1
+            - 8.8.8.8
 
-  mysql:
-    container_name: devbox-mysql
-    image: mysql:${MYSQL_SERVER}
-    environment:
-      - MYSQL_ROOT_PASSWORD=root
-      - MYSQL_DATABASE=devbox
-      - MYSQL_USER=devbox
-      - MYSQL_PASSWORD=devbox
-    volumes:
-      - mysql_data:/var/lib/mysql
-    networks:
-      - devbox
+    # ------------------------------------------------------------
+    # PHP
+    # ------------------------------------------------------------
+    php:
+        container_name: devbox_php
+        image: ghcr.io/aliasproject/php:${PHP_VERSION:-8.2}-fpm
+        restart: unless-stopped
+        volumes:
+            - ${DEVBOX_PROJECT_ROOT:-./}:/home/alias
+            - /var/run/docker.sock:/var/run/docker.sock
+        dns:
+            - 192.168.237.4
+        networks:
+            - internal
+        depends_on:
+            - dns
 
-networks:
-  devbox:
-    driver: bridge
+    # ------------------------------------------------------------
+    # Nginx (Web Server)
+    # ------------------------------------------------------------
+    nginx:
+        container_name: devbox_nginx
+        image: ghcr.io/aliasproject/nginx:latest
+        restart: unless-stopped
+        volumes:
+            - certs:/etc/nginx/ssl
+            - vhosts:/etc/nginx/conf.d
+            - ${DEVBOX_PROJECT_ROOT:-./}:/home/alias:ro
+        ports:
+            - 80:80
+            - 443:443
+        networks:
+            - dev-network
+            - internal
+        depends_on:
+            - dns
+            - php
+
+    # ------------------------------------------------------------
+    # Watchman (Vhost Gen)
+    # ------------------------------------------------------------
+    watchman:
+        container_name: devbox_watchman
+        image: ghcr.io/aliasproject/watchman:latest
+        restart: unless-stopped
+        environment:
+            - DOCKER_USER=mike
+            - DOCKER_TOKEN=test
+        volumes:
+            - certs:/certs
+            - vhosts:/vhosts
+            - .:/public
+            - ${DEVBOX_PROJECT_ROOT:-./}:/home/alias:ro
+            - /var/run/docker.sock:/var/run/docker.sock
+        networks:
+            - internal
+        depends_on:
+            - nginx
+        healthcheck:
+            test: ash -c "[ -f /certs/AliasProjectCASelfSigned.pem ]"
+
+    # ------------------------------------------------------------
+    # MySQL (Database)
+    # ------------------------------------------------------------
+    mysql:
+        container_name: devbox_mysql
+        image: mysql:${MYSQL_SERVER:-8.0}
+        platform: linux/amd64
+        restart: unless-stopped
+        environment:
+            - MYSQL_ROOT_PASSWORD=
+            - MYSQL_ALLOW_EMPTY_PASSWORD=yes
+        ports:
+            - 3306:3306
+        networks:
+            - dev-network
+            - internal
+        volumes:
+            - mysql-${MYSQL_SERVER:-8.0}:/var/lib/mysql
+        depends_on:
+            - dns
+            - php
+            - nginx
+
+    # ------------------------------------------------------------
+    # Mailhog (Mail)
+    # ------------------------------------------------------------
+    mail:
+        container_name: devbox_mail
+        image: mailhog/mailhog:latest
+        platform: linux/amd64
+        restart: on-failure
+        ports:
+            - 1025:1025
+            - 8025:8025
+        networks:
+            - internal
 
 volumes:
-  mysql_data:`
+    # ------------------------------------------------------------
+    # NGINX
+    # ------------------------------------------------------------
+    certs:
+    vhosts:
+
+    # ------------------------------------------------------------
+    # MySQL
+    # ------------------------------------------------------------
+    mysql-8.0:
+    mysql-5.7:
+
+networks:
+    internal:
+        driver: bridge
+        ipam:
+            config:
+                - subnet: 192.168.237.0/24
+    dev-network:
+        driver: bridge`
 
 	if err := os.WriteFile(composeFile, []byte(composeContent), 0644); err != nil {
 		return fmt.Errorf("failed to create docker-compose.yml: %w", err)
 	}
 
-	fmt.Println("Devbox installed successfully!")
-	fmt.Println("You can now run 'devbox' from within your project directory.")
+	// Create certs directory - this will be mapped to the Docker volume
+	certsDir := filepath.Join(devboxDir, "certs")
+	if err := os.MkdirAll(certsDir, 0755); err != nil {
+		return fmt.Errorf("failed to create certs directory: %w", err)
+	}
+
+	// Set HOME environment variable to ensure it's available for docker-compose
+	if homeDir != "" {
+		os.Setenv("HOME", homeDir)
+	}
+
+	// Start containers
+	fmt.Println()
+	fmt.Println("🚀 Starting Docker containers...")
+
+	// Debug: Show environment variables that will be used
+	fmt.Printf("Debug: DEVBOX_PROJECT_ROOT=%s\n", os.Getenv("DEVBOX_PROJECT_ROOT"))
+	fmt.Printf("Debug: PHP_VERSION=%s\n", os.Getenv("PHP_VERSION"))
+	fmt.Printf("Debug: MYSQL_SERVER=%s\n", os.Getenv("MYSQL_SERVER"))
+	fmt.Printf("Debug: HOME=%s\n", os.Getenv("HOME"))
+
+	if err := startContainers(); err != nil {
+		return fmt.Errorf("failed to start containers: %w", err)
+	}
+
+	// Wait for Watchman to be healthy and generate SSL certificates
+	fmt.Println()
+	fmt.Println("🔍 Waiting for Watchman to scan project and generate SSL certificates...")
+	if err := waitForWatchman(); err != nil {
+		return fmt.Errorf("failed while waiting for Watchman: %w", err)
+	}
+
+	// Setup SSL certificates and prompt for CA acceptance
+	fmt.Println()
+	if err := setupSSL(); err != nil {
+		return fmt.Errorf("failed to setup SSL: %w", err)
+	}
+
+	fmt.Println()
+	fmt.Println("✅ Devbox installed successfully!")
+	fmt.Println("🌟 You can now run 'devbox' from anywhere in your project directory.")
+	fmt.Println("🔒 SSL certificates have been generated for your project domains.")
+	fmt.Println()
+	fmt.Printf("📁 Project directory: %s\n", projectDir)
+	fmt.Printf("🐘 PHP version: %s\n", phpVersion)
+	fmt.Printf("🐬 MySQL version: %s\n", mysqlVersion)
 
 	return nil
 }
@@ -722,13 +1366,19 @@ func copyFile(src, dst string) error {
 }
 
 func writeEnvVar(key, value string) error {
-	file, err := os.OpenFile(envVarsFile, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
+	// Ensure the directory exists
+	if err := os.MkdirAll(filepath.Dir(envVarsFile), 0755); err != nil {
+		return fmt.Errorf("failed to create directory for env vars file: %w", err)
+	}
+
+	line := fmt.Sprintf("%s=%s\n", key, value)
+	file, err := os.OpenFile(envVarsFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
 
-	_, err = file.WriteString(fmt.Sprintf("%s=%s\n", key, value))
+	_, err = file.WriteString(line)
 	return err
 }
 
@@ -781,18 +1431,97 @@ func configureDNS() error {
 }
 
 func startContainers() error {
-	return runDockerCommand([]string{"compose", "-f", composeFile, "up", "-d"})
+	return runDockerComposeCommand([]string{"compose", "-f", composeFile, "up", "-d"})
 }
 
 func waitForWatchman() error {
-	fmt.Println("Waiting for Watchman...")
-	time.Sleep(2 * time.Second)
-	fmt.Println("Watchman is ready.")
-	return nil
+	fmt.Println("Waiting for Watchman container to start...")
+
+	// Wait up to 5 minutes for Watchman to become healthy
+	timeout := time.After(5 * time.Minute)
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-timeout:
+			return fmt.Errorf("timeout waiting for Watchman to become healthy")
+		case <-ticker.C:
+			if isWatchmanHealthy() {
+				fmt.Println("Watchman is healthy and ready.")
+
+				// Give Watchman additional time to scan project and generate certificates
+				fmt.Println("Allowing time for SSL certificate generation...")
+				time.Sleep(30 * time.Second)
+
+				return nil
+			}
+			fmt.Println("Watchman not ready yet, checking again...")
+		}
+	}
 }
 
 func setupSSL() error {
-	fmt.Println("SSL certificates configured.")
+	fmt.Println("🔒 Setting up SSL certificates...")
+
+	// Copy CA certificate from Watchman container
+	caCertPath := filepath.Join(devboxDir, "certs", "AliasProjectCASelfSigned.pem")
+	fmt.Println("📋 Copying certificate from Watchman container...")
+
+	cmd := exec.Command("docker", "compose", "-f", composeFile, "cp", "devbox_watchman:/certs/AliasProjectCASelfSigned.pem", caCertPath)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("Warning: Failed to copy certificate using docker compose cp: %v\n", err)
+		fmt.Println("Attempting alternative method using docker cp...")
+
+		// Try alternative method with docker cp directly
+		altCmd := exec.Command("docker", "cp", "devbox_watchman:/certs/AliasProjectCASelfSigned.pem", caCertPath)
+		altCmd.Stdout = os.Stdout
+		altCmd.Stderr = os.Stderr
+
+		if err := altCmd.Run(); err != nil {
+			return fmt.Errorf("failed to copy CA certificate from Watchman container: %w", err)
+		}
+	}
+
+	// Verify the certificate was copied successfully
+	if !fileExists(caCertPath) {
+		return fmt.Errorf("CA certificate not found at %s after copying from container", caCertPath)
+	}
+
+	fmt.Println("✅ Certificate copied successfully!")
+
+	// Prompt user to install CA certificate
+	fmt.Println("\nTo enable HTTPS for your development environment, you need to install the")
+	fmt.Println("Alias Project Certificate Authority (CA) certificate on your system.")
+	fmt.Println("This allows your browser to trust the SSL certificates generated for your project.")
+
+	if !promptYesNo("Would you like to install the CA certificate now?") {
+		fmt.Println("Skipping CA certificate installation. You can install it later manually.")
+		fmt.Printf("CA certificate location: %s\n", caCertPath)
+		return nil
+	}
+
+	// Install CA certificate (macOS)
+	fmt.Println()
+	fmt.Println("🔐 Installing CA certificate to system keychain...")
+	fmt.Println("💡 You may be prompted for your password to authorize this change.")
+
+	sudoCmd := exec.Command("sudo", "security", "add-trusted-cert", "-d", "-r", "trustRoot",
+		"-k", "/Library/Keychains/System.keychain", caCertPath)
+	sudoCmd.Stdout = os.Stdout
+	sudoCmd.Stderr = os.Stderr
+	sudoCmd.Stdin = os.Stdin
+
+	if err := sudoCmd.Run(); err != nil {
+		fmt.Printf("Warning: Failed to install CA certificate automatically: %v\n", err)
+		fmt.Printf("You can install it manually: sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain %s\n", caCertPath)
+	} else {
+		fmt.Println("✅ CA certificate installed successfully!")
+	}
+
 	return nil
 }
 
@@ -809,4 +1538,171 @@ func promptYesNo(prompt string) bool {
 		return response == "y" || response == "yes"
 	}
 	return false
+}
+
+func isWatchmanHealthy() bool {
+	cmd := exec.Command("docker", "inspect", "-f", "{{.State.Health.Status}}", "devbox_watchman")
+	output, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(output)) == "healthy"
+}
+
+func fileExists(filename string) bool {
+	info, err := os.Stat(filename)
+	return err == nil && !info.IsDir()
+}
+
+func dirExists(dirname string) bool {
+	info, err := os.Stat(dirname)
+	return err == nil && info.IsDir()
+}
+
+func showHelp() {
+	fmt.Printf("Devbox v%s - Development Environment Manager\n\n", version)
+	fmt.Println("USAGE:")
+	fmt.Println("  devbox [COMMAND]")
+	fmt.Println()
+	fmt.Println("COMMANDS:")
+	fmt.Println("  help, -h, --help     Show this help message")
+	fmt.Println("  -v, --version        Show version information")
+	fmt.Println("  update               Update devbox to the latest version")
+	fmt.Println("  install              Show installation status")
+	fmt.Println("  status               Show complete system status")
+	fmt.Println()
+	fmt.Println("DOCKER COMPOSE COMMANDS:")
+	fmt.Println("  up                   Start containers")
+	fmt.Println("  down                 Stop containers")
+	fmt.Println("  ps                   Show container status")
+	fmt.Println("  logs                 Show container logs")
+	fmt.Println("  pull                 Pull latest container images")
+	fmt.Println("  restart              Restart containers")
+	fmt.Println()
+	fmt.Println("EXAMPLES:")
+	fmt.Println("  devbox status        # Show complete status")
+	fmt.Println("  devbox up            # Start all containers")
+	fmt.Println("  devbox ps            # Show running containers")
+	fmt.Println("  devbox logs php      # Show PHP container logs")
+	fmt.Println("  devbox down          # Stop all containers")
+	fmt.Println()
+	fmt.Println("For more information, visit: https://github.com/aliasproject/devbox")
+}
+
+func showStatus() error {
+	fmt.Printf("🔧 Devbox v%s - System Status\n\n", version)
+
+	// Installation Status
+	fmt.Println("📦 Installation Status:")
+	fmt.Printf("  Config directory: %s (%s)\n", devboxDir, getStatus(dirExists(devboxDir)))
+	fmt.Printf("  Binary location: %s (%s)\n", devboxBinary, getStatus(fileExists(devboxBinary)))
+	fmt.Printf("  Env vars file: %s (%s)\n", envVarsFile, getStatus(fileExists(envVarsFile)))
+	fmt.Printf("  Docker compose: %s (%s)\n", composeFile, getStatus(fileExists(composeFile)))
+
+	// Environment Variables Status
+	fmt.Println("\n🔧 Configuration:")
+	if isInstalled() {
+		loadEnvVars() // Load variables to check them
+		fmt.Printf("  Project root: %s\n", getEnvStatus("DEVBOX_PROJECT_ROOT"))
+		fmt.Printf("  PHP version: %s\n", getEnvStatus("PHP_VERSION"))
+		fmt.Printf("  MySQL version: %s\n", getEnvStatus("MYSQL_SERVER"))
+		fmt.Printf("  GitHub token: %s\n", getTokenStatus())
+	} else {
+		fmt.Println("  ❌ Devbox not installed")
+	}
+
+	// Docker Status
+	fmt.Println("\n🐳 Docker Status:")
+	if !isDockerInstalled() {
+		fmt.Println("  ❌ Docker not installed or not running")
+		return nil
+	}
+	fmt.Println("  ✅ Docker is running")
+
+	// Container Status
+	if !isInstalled() {
+		fmt.Println("  ❌ Devbox not installed - no containers to check")
+		return nil
+	}
+
+	if !isInsideProjectDir() {
+		fmt.Println("  ⚠️  Not in project directory - cannot check container status")
+		return nil
+	}
+
+	fmt.Println("\n📊 Container Status:")
+
+	// Check individual containers
+	containers := []string{"devbox_dns", "devbox_php", "devbox_nginx", "devbox_watchman", "devbox_mysql", "devbox_mail"}
+	for _, container := range containers {
+		status := getContainerStatus(container)
+		fmt.Printf("  %s: %s\n", container, status)
+	}
+
+	// Show port mappings
+	fmt.Println("\n🌐 Port Mappings:")
+	fmt.Println("  HTTP: http://localhost:80")
+	fmt.Println("  HTTPS: https://localhost:443")
+	fmt.Println("  MySQL: localhost:3306")
+	fmt.Println("  Mailhog: http://localhost:8025")
+	fmt.Println("  DNS: localhost:5354")
+
+	return nil
+}
+
+func getEnvStatus(envVar string) string {
+	value := os.Getenv(envVar)
+	if value == "" {
+		return "❌ not set"
+	}
+	return fmt.Sprintf("✅ %s", value)
+}
+
+func getTokenStatus() string {
+	token := os.Getenv("GITHUB_TOKEN")
+	if token == "" {
+		return "❌ not set"
+	}
+	// Show first 8 characters and mask the rest for security
+	if len(token) > 8 {
+		return fmt.Sprintf("✅ %s...", token[:8])
+	}
+	return "✅ set"
+}
+
+func getContainerStatus(containerName string) string {
+	cmd := exec.Command("docker", "inspect", "-f", "{{.State.Status}}", containerName)
+	output, err := cmd.Output()
+	if err != nil {
+		return "❌ not found"
+	}
+
+	status := strings.TrimSpace(string(output))
+	switch status {
+	case "running":
+		return "✅ running"
+	case "exited":
+		return "🔴 stopped"
+	case "paused":
+		return "⏸️  paused"
+	case "restarting":
+		return "🔄 restarting"
+	default:
+		return fmt.Sprintf("⚠️  %s", status)
+	}
+}
+
+func getStatus(exists bool) string {
+	if exists {
+		return "✅ exists"
+	}
+	return "❌ missing"
+}
+
+func dockerComposeCommand(args []string) {
+	dockerArgs := []string{"compose", "-f", composeFile}
+	dockerArgs = append(dockerArgs, args...)
+	if err := runDockerComposeCommand(dockerArgs); err != nil {
+		fmt.Printf("Error running Docker Compose: %v\n", err)
+	}
 }
