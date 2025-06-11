@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	version      = "0.4.5"
+	version      = "0.6.0"
 	githubRepo   = "aliasproject/devbox"
 	devboxBinary = "/usr/local/bin/devbox"
 )
@@ -304,7 +304,7 @@ func getGitHubToken() (string, error) {
 	fmt.Println("\nGitHub token required for private repository access.")
 	fmt.Println("You can generate a token at: https://github.com/settings/tokens")
 	fmt.Println("Required scopes: repo (for private repositories)")
-	
+
 	token, err := promptInput("Enter GitHub token: ")
 	if err != nil {
 		return "", fmt.Errorf("failed to read token: %w", err)
@@ -335,7 +335,7 @@ func handleTokenExpired() error {
 
 	fmt.Println("You can generate a token at: https://github.com/settings/tokens")
 	fmt.Println("Required scopes: repo (for private repositories)")
-	
+
 	token, err := promptInput("Enter new GitHub token: ")
 	if err != nil {
 		return fmt.Errorf("failed to read token: %w", err)
@@ -353,7 +353,7 @@ func handleTokenExpired() error {
 	// Set in current environment
 	os.Setenv("GITHUB_TOKEN", token)
 	fmt.Println("GitHub token updated successfully.")
-	
+
 	return nil
 }
 
@@ -378,7 +378,7 @@ func updateEnvVar(key, value string) error {
 
 	lines := strings.Split(string(content), "\n")
 	updated := false
-	
+
 	// Update existing line or add new one
 	for i, line := range lines {
 		if strings.HasPrefix(line, key+"=") {
@@ -387,11 +387,11 @@ func updateEnvVar(key, value string) error {
 			break
 		}
 	}
-	
+
 	if !updated {
 		lines = append(lines, fmt.Sprintf("%s=%s", key, value))
 	}
-	
+
 	// Write back to file
 	return os.WriteFile(envVarsFile, []byte(strings.Join(lines, "\n")), 0644)
 }
@@ -419,7 +419,7 @@ func performUpdate(newVersion string) error {
 			token, _ = getGitHubToken()
 			downloadURL, err = getDownloadURL(newVersion, token)
 		}
-		
+
 		if err != nil {
 			fmt.Printf("\nAutomatic update not available: %v\n", err)
 			fmt.Printf("\nTo update manually:\n")
@@ -441,7 +441,7 @@ func performUpdate(newVersion string) error {
 			token, _ = getGitHubToken()
 			err = downloadFile(downloadURL, tempFile, token)
 		}
-		
+
 		if err != nil {
 			if strings.Contains(err.Error(), "404") {
 				fmt.Printf("\nDownload failed: Asset not found or access denied.\n")
