@@ -1,0 +1,926 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Devbox - Development Environment Manager</title>
+        <style>
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+
+            body {
+                font-family:
+                    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                    "Helvetica Neue", sans-serif;
+                line-height: 1.6;
+                color: #ffffff;
+                background: #0a0a0a;
+                overflow-x: hidden;
+            }
+
+            .container {
+                max-width: 1200px;
+                margin: 0 auto;
+                padding: 0 20px;
+            }
+
+            /* Header */
+            .header {
+                background: rgba(10, 10, 10, 0.95);
+                backdrop-filter: blur(20px);
+                padding: 1rem 0;
+                position: sticky;
+                top: 0;
+                z-index: 100;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            }
+
+            .nav {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+            }
+
+            .logo {
+                font-size: 1.5rem;
+                font-weight: 700;
+                color: #ffffff;
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+            }
+
+            .logo::before {
+                content: "📦";
+                font-size: 1.8rem;
+            }
+
+            .nav-links {
+                display: flex;
+                gap: 2rem;
+                list-style: none;
+            }
+
+            .nav-links a {
+                color: rgba(255, 255, 255, 0.8);
+                text-decoration: none;
+                transition: color 0.3s ease;
+                font-weight: 500;
+            }
+
+            .nav-links a:hover {
+                color: #3b82f6;
+            }
+
+            .download-btn {
+                background: #3b82f6;
+                color: white;
+                padding: 0.75rem 1.5rem;
+                border-radius: 8px;
+                text-decoration: none;
+                font-weight: 600;
+                transition: all 0.3s ease;
+                font-size: 0.9rem;
+            }
+
+            .download-btn:hover {
+                background: #2563eb;
+                transform: translateY(-1px);
+            }
+
+            /* Hero Section */
+            .hero {
+                padding: 8rem 0 6rem 0;
+                text-align: center;
+                background: radial-gradient(
+                    ellipse at center,
+                    rgba(59, 130, 246, 0.1) 0%,
+                    transparent 70%
+                );
+            }
+
+            .hero-title {
+                font-size: 4rem;
+                font-weight: 800;
+                margin-bottom: 1.5rem;
+                background: linear-gradient(135deg, #ffffff 0%, #3b82f6 100%);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+                background-clip: text;
+                line-height: 1.1;
+            }
+
+            .hero-subtitle {
+                font-size: 1.4rem;
+                color: rgba(255, 255, 255, 0.7);
+                margin-bottom: 3rem;
+                max-width: 700px;
+                margin-left: auto;
+                margin-right: auto;
+                font-weight: 400;
+            }
+
+            .hero-features {
+                display: flex;
+                justify-content: center;
+                gap: 2rem;
+                margin-bottom: 3rem;
+                flex-wrap: wrap;
+            }
+
+            .hero-feature {
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+                color: rgba(255, 255, 255, 0.8);
+                font-weight: 500;
+            }
+
+            .hero-feature::before {
+                content: "✓";
+                color: #10b981;
+                font-weight: bold;
+            }
+
+            .cta-section {
+                margin-bottom: 4rem;
+            }
+
+            .cta-button {
+                display: inline-block;
+                background: #3b82f6;
+                color: white;
+                padding: 1.25rem 2.5rem;
+                border-radius: 12px;
+                text-decoration: none;
+                font-weight: 600;
+                font-size: 1.1rem;
+                transition: all 0.3s ease;
+                margin: 0.5rem;
+                box-shadow: 0 4px 20px rgba(59, 130, 246, 0.3);
+            }
+
+            .cta-button:hover {
+                background: #2563eb;
+                transform: translateY(-2px);
+                box-shadow: 0 8px 25px rgba(59, 130, 246, 0.4);
+            }
+
+            .cta-secondary {
+                background: transparent;
+                border: 2px solid rgba(255, 255, 255, 0.2);
+                box-shadow: none;
+            }
+
+            .cta-secondary:hover {
+                background: rgba(255, 255, 255, 0.1);
+                border-color: rgba(255, 255, 255, 0.3);
+            }
+
+            .hero-note {
+                color: rgba(255, 255, 255, 0.5);
+                font-size: 0.9rem;
+                margin-top: 1rem;
+            }
+
+            /* How It Works Section */
+            .how-it-works {
+                padding: 6rem 0;
+                background: linear-gradient(180deg, #0a0a0a 0%, #111111 100%);
+            }
+
+            .section-title {
+                text-align: center;
+                font-size: 3rem;
+                font-weight: 700;
+                margin-bottom: 4rem;
+                color: #ffffff;
+            }
+
+            .section-title .highlight {
+                color: #3b82f6;
+            }
+
+            .steps-container {
+                display: grid;
+                grid-template-columns: 1fr 300px 1fr;
+                gap: 4rem;
+                align-items: center;
+                margin-bottom: 4rem;
+            }
+
+            .phone-mockup {
+                background: #1a1a1a;
+                border-radius: 25px;
+                padding: 20px;
+                box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+                border: 3px solid #333;
+                position: relative;
+                margin: 0 auto;
+                width: 280px;
+                height: 500px;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+            }
+
+            .phone-screen {
+                background: #000;
+                border-radius: 15px;
+                width: 100%;
+                height: 100%;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                position: relative;
+                overflow: hidden;
+            }
+
+            .add-task-btn {
+                width: 60px;
+                height: 60px;
+                background: #3b82f6;
+                border-radius: 50%;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                color: white;
+                font-size: 24px;
+                font-weight: bold;
+                margin-bottom: 1rem;
+            }
+
+            .steps-list {
+                list-style: none;
+            }
+
+            .step-item {
+                display: flex;
+                gap: 1rem;
+                margin-bottom: 2rem;
+                align-items: flex-start;
+            }
+
+            .step-number {
+                background: #3b82f6;
+                color: white;
+                width: 32px;
+                height: 32px;
+                border-radius: 50%;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-weight: bold;
+                flex-shrink: 0;
+            }
+
+            .step-content h3 {
+                font-size: 1.25rem;
+                font-weight: 600;
+                margin-bottom: 0.5rem;
+                color: #ffffff;
+            }
+
+            .step-content p {
+                color: rgba(255, 255, 255, 0.7);
+                line-height: 1.6;
+            }
+
+            /* Features Section */
+            .features {
+                padding: 6rem 0;
+                background: #0a0a0a;
+            }
+
+            .features-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+                gap: 2rem;
+                margin-top: 4rem;
+            }
+
+            .feature-card {
+                background: linear-gradient(135deg, #1a1a1a 0%, #2a2a2a 100%);
+                padding: 2.5rem;
+                border-radius: 16px;
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                transition: all 0.3s ease;
+                position: relative;
+                overflow: hidden;
+            }
+
+            .feature-card::before {
+                content: "";
+                position: absolute;
+                top: 0;
+                left: 0;
+                right: 0;
+                height: 1px;
+                background: linear-gradient(
+                    90deg,
+                    transparent,
+                    #3b82f6,
+                    transparent
+                );
+                opacity: 0;
+                transition: opacity 0.3s ease;
+            }
+
+            .feature-card:hover {
+                transform: translateY(-5px);
+                border-color: rgba(59, 130, 246, 0.3);
+                box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+            }
+
+            .feature-card:hover::before {
+                opacity: 1;
+            }
+
+            .feature-icon {
+                font-size: 2.5rem;
+                margin-bottom: 1.5rem;
+                display: block;
+            }
+
+            .feature-card h3 {
+                font-size: 1.5rem;
+                font-weight: 600;
+                margin-bottom: 1rem;
+                color: #ffffff;
+            }
+
+            .feature-card p {
+                color: rgba(255, 255, 255, 0.7);
+                line-height: 1.6;
+            }
+
+            /* Different Section */
+            .different-section {
+                padding: 6rem 0;
+                background: linear-gradient(180deg, #0a0a0a 0%, #111111 100%);
+            }
+
+            .different-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+                gap: 2rem;
+                margin-top: 4rem;
+            }
+
+            .different-card {
+                background: #1a1a1a;
+                padding: 2rem;
+                border-radius: 12px;
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                text-align: center;
+                transition: all 0.3s ease;
+            }
+
+            .different-card:hover {
+                transform: translateY(-3px);
+                border-color: rgba(59, 130, 246, 0.3);
+            }
+
+            .different-icon {
+                font-size: 2rem;
+                margin-bottom: 1rem;
+            }
+
+            .different-card h3 {
+                font-size: 1.25rem;
+                font-weight: 600;
+                margin-bottom: 0.5rem;
+                color: #ffffff;
+            }
+
+            .different-card p {
+                color: rgba(255, 255, 255, 0.7);
+                font-size: 0.9rem;
+            }
+
+            /* Target Audience Section */
+            .audience-section {
+                padding: 6rem 0;
+                background: #0a0a0a;
+            }
+
+            .audience-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+                gap: 2rem;
+                margin-top: 4rem;
+            }
+
+            .audience-card {
+                background: linear-gradient(135deg, #1a1a1a 0%, #2a2a2a 100%);
+                padding: 2rem;
+                border-radius: 12px;
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-left: 4px solid #3b82f6;
+            }
+
+            .audience-card h3 {
+                font-size: 1.25rem;
+                font-weight: 600;
+                margin-bottom: 1rem;
+                color: #ffffff;
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+            }
+
+            .audience-card p {
+                color: rgba(255, 255, 255, 0.7);
+                line-height: 1.6;
+            }
+
+            /* Code Example */
+            .code-example {
+                background: #111111;
+                padding: 4rem 0;
+            }
+
+            .code-block {
+                background: #1a1a1a;
+                border-radius: 12px;
+                padding: 2rem;
+                overflow-x: auto;
+                font-family: "Monaco", "Menlo", "Courier New", monospace;
+                margin: 2rem 0;
+                border: 1px solid rgba(255, 255, 255, 0.1);
+            }
+
+            .code-block pre {
+                color: #e5e7eb;
+                line-height: 1.6;
+                font-size: 0.9rem;
+            }
+
+            /* Footer */
+            .footer {
+                background: #0a0a0a;
+                border-top: 1px solid rgba(255, 255, 255, 0.1);
+                padding: 4rem 0 2rem 0;
+            }
+
+            .footer-content {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+                gap: 3rem;
+                margin-bottom: 3rem;
+            }
+
+            .footer-section h3 {
+                margin-bottom: 1rem;
+                color: #ffffff;
+                font-weight: 600;
+            }
+
+            .footer-section a {
+                color: rgba(255, 255, 255, 0.7);
+                text-decoration: none;
+                display: block;
+                margin-bottom: 0.75rem;
+                transition: color 0.3s;
+            }
+
+            .footer-section a:hover {
+                color: #3b82f6;
+            }
+
+            .footer-bottom {
+                border-top: 1px solid rgba(255, 255, 255, 0.1);
+                padding-top: 2rem;
+                text-align: center;
+                color: rgba(255, 255, 255, 0.5);
+            }
+
+            /* Responsive Design */
+            @media (max-width: 768px) {
+                .hero-title {
+                    font-size: 2.5rem;
+                }
+
+                .nav-links {
+                    display: none;
+                }
+
+                .hero-features {
+                    flex-direction: column;
+                    gap: 1rem;
+                }
+
+                .steps-container {
+                    grid-template-columns: 1fr;
+                    text-align: center;
+                }
+
+                .phone-mockup {
+                    order: -1;
+                }
+
+                .features-grid {
+                    grid-template-columns: 1fr;
+                }
+
+                .section-title {
+                    font-size: 2rem;
+                }
+            }
+
+            /* Animations */
+            @keyframes fadeInUp {
+                from {
+                    opacity: 0;
+                    transform: translateY(30px);
+                }
+                to {
+                    opacity: 1;
+                    transform: translateY(0);
+                }
+            }
+
+            .fade-in-up {
+                animation: fadeInUp 0.6s ease-out;
+            }
+        </style>
+    </head>
+    <body>
+        <header class="header">
+            <nav class="nav container">
+                <div class="logo">Devbox</div>
+                <ul class="nav-links">
+                    <li><a href="#features">Features</a></li>
+                    <li><a href="#how">How it Works</a></li>
+                    <li><a href="docs.html">Docs</a></li>
+                    <li><a href="#support">Support</a></li>
+                </ul>
+                <a href="#download" class="download-btn">Download Now</a>
+            </nav>
+        </header>
+
+        <section class="hero">
+            <div class="container">
+                <h1 class="hero-title">
+                    Simplify Development.<br />Prepare for Tomorrow.
+                </h1>
+                <p class="hero-subtitle">
+                    Devbox is the development environment manager that helps you
+                    follow through without the overwhelm. Built for real
+                    projects, real teams, and the moments you need to just focus
+                    on coding.
+                </p>
+
+                <div class="hero-features">
+                    <div class="hero-feature">Docker Management</div>
+                    <div class="hero-feature">SSL Certificates</div>
+                    <div class="hero-feature">Multi-Version Support</div>
+                    <div class="hero-feature">Auto Configuration</div>
+                </div>
+
+                <div class="cta-section">
+                    <a href="#download" class="cta-button">📦 Download Now</a>
+                    <a href="docs.html" class="cta-button cta-secondary"
+                        >View Documentation</a
+                    >
+                </div>
+
+                <p class="hero-note">
+                    Free to start • 3 containers per day included
+                </p>
+            </div>
+        </section>
+
+        <section class="how-it-works" id="how">
+            <div class="container">
+                <h2 class="section-title">
+                    How This Development Manager
+                    <span class="highlight">Works</span>
+                </h2>
+
+                <div class="steps-container">
+                    <div class="steps-list">
+                        <div class="step-item">
+                            <div class="step-number">1</div>
+                            <div class="step-content">
+                                <h3>Install Effortlessly</h3>
+                                <p>
+                                    Quickly install containers for today or
+                                    tomorrow. The manager automatically
+                                    organizes them with smart categorization and
+                                    protects tomorrow's environments from
+                                    premature completion.
+                                </p>
+                            </div>
+                        </div>
+
+                        <div class="step-item">
+                            <div class="step-number">2</div>
+                            <div class="step-content">
+                                <h3>Automatic Synchronization</h3>
+                                <p>
+                                    Containers update seamlessly when you return
+                                    to development. Background migration handles
+                                    daily rollover at midnight, moving
+                                    tomorrow's environments to today
+                                    automatically.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="phone-mockup">
+                        <div class="phone-screen">
+                            <div class="add-task-btn">+</div>
+                            <p style="color: white; font-weight: 600">
+                                Add Environment
+                            </p>
+                        </div>
+                    </div>
+
+                    <div class="steps-list">
+                        <div class="step-item">
+                            <div class="step-number">3</div>
+                            <div class="step-content">
+                                <h3>Intelligent Notifications</h3>
+                                <p>
+                                    Receive context-aware reminders,
+                                    motivational messages, and
+                                    environment-specific notifications timed
+                                    perfectly to keep you engaged without
+                                    overwhelming you.
+                                </p>
+                            </div>
+                        </div>
+
+                        <div class="step-item">
+                            <div class="step-number">4</div>
+                            <div class="step-content">
+                                <h3>Celebrate Completion</h3>
+                                <p>
+                                    Mark environments complete with satisfying
+                                    haptic feedback and confetti celebrations.
+                                    Undo within 30 seconds if needed, or swipe
+                                    to delete.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="different-section">
+            <div class="container">
+                <h2 class="section-title">
+                    What Makes Devbox <span class="highlight">Different</span>
+                </h2>
+
+                <div class="different-grid">
+                    <div class="different-card">
+                        <div class="different-icon">✨</div>
+                        <h3>Simple by Design</h3>
+                        <p>
+                            Just Today and Tomorrow. No calendars, no clutter,
+                            no setup.
+                        </p>
+                    </div>
+
+                    <div class="different-card">
+                        <div class="different-icon">🔄</div>
+                        <h3>Reminds You Automatically</h3>
+                        <p>
+                            Random notifications help you remember without
+                            needing to check the app.
+                        </p>
+                    </div>
+
+                    <div class="different-card">
+                        <div class="different-icon">⚡</div>
+                        <h3>Lightning Fast</h3>
+                        <p>
+                            Optimized for speed and efficiency in your
+                            development workflow.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="audience-section">
+            <div class="container">
+                <h2 class="section-title">
+                    A Development Environment Designed for How
+                    <span class="highlight">People Actually Think</span>
+                </h2>
+
+                <div class="audience-grid">
+                    <div class="audience-card">
+                        <h3>🧠 For Those with ADHD</h3>
+                        <p>
+                            Smart reminders that work with your natural
+                            development flow.
+                        </p>
+                    </div>
+
+                    <div class="audience-card">
+                        <h3>⚡ For the Overwhelmed</h3>
+                        <p>
+                            No backlog, no complexity. Just today and tomorrow's
+                            environments.
+                        </p>
+                    </div>
+
+                    <div class="audience-card">
+                        <h3>🎯 For the Minimalist</h3>
+                        <p>
+                            Clean, focused interface that gets out of your way.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="features" id="features">
+            <div class="container">
+                <h2 class="section-title">Everything You Need to Develop</h2>
+                <div class="features-grid">
+                    <div class="feature-card">
+                        <div class="feature-icon">🐳</div>
+                        <h3>Docker Integration</h3>
+                        <p>
+                            Seamlessly manage Docker containers with PHP, MySQL,
+                            Nginx, and more. One command to rule them all.
+                        </p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">🔒</div>
+                        <h3>SSL Certificates</h3>
+                        <p>
+                            Automatic SSL certificate generation and management.
+                            HTTPS development environments out of the box.
+                        </p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">⚡</div>
+                        <h3>Multi-Version Support</h3>
+                        <p>
+                            Switch between PHP 8.0, 8.1, 8.2 and MySQL 5.7, 8.0
+                            versions effortlessly for different projects.
+                        </p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">🔧</div>
+                        <h3>Auto Configuration</h3>
+                        <p>
+                            Smart project detection and automatic virtual host
+                            generation. Your projects just work.
+                        </p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">📧</div>
+                        <h3>Email Testing</h3>
+                        <p>
+                            Built-in Mailhog for email testing. Never worry
+                            about sending test emails to real users again.
+                        </p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">🔄</div>
+                        <h3>Auto Updates</h3>
+                        <p>
+                            Keep your development environment up to date with
+                            automatic updates and version management.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="code-example">
+            <div class="container">
+                <h2 class="section-title" style="color: white">
+                    Simple Commands, Powerful Results
+                </h2>
+                <div class="code-block">
+                    <pre>
+# Install and set up your entire development environment
+$ devbox install
+
+# Start all containers
+$ devbox up
+
+# Check status
+$ devbox status
+
+# Execute commands in containers
+$ devbox logs php
+$ devbox restart
+$ devbox down</pre
+                    >
+                </div>
+            </div>
+        </section>
+
+        <footer class="footer">
+            <div class="container">
+                <div class="footer-content">
+                    <div class="footer-section">
+                        <h3>Product</h3>
+                        <a href="#features">Features</a>
+                        <a href="#how">How it Works</a>
+                        <a href="docs.html">Documentation</a>
+                        <a href="#changelog">Changelog</a>
+                    </div>
+                    <div class="footer-section">
+                        <h3>Support</h3>
+                        <a href="#help">Help Center</a>
+                        <a href="#community">Community</a>
+                        <a href="#github">GitHub Issues</a>
+                        <a href="#contact">Contact Us</a>
+                    </div>
+                    <div class="footer-section">
+                        <h3>Company</h3>
+                        <a href="#about">About</a>
+                        <a href="#blog">Blog</a>
+                        <a href="#careers">Careers</a>
+                        <a href="#privacy">Privacy Policy</a>
+                    </div>
+                    <div class="footer-section">
+                        <h3>Connect</h3>
+                        <a href="#twitter">Twitter</a>
+                        <a href="#linkedin">LinkedIn</a>
+                        <a href="#github">GitHub</a>
+                        <a href="#discord">Discord</a>
+                    </div>
+                </div>
+                <div class="footer-bottom">
+                    <p>
+                        &copy; 2024 Devbox. All rights reserved. Made with ❤️
+                        for developers.
+                    </p>
+                </div>
+            </div>
+        </footer>
+
+        <script>
+            // Smooth scrolling for navigation links
+            document.querySelectorAll('a[href^="#"]').forEach((anchor) => {
+                anchor.addEventListener("click", function (e) {
+                    e.preventDefault();
+                    const target = document.querySelector(
+                        this.getAttribute("href"),
+                    );
+                    if (target) {
+                        target.scrollIntoView({
+                            behavior: "smooth",
+                            block: "start",
+                        });
+                    }
+                });
+            });
+
+            // Add click handlers for download buttons
+            document
+                .querySelectorAll(".cta-button, .download-btn")
+                .forEach((button) => {
+                    button.addEventListener("click", function (e) {
+                        if (this.getAttribute("href") === "#download") {
+                            e.preventDefault();
+                            alert(
+                                "Download functionality would be implemented here. This is a demo page.",
+                            );
+                        }
+                    });
+                });
+
+            // Add fade-in animation on scroll
+            const observerOptions = {
+                threshold: 0.1,
+                rootMargin: "0px 0px -50px 0px",
+            };
+
+            const observer = new IntersectionObserver((entries) => {
+                entries.forEach((entry) => {
+                    if (entry.isIntersecting) {
+                        entry.target.classList.add("fade-in-up");
+                    }
+                });
+            }, observerOptions);
+
+            // Observe all cards and sections
+            document
+                .querySelectorAll(
+                    ".feature-card, .different-card, .audience-card, .step-item",
+                )
+                .forEach((el) => {
+                    observer.observe(el);
+                });
+        </script>
+    </body>
+</html>

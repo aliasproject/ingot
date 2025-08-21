@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -36,6 +37,17 @@ type release struct {
 	} `json:"assets"`
 }
 
+func getHostIP() (string, error) {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		return "", err
+	}
+	defer conn.Close()
+
+	localAddr := conn.LocalAddr().(*net.UDPAddr)
+	return localAddr.IP.String(), nil
+}
+
 func main() {
 	// Load environment variables from file
 	if isInstalled() {
@@ -65,6 +77,111 @@ func main() {
 			os.Exit(1)
 		}
 		return
+	}
+
+	// Handle network-help command
+	if len(args) > 0 && args[0] == "network-help" {
+		showNetworkHelp()
+		return
+	}
+
+	// Handle project init command
+	if len(args) > 0 && args[0] == "init" {
+		if err := initProject(); err != nil {
+			fmt.Printf("Project initialization failed: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Handle php-version command
+	if len(args) > 0 && args[0] == "php-version" {
+		if err := changePHPVersion(); err != nil {
+			fmt.Printf("PHP version change failed: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Handle project start command
+	if len(args) > 0 && args[0] == "start" {
+		if err := startProject(); err != nil {
+			fmt.Printf("Project start failed: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Handle project stop command
+	if len(args) > 0 && args[0] == "stop" {
+		if err := stopProject(); err != nil {
+			fmt.Printf("Project stop failed: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Handle global start command
+	if len(args) > 0 && args[0] == "global" && len(args) > 1 && args[1] == "start" {
+		if err := startGlobalServices(); err != nil {
+			fmt.Printf("Global services start failed: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Handle global stop command
+	if len(args) > 0 && args[0] == "global" && len(args) > 1 && args[1] == "stop" {
+		if err := stopGlobalServices(); err != nil {
+			fmt.Printf("Global services stop failed: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Handle projects list command
+	if len(args) > 0 && args[0] == "projects" {
+		if err := listProjects(); err != nil {
+			fmt.Printf("Failed to list projects: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Handle register command
+	if len(args) > 0 && args[0] == "register" {
+		if err := registerProject(); err != nil {
+			fmt.Printf("Project registration failed: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Handle unregister command
+	if len(args) > 0 && args[0] == "unregister" {
+		if err := unregisterProject(); err != nil {
+			fmt.Printf("Project unregistration failed: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Handle watchman mode command
+	if len(args) > 0 && args[0] == "watchman" {
+		if len(args) > 1 && args[1] == "mode" {
+			if err := switchWatchmanMode(); err != nil {
+				fmt.Printf("Watchman mode switch failed: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
+		if len(args) > 1 && args[1] == "status" {
+			if err := showWatchmanStatus(); err != nil {
+				fmt.Printf("Failed to show watchman status: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
 	}
 
 	// Handle install command (for when devbox is already installed)
@@ -117,47 +234,40 @@ func main() {
 
 	// Handle different commands
 	if len(args) == 0 {
-		// Default behavior - show container status
-		if !isInsideProjectDir() {
-			fmt.Println("Error: You must be inside a project directory to run devbox.")
-			fmt.Println("Navigate to your project root directory and try again.")
-			os.Exit(1)
+		// Default behavior - show project status if in project, otherwise show help
+		if isProjectInitialized() {
+			if err := showProjectStatus(); err != nil {
+				fmt.Printf("Failed to show project status: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		} else {
+			fmt.Println("💡 No devbox project found in current directory")
+			fmt.Println("Run 'devbox init' to initialize a project, or 'devbox help' for more options")
+			return
 		}
-
-		dockerArgs := []string{"compose", "-f", composeFile, "ps"}
-		if err := runDockerComposeCommand(dockerArgs); err != nil {
-			fmt.Printf("Failed to show container status: %v\n", err)
-			os.Exit(1)
-		}
-		return
 	}
 
-	// Exit if not inside project directory
-	if !isInsideProjectDir() {
-		fmt.Printf("Please try again from inside projects directory: %s\n", os.Getenv("DEVBOX_PROJECT_ROOT"))
-		os.Exit(1)
-	}
+	// Handle project-specific commands
+	if isProjectInitialized() {
+		projectName := getProjectName()
+		containerName := fmt.Sprintf("devbox_php_%s", projectName)
 
-	// Get relative path within project
-	relPath, err := getRelativeProjectPath()
-	if err != nil {
-		fmt.Printf("Error getting relative path: %v\n", err)
-		os.Exit(1)
-	}
+		// Execute command in project's PHP container
+		dockerArgs := []string{"exec", containerName}
+		dockerArgs = append(dockerArgs, args...)
 
-	containerPath := "/home/alias" + relPath
+		cmd := exec.Command("docker", dockerArgs...)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		cmd.Stdin = os.Stdin
 
-	// Check if directory exists in container
-	dirExists := directoryExistsInContainer(containerPath)
-
-	if dirExists {
-		// Execute commands in container with shortcuts
-		if err := executeInContainer(args); err != nil {
+		if err := cmd.Run(); err != nil {
 			fmt.Printf("Command failed: %v\n", err)
 			os.Exit(1)
 		}
 	} else {
-		// Directory doesn't exist in container, run docker compose command directly
+		// Run global docker compose command if not in a project
 		dockerArgs := []string{"compose", "-f", composeFile}
 		dockerArgs = append(dockerArgs, args...)
 		if err := runDockerComposeCommand(dockerArgs); err != nil {
@@ -1050,15 +1160,8 @@ func install() error {
 	// Set environment variable in current process for immediate use
 	os.Setenv("DEVBOX_PROJECT_ROOT", projectDir)
 
-	// Get PHP version
-	fmt.Println()
-	phpVersion := selectOption("Select PHP Version", []string{"8.2", "8.1", "8.0"})
-	if err := writeEnvVar("PHP_VERSION", phpVersion); err != nil {
-		return fmt.Errorf("failed to write PHP version: %w", err)
-	}
-
-	// Set environment variable in current process for immediate use
-	os.Setenv("PHP_VERSION", phpVersion)
+	// Note: PHP version is now configured per-project
+	fmt.Println("📦 PHP containers will be created per-project with configurable versions")
 
 	// Get MySQL version
 	fmt.Println()
@@ -1069,6 +1172,19 @@ func install() error {
 
 	// Set environment variable in current process for immediate use
 	os.Setenv("MYSQL_SERVER", mysqlVersion)
+
+	// Get Watchman mode
+	fmt.Println()
+	fmt.Println("Watchman Configuration:")
+	fmt.Println("  Auto-watch - Automatically detect and configure new projects in a directory")
+	fmt.Println("  Manual - Manually register projects using 'devbox register' command")
+	watchmanMode := selectOption("Select Watchman Mode", []string{"Auto-watch", "Manual"})
+	if err := writeEnvVar("WATCHMAN_MODE", watchmanMode); err != nil {
+		return fmt.Errorf("failed to write watchman mode: %w", err)
+	}
+
+	// Set environment variable in current process for immediate use
+	os.Setenv("WATCHMAN_MODE", watchmanMode)
 
 	// Setup GitHub token for GHCR authentication
 	fmt.Println()
@@ -1131,10 +1247,20 @@ func install() error {
 		}
 	}
 
+	// Get host IP address for network-wide access
+	hostIP, err := getHostIP()
+	if err != nil {
+		fmt.Printf("Warning: Could not determine host IP address: %v\n", err)
+		fmt.Println("Using 127.0.0.1 - domains will only work on this machine")
+		hostIP = "127.0.0.1"
+	} else {
+		fmt.Printf("🌐 Configuring domains to work across network using IP: %s\n", hostIP)
+	}
+
 	// Create docker-compose.yml file with Watchman container
 	fmt.Println()
 	fmt.Println("🐳 Creating Docker configuration...")
-	composeContent := `services:
+	composeContent := fmt.Sprintf(`services:
     # ------------------------------------------------------------
     # Dnsmasq (DNS Server)
     # ------------------------------------------------------------
@@ -1143,32 +1269,15 @@ func install() error {
         image: ghcr.io/aliasproject/dns:latest
         restart: unless-stopped
         ports:
-            - "5354:53/udp"
+            - "0.0.0.0:5354:53/udp"
         networks:
             internal:
                 ipv4_address: 192.168.237.4
         environment:
-            - COMMANDS=--address=/test/127.0.0.1 --server=1.1.1.1 --server=8.8.8.8 --log-facility=-
+            - COMMANDS=--address=/test/%s --server=1.1.1.1 --server=8.8.8.8 --log-facility=-
         dns:
             - 1.1.1.1
             - 8.8.8.8
-
-    # ------------------------------------------------------------
-    # PHP
-    # ------------------------------------------------------------
-    php:
-        container_name: devbox_php
-        image: ghcr.io/aliasproject/php:${PHP_VERSION:-8.2}-fpm
-        restart: unless-stopped
-        volumes:
-            - ${DEVBOX_PROJECT_ROOT:-./}:/home/alias
-            - /var/run/docker.sock:/var/run/docker.sock
-        dns:
-            - 192.168.237.4
-        networks:
-            - internal
-        depends_on:
-            - dns
 
     # ------------------------------------------------------------
     # Nginx (Web Server)
@@ -1185,11 +1294,10 @@ func install() error {
             - 80:80
             - 443:443
         networks:
-            - dev-network
+            - devbox-network
             - internal
         depends_on:
             - dns
-            - php
 
     # ------------------------------------------------------------
     # Watchman (Vhost Gen)
@@ -1201,12 +1309,14 @@ func install() error {
         environment:
             - DOCKER_USER=mike
             - DOCKER_TOKEN=test
+            - WATCHMAN_MODE=${WATCHMAN_MODE:-Auto-watch}
         volumes:
             - certs:/certs
             - vhosts:/vhosts
             - .:/public
             - ${DEVBOX_PROJECT_ROOT:-./}:/home/alias:ro
             - /var/run/docker.sock:/var/run/docker.sock
+            - %s/manual-projects:/manual-projects:ro
         networks:
             - internal
         depends_on:
@@ -1228,13 +1338,12 @@ func install() error {
         ports:
             - 3306:3306
         networks:
-            - dev-network
+            - devbox-network
             - internal
         volumes:
             - mysql-${MYSQL_SERVER:-8.0}:/var/lib/mysql
         depends_on:
             - dns
-            - php
             - nginx
 
     # ------------------------------------------------------------
@@ -1270,8 +1379,8 @@ networks:
         ipam:
             config:
                 - subnet: 192.168.237.0/24
-    dev-network:
-        driver: bridge`
+    devbox-network:
+        driver: bridge`, hostIP, devboxDir)
 
 	if err := os.WriteFile(composeFile, []byte(composeContent), 0644); err != nil {
 		return fmt.Errorf("failed to create docker-compose.yml: %w", err)
@@ -1288,12 +1397,12 @@ networks:
 		os.Setenv("HOME", homeDir)
 	}
 
-	// Start containers
+	// Start global services
 	fmt.Println()
-	fmt.Println("🚀 Starting Docker containers...")
+	fmt.Println("🚀 Starting global Docker services...")
 
-	if err := startContainers(); err != nil {
-		return fmt.Errorf("failed to start containers: %w", err)
+	if err := startGlobalServices(); err != nil {
+		return fmt.Errorf("failed to start global services: %w", err)
 	}
 
 	// Wait for Watchman to be healthy and generate SSL certificates
@@ -1315,8 +1424,31 @@ networks:
 	fmt.Println("🔒 SSL certificates have been generated for your project domains.")
 	fmt.Println()
 	fmt.Printf("📁 Project directory: %s\n", projectDir)
-	fmt.Printf("🐘 PHP version: %s\n", phpVersion)
+	fmt.Println("🐘 PHP version: Per-project configuration")
 	fmt.Printf("🐬 MySQL version: %s\n", mysqlVersion)
+	fmt.Printf("👁️  Watchman mode: %s\n", watchmanMode)
+
+	// Show network access information
+	fmt.Println()
+	fmt.Println("🌍 Network Access:")
+	fmt.Println("  📍 Local machine: https://yourproject.test")
+	if hostIP != "127.0.0.1" {
+		fmt.Printf("  🌐 Network devices: Configure DNS to %s:5354 for .test domains\n", hostIP)
+		fmt.Printf("  📱 Direct IP access: http://%s or https://%s\n", hostIP, hostIP)
+		fmt.Println("  🔧 Requires DNS configuration on other devices for .test domains")
+		fmt.Println("  💡 Run 'devbox network-help' for setup instructions")
+	}
+
+	fmt.Println()
+	fmt.Println("🚀 Next Steps:")
+	fmt.Println("  1. Navigate to your project directory")
+	fmt.Println("  2. Run 'devbox init' to initialize the project")
+	fmt.Println("  3. Run 'devbox start' to start project containers")
+	if watchmanMode == "Manual" {
+		fmt.Println("  4. Run 'devbox register' to register with Watchman for SSL/vhost")
+	} else {
+		fmt.Println("  4. Projects in your root directory will be auto-detected by Watchman")
+	}
 
 	return nil
 }
@@ -1529,6 +1661,9 @@ func dirExists(dirname string) bool {
 
 func showHelp() {
 	fmt.Printf("Devbox v%s - Development Environment Manager\n\n", version)
+	fmt.Printf("🌐 Network-Ready Development Environment\n")
+	fmt.Printf("Access your projects from ANY device on your network!\n\n")
+
 	fmt.Println("USAGE:")
 	fmt.Println("  devbox [COMMAND]")
 	fmt.Println()
@@ -1538,6 +1673,24 @@ func showHelp() {
 	fmt.Println("  update               Update devbox to the latest version")
 	fmt.Println("  install              Show installation status")
 	fmt.Println("  status               Show complete system status")
+	fmt.Println("  network-help         Show network configuration options")
+	fmt.Println()
+	fmt.Println("PROJECT COMMANDS:")
+	fmt.Println("  init                 Initialize current directory as a devbox project")
+	fmt.Println("  start                Start project containers")
+	fmt.Println("  stop                 Stop project containers")
+	fmt.Println("  php-version          Change PHP version for current project")
+	fmt.Println("  projects             List all devbox projects")
+	fmt.Println("  register             Register current project with Watchman (manual mode)")
+	fmt.Println("  unregister           Unregister current project from Watchman")
+	fmt.Println()
+	fmt.Println("WATCHMAN COMMANDS:")
+	fmt.Println("  watchman mode        Switch between Auto-watch and Manual modes")
+	fmt.Println("  watchman status      Show Watchman status and registered projects")
+	fmt.Println()
+	fmt.Println("GLOBAL COMMANDS:")
+	fmt.Println("  global start         Start global devbox services")
+	fmt.Println("  global stop          Stop global devbox services")
 	fmt.Println()
 	fmt.Println("DOCKER COMPOSE COMMANDS:")
 	fmt.Println("  up                   Start containers")
@@ -1547,20 +1700,28 @@ func showHelp() {
 	fmt.Println("  pull                 Pull latest container images")
 	fmt.Println("  restart              Restart containers")
 	fmt.Println()
+	fmt.Println("🌍 NETWORK ACCESS:")
+	fmt.Println("  Local machine:       https://yourproject.test")
+	fmt.Println("  Network devices:     Configure DNS for .test domains")
+	fmt.Println("  Direct IP access:    Check 'devbox status' for your IP")
+	fmt.Println()
 	fmt.Println("EXAMPLES:")
+	fmt.Println("  devbox init          # Initialize project in current directory")
+	fmt.Println("  devbox start         # Start project containers")
+	fmt.Println("  devbox php-version   # Change PHP version for project")
+	fmt.Println("  devbox register      # Register project with Watchman (manual mode)")
+	fmt.Println("  devbox projects      # List all projects")
+	fmt.Println("  devbox watchman mode # Switch watchman mode")
+	fmt.Println("  devbox global start  # Start global devbox services")
 	fmt.Println("  devbox status        # Show complete status")
-	fmt.Println("  devbox up            # Start all containers")
-	fmt.Println("  devbox ps            # Show running containers")
-	fmt.Println("  devbox logs php      # Show PHP container logs")
-	fmt.Println("  devbox down          # Stop all containers")
+	fmt.Println("  devbox network-help  # Network configuration guide")
 	fmt.Println()
 	fmt.Println("For more information, visit: https://github.com/aliasproject/devbox")
 }
 
 func showStatus() error {
-	fmt.Printf("🔧 Devbox v%s - System Status\n\n", version)
+	fmt.Printf("Devbox v%s - System Status\n\n", version)
 
-	// Installation Status
 	fmt.Println("📦 Installation Status:")
 	fmt.Printf("  Config directory: %s (%s)\n", devboxDir, getStatus(dirExists(devboxDir)))
 	fmt.Printf("  Binary location: %s (%s)\n", devboxBinary, getStatus(fileExists(devboxBinary)))
@@ -1568,12 +1729,12 @@ func showStatus() error {
 	fmt.Printf("  Docker compose: %s (%s)\n", composeFile, getStatus(fileExists(composeFile)))
 
 	// Environment Variables Status
-	fmt.Println("\n🔧 Configuration:")
+	fmt.Println("\n🔧 Global Configuration:")
 	if isInstalled() {
 		loadEnvVars() // Load variables to check them
 		fmt.Printf("  Project root: %s\n", getEnvStatus("DEVBOX_PROJECT_ROOT"))
-		fmt.Printf("  PHP version: %s\n", getEnvStatus("PHP_VERSION"))
 		fmt.Printf("  MySQL version: %s\n", getEnvStatus("MYSQL_SERVER"))
+		fmt.Printf("  Watchman mode: %s\n", getEnvStatus("WATCHMAN_MODE"))
 		fmt.Printf("  GitHub token: %s\n", getTokenStatus())
 	} else {
 		fmt.Println("  ❌ Devbox not installed")
@@ -1587,24 +1748,30 @@ func showStatus() error {
 	}
 	fmt.Println("  ✅ Docker is running")
 
-	// Container Status
+	// Global Container Status
 	if !isInstalled() {
 		fmt.Println("  ❌ Devbox not installed - no containers to check")
 		return nil
 	}
 
-	if !isInsideProjectDir() {
-		fmt.Println("  ⚠️  Not in project directory - cannot check container status")
-		return nil
-	}
+	fmt.Println("\n📊 Global Container Status:")
 
-	fmt.Println("\n📊 Container Status:")
+	// Check global containers
+	containers := []string{"devbox_dns", "devbox_nginx", "devbox_watchman", "devbox_mysql", "devbox_mail"}
 
-	// Check individual containers
-	containers := []string{"devbox_dns", "devbox_php", "devbox_nginx", "devbox_watchman", "devbox_mysql", "devbox_mail"}
 	for _, container := range containers {
 		status := getContainerStatus(container)
 		fmt.Printf("  %s: %s\n", container, status)
+	}
+
+	// Show current project status if in a project directory
+	if isProjectInitialized() {
+		fmt.Println("\n🏗️  Current Project Status:")
+		showProjectStatus()
+	} else {
+		fmt.Println("\n🏗️  Current Directory:")
+		fmt.Println("  ❌ Not a devbox project")
+		fmt.Println("  💡 Run 'devbox init' to initialize a project here")
 	}
 
 	// Show port mappings
@@ -1615,13 +1782,706 @@ func showStatus() error {
 	fmt.Println("  Mailhog: http://localhost:8025")
 	fmt.Println("  DNS: localhost:5354")
 
+	// Show network access information
+	hostIP, err := getHostIP()
+	if err == nil {
+		fmt.Printf("\n🌍 Network Access (from other devices):\n")
+		fmt.Printf("  🔧 Configure DNS: Set %s:5354 as DNS server for .test domains\n", hostIP)
+		fmt.Printf("  🌐 Direct IP access: http://%s or https://%s\n", hostIP, hostIP)
+		fmt.Printf("  📡 DNS server running on port 5354\n")
+		fmt.Printf("  💡 Run 'devbox network-help' for device setup instructions\n")
+	}
+
+	return nil
+}
+
+func showNetworkHelp() {
+	fmt.Println("🌍 Network Configuration Options for .test Domains\n")
+
+	hostIP, err := getHostIP()
+	if err != nil {
+		fmt.Println("❌ Could not determine host IP address")
+		return
+	}
+
+	fmt.Printf("Your host IP: %s\n\n", hostIP)
+
+	fmt.Println("🌐 NETWORK ACCESS SETUP for .test domains")
+	fmt.Println("To use .test domains on other devices, choose one option:")
+	fmt.Println()
+	fmt.Println("📡 OPTION 1: Router DNS Configuration (Recommended)")
+	fmt.Println("If your router supports DNS forwarding/conditional forwarding:")
+	fmt.Println("  1. Access your router's admin panel (usually http://192.168.1.1)")
+	fmt.Println("  2. Look for DNS settings, DNS forwarding, or conditional forwarding")
+	fmt.Printf("  3. Add rule: Forward *.test queries to %s port 5354\n", hostIP)
+	fmt.Println("  4. Save and restart router")
+	fmt.Println("  → Result: All devices automatically use .test domains")
+	fmt.Println()
+
+	fmt.Println("🏠 OPTION 2: Router DHCP DNS Override")
+	fmt.Println("If your router allows setting custom DNS servers via DHCP:")
+	fmt.Println("  1. Access router admin panel")
+	fmt.Println("  2. Find DHCP settings")
+	fmt.Printf("  3. Set primary DNS to: %s\n", hostIP)
+	fmt.Println("  4. Set secondary DNS to: 8.8.8.8 (for internet domains)")
+	fmt.Println("  5. Restart router and reconnect devices")
+	fmt.Println("  ⚠️  Note: This routes ALL DNS through your devbox")
+	fmt.Println()
+
+	fmt.Println("🔧 OPTION 3: Per-Device Configuration")
+	fmt.Println("Configure each device individually:")
+	fmt.Printf("  • Set DNS server to: %s\n", hostIP)
+	fmt.Println("  • Port: 5354 (if device supports custom ports)")
+	fmt.Println("  • See device-specific instructions online")
+	fmt.Println()
+
+	fmt.Println("📊 Testing Your Setup:")
+	fmt.Println("  1. Run 'devbox status' to verify containers are running")
+	fmt.Printf("  2. Test DNS: nslookup yourproject.test %s\n", hostIP)
+	fmt.Println("  3. Test web access from another device")
+	fmt.Printf("  4. Quick test: Try accessing http://%s from another device\n", hostIP)
+	fmt.Println("     If that works, the issue is just DNS resolution")
+	fmt.Println()
+
+	fmt.Println("💡 Troubleshooting:")
+	fmt.Println("  • Test direct IP access first to verify web server")
+	fmt.Println("  • Ensure devices are on the same network")
+	fmt.Println("  • Check firewall settings if connections fail")
+}
+
+func getProjectName() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "unknown"
+	}
+	return filepath.Base(cwd)
+}
+
+func getProjectConfigPath() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(cwd, ".devbox-project")
+}
+
+func getProjectComposePath() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(cwd, ".devbox", "docker-compose.yml")
+}
+
+func isProjectInitialized() bool {
+	return fileExists(getProjectConfigPath())
+}
+
+func initProject() error {
+	if isProjectInitialized() {
+		fmt.Println("✅ Project already initialized!")
+		return showProjectStatus()
+	}
+
+	projectName := getProjectName()
+	fmt.Printf("🚀 Initializing devbox project: %s\n\n", projectName)
+
+	// Get PHP version
+	fmt.Println("Select PHP version for this project:")
+	phpVersion := selectOption("PHP Version", []string{"8.2", "8.1", "8.0", "7.4"})
+
+	// Create project config directory
+	projectDir := filepath.Dir(getProjectConfigPath())
+	devboxProjectDir := filepath.Join(projectDir, ".devbox")
+	if err := os.MkdirAll(devboxProjectDir, 0755); err != nil {
+		return fmt.Errorf("failed to create .devbox directory: %w", err)
+	}
+
+	// Write project config
+	config := fmt.Sprintf("PROJECT_NAME=%s\nPHP_VERSION=%s\n", projectName, phpVersion)
+	if err := os.WriteFile(getProjectConfigPath(), []byte(config), 0644); err != nil {
+		return fmt.Errorf("failed to write project config: %w", err)
+	}
+
+	// Create project docker-compose.yml
+	if err := createProjectCompose(projectName, phpVersion); err != nil {
+		return fmt.Errorf("failed to create project compose file: %w", err)
+	}
+
+	fmt.Println("✅ Project initialized successfully!")
+	fmt.Printf("📁 Project: %s\n", projectName)
+	fmt.Printf("🐘 PHP Version: %s\n", phpVersion)
+	fmt.Println()
+
+	watchmanMode := os.Getenv("WATCHMAN_MODE")
+	fmt.Println("🚀 Next steps:")
+	fmt.Println("  devbox start    # Start project containers")
+	if watchmanMode == "Manual" {
+		fmt.Println("  devbox register # Register project with Watchman for SSL/vhost")
+	}
+	fmt.Println("  devbox status   # Check project status")
+
+	return nil
+}
+
+func createProjectCompose(projectName, phpVersion string) error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+
+	composeContent := fmt.Sprintf(`services:
+  php:
+    container_name: devbox_php_%s
+    image: ghcr.io/aliasproject/php:%s-fpm
+    restart: unless-stopped
+    volumes:
+      - .:/home/alias
+    networks:
+      - devbox-network
+    external_links:
+      - devbox_dns:dns
+    dns:
+      - 192.168.237.4
+
+networks:
+  devbox-network:
+    external: true
+`, projectName, phpVersion)
+
+	composePath := getProjectComposePath()
+	return os.WriteFile(composePath, []byte(composeContent), 0644)
+}
+
+func changePHPVersion() error {
+	if !isProjectInitialized() {
+		return fmt.Errorf("project not initialized. Run 'devbox init' first")
+	}
+
+	projectName := getProjectName()
+	fmt.Printf("🔄 Changing PHP version for project: %s\n\n", projectName)
+
+	// Get current PHP version
+	currentVersion := getProjectPHPVersion()
+	fmt.Printf("Current PHP version: %s\n\n", currentVersion)
+
+	// Select new PHP version
+	newVersion := selectOption("Select new PHP version", []string{"8.2", "8.1", "8.0", "7.4"})
+
+	if newVersion == currentVersion {
+		fmt.Println("✅ PHP version unchanged")
+		return nil
+	}
+
+	// Stop current container
+	fmt.Println("🛑 Stopping current PHP container...")
+	if err := stopProject(); err != nil {
+		fmt.Printf("Warning: Failed to stop current container: %v\n", err)
+	}
+
+	// Update project config
+	if err := updateProjectConfig("PHP_VERSION", newVersion); err != nil {
+		return fmt.Errorf("failed to update project config: %w", err)
+	}
+
+	// Recreate docker-compose.yml
+	if err := createProjectCompose(projectName, newVersion); err != nil {
+		return fmt.Errorf("failed to update compose file: %w", err)
+	}
+
+	fmt.Printf("✅ PHP version changed from %s to %s\n", currentVersion, newVersion)
+	fmt.Println("🚀 Run 'devbox start' to start with new PHP version")
+
+	return nil
+}
+
+func getProjectPHPVersion() string {
+	config := getProjectConfig()
+	if version, ok := config["PHP_VERSION"]; ok {
+		return version
+	}
+	return "8.2" // default
+}
+
+func getProjectConfig() map[string]string {
+	config := make(map[string]string)
+
+	content, err := os.ReadFile(getProjectConfigPath())
+	if err != nil {
+		return config
+	}
+
+	lines := strings.Split(string(content), "\n")
+	for _, line := range lines {
+		if strings.Contains(line, "=") {
+			parts := strings.SplitN(line, "=", 2)
+			if len(parts) == 2 {
+				config[parts[0]] = parts[1]
+			}
+		}
+	}
+
+	return config
+}
+
+func updateProjectConfig(key, value string) error {
+	config := getProjectConfig()
+	config[key] = value
+
+	var lines []string
+	for k, v := range config {
+		lines = append(lines, fmt.Sprintf("%s=%s", k, v))
+	}
+
+	content := strings.Join(lines, "\n")
+	return os.WriteFile(getProjectConfigPath(), []byte(content), 0644)
+}
+
+func startProject() error {
+	if !isProjectInitialized() {
+		return fmt.Errorf("project not initialized. Run 'devbox init' first")
+	}
+
+	projectName := getProjectName()
+	fmt.Printf("🚀 Starting project: %s\n", projectName)
+
+	// Ensure global services are running
+	if err := ensureGlobalServices(); err != nil {
+		return fmt.Errorf("failed to ensure global services: %w", err)
+	}
+
+	// Start project containers
+	composePath := getProjectComposePath()
+	cmd := exec.Command("docker", "compose", "-f", composePath, "up", "-d")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to start project containers: %w", err)
+	}
+
+	fmt.Println("✅ Project containers started successfully!")
+	return showProjectStatus()
+}
+
+func stopProject() error {
+	if !isProjectInitialized() {
+		return fmt.Errorf("project not initialized")
+	}
+
+	projectName := getProjectName()
+	fmt.Printf("🛑 Stopping project: %s\n", projectName)
+
+	composePath := getProjectComposePath()
+	cmd := exec.Command("docker", "compose", "-f", composePath, "down")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to stop project containers: %w", err)
+	}
+
+	fmt.Println("✅ Project containers stopped successfully!")
+	return nil
+}
+
+func startGlobalServices() error {
+	fmt.Println("🚀 Starting global devbox services...")
+
+	// Create devbox network if it doesn't exist
+	cmd := exec.Command("docker", "network", "create", "devbox-network")
+	cmd.Run() // Ignore error - network might already exist
+
+	// Start global services
+	cmd = exec.Command("docker", "compose", "-f", composeFile, "up", "-d")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to start global services: %w", err)
+	}
+
+	fmt.Println("✅ Global services started successfully!")
+	return nil
+}
+
+func stopGlobalServices() error {
+	fmt.Println("🛑 Stopping global devbox services...")
+
+	cmd := exec.Command("docker", "compose", "-f", composeFile, "down")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to stop global services: %w", err)
+	}
+
+	fmt.Println("✅ Global services stopped successfully!")
+	return nil
+}
+
+func ensureGlobalServices() error {
+	// Check if global services are running
+	cmd := exec.Command("docker", "compose", "-f", composeFile, "ps", "-q")
+	output, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("failed to check global services: %w", err)
+	}
+
+	if len(strings.TrimSpace(string(output))) == 0 {
+		fmt.Println("🔄 Global services not running, starting them...")
+		return startGlobalServices()
+	}
+
+	return nil
+}
+
+func showProjectStatus() error {
+	if !isProjectInitialized() {
+		fmt.Println("❌ Project not initialized")
+		fmt.Println("💡 Run 'devbox init' to initialize this project")
+		return nil
+	}
+
+	projectName := getProjectName()
+	phpVersion := getProjectPHPVersion()
+
+	fmt.Printf("📊 Project Status: %s\n", projectName)
+	fmt.Printf("🐘 PHP Version: %s\n", phpVersion)
+	fmt.Printf("📁 Directory: %s\n", filepath.Dir(getProjectConfigPath()))
+
+	// Check project container status
+	containerName := fmt.Sprintf("devbox_php_%s", projectName)
+	status := getContainerStatus(containerName)
+	fmt.Printf("🐳 Container: %s (%s)\n", containerName, status)
+
+	// Show project URL and registration status
+	fmt.Printf("🌐 Project URL: https://%s.test\n", projectName)
+
+	// Check registration status in manual mode
+	watchmanMode := os.Getenv("WATCHMAN_MODE")
+	if watchmanMode == "Manual" {
+		registrationFile := filepath.Join(devboxDir, "manual-projects", projectName)
+		if fileExists(registrationFile) {
+			fmt.Printf("📝 Registration: ✅ Registered with Watchman\n")
+		} else {
+			fmt.Printf("📝 Registration: ❌ Not registered (run 'devbox register')\n")
+			fmt.Println("💡 Your project won't have SSL certificates or vhost until registered")
+		}
+	} else {
+		fmt.Printf("📝 Registration: ✅ Auto-watch mode\n")
+		fmt.Println("💡 SSL certificates and vhost are created automatically")
+	}
+
+	// Show helpful tips based on container status
+	if strings.Contains(status, "not") || strings.Contains(status, "❌") {
+		fmt.Println("\n🚀 Next steps:")
+		fmt.Println("  devbox start    # Start project containers")
+	} else if watchmanMode == "Manual" && !fileExists(filepath.Join(devboxDir, "manual-projects", projectName)) {
+		fmt.Println("\n🚀 Next steps:")
+		fmt.Println("  devbox register # Register with Watchman for SSL/vhost")
+	}
+
+	return nil
+}
+
+func listProjects() error {
+	fmt.Println("📁 Devbox Projects\n")
+
+	projectRoot := os.Getenv("DEVBOX_PROJECT_ROOT")
+	if projectRoot == "" {
+		return fmt.Errorf("project root not configured")
+	}
+
+	// Find all directories with .devbox-project files
+	var projects []ProjectInfo
+	err := filepath.Walk(projectRoot, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil // Skip errors
+		}
+
+		if info.Name() == ".devbox-project" {
+			projectDir := filepath.Dir(path)
+			projectName := filepath.Base(projectDir)
+
+			// Read project config
+			config := getProjectConfigFromPath(path)
+			phpVersion := config["PHP_VERSION"]
+			if phpVersion == "" {
+				phpVersion = "8.2"
+			}
+
+			// Check container status
+			containerName := fmt.Sprintf("devbox_php_%s", projectName)
+			status := getContainerStatus(containerName)
+
+			projects = append(projects, ProjectInfo{
+				Name:       projectName,
+				Path:       projectDir,
+				PHPVersion: phpVersion,
+				Status:     status,
+			})
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to scan projects: %w", err)
+	}
+
+	if len(projects) == 0 {
+		fmt.Println("No devbox projects found.")
+		fmt.Printf("Projects are searched in: %s\n", projectRoot)
+		fmt.Println("\n💡 To create a project:")
+		fmt.Println("  1. Navigate to your project directory")
+		fmt.Println("  2. Run 'devbox init'")
+		return nil
+	}
+
+	// Display projects
+	fmt.Printf("Found %d project(s):\n\n", len(projects))
+	for _, project := range projects {
+		fmt.Printf("📦 %s\n", project.Name)
+		fmt.Printf("   Path: %s\n", project.Path)
+		fmt.Printf("   PHP: %s\n", project.PHPVersion)
+		fmt.Printf("   Status: %s\n", project.Status)
+		fmt.Printf("   URL: https://%s.test\n\n", project.Name)
+	}
+
+	return nil
+}
+
+type ProjectInfo struct {
+	Name       string
+	Path       string
+	PHPVersion string
+	Status     string
+}
+
+func getProjectConfigFromPath(configPath string) map[string]string {
+	config := make(map[string]string)
+
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		return config
+	}
+
+	lines := strings.Split(string(content), "\n")
+	for _, line := range lines {
+		if strings.Contains(line, "=") {
+			parts := strings.SplitN(line, "=", 2)
+			if len(parts) == 2 {
+				config[parts[0]] = parts[1]
+			}
+		}
+	}
+
+	return config
+}
+
+func registerProject() error {
+	if !isProjectInitialized() {
+		return fmt.Errorf("project not initialized. Run 'devbox init' first")
+	}
+
+	projectName := getProjectName()
+	fmt.Printf("📝 Registering project with Watchman: %s\n", projectName)
+
+	// Check if Watchman is in manual mode
+	watchmanMode := os.Getenv("WATCHMAN_MODE")
+	if watchmanMode != "Manual" {
+		fmt.Printf("⚠️  Watchman is in %s mode\n", watchmanMode)
+		fmt.Println("💡 Registration is automatic in Auto-watch mode")
+		return nil
+	}
+
+	// Get current working directory
+	projectPath, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get current directory: %w", err)
+	}
+
+	// Create a registration file that Watchman can detect
+	registrationFile := filepath.Join(devboxDir, "manual-projects", projectName)
+	registrationDir := filepath.Dir(registrationFile)
+
+	if err := os.MkdirAll(registrationDir, 0755); err != nil {
+		return fmt.Errorf("failed to create registration directory: %w", err)
+	}
+
+	registrationData := fmt.Sprintf("PROJECT_NAME=%s\nPROJECT_PATH=%s\nREGISTERED_AT=%s\n",
+		projectName, projectPath, time.Now().Format(time.RFC3339))
+
+	if err := os.WriteFile(registrationFile, []byte(registrationData), 0644); err != nil {
+		return fmt.Errorf("failed to create registration file: %w", err)
+	}
+
+	// Signal Watchman to process the registration
+	cmd := exec.Command("docker", "exec", "devbox_watchman", "touch", "/tmp/manual-project-added")
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("⚠️  Warning: Failed to signal Watchman: %v\n", err)
+		fmt.Println("💡 Watchman will detect the registration on its next scan")
+	}
+
+	fmt.Println("✅ Project registered successfully!")
+	fmt.Printf("🌐 Your project will be available at: https://%s.test\n", projectName)
+	fmt.Println("⏳ SSL certificate and vhost will be created shortly")
+
+	return nil
+}
+
+func unregisterProject() error {
+	if !isProjectInitialized() {
+		return fmt.Errorf("project not initialized")
+	}
+
+	projectName := getProjectName()
+	fmt.Printf("🗑️  Unregistering project from Watchman: %s\n", projectName)
+
+	// Remove registration file
+	registrationFile := filepath.Join(devboxDir, "manual-projects", projectName)
+	if err := os.Remove(registrationFile); err != nil {
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("failed to remove registration file: %w", err)
+		}
+		fmt.Println("⚠️  Project was not registered")
+		return nil
+	}
+
+	// Signal Watchman to process the unregistration
+	cmd := exec.Command("docker", "exec", "devbox_watchman", "touch", "/tmp/manual-project-removed")
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("⚠️  Warning: Failed to signal Watchman: %v\n", err)
+		fmt.Println("💡 Watchman will detect the unregistration on its next scan")
+	}
+
+	fmt.Println("✅ Project unregistered successfully!")
+	fmt.Printf("🌐 https://%s.test will no longer be available\n", projectName)
+	fmt.Println("💡 SSL certificates and vhost files may still exist until cleanup")
+
+	return nil
+}
+
+func switchWatchmanMode() error {
+	fmt.Println("🔄 Switching Watchman Mode\n")
+
+	currentMode := os.Getenv("WATCHMAN_MODE")
+	if currentMode == "" {
+		currentMode = "Auto-watch"
+	}
+
+	fmt.Printf("Current mode: %s\n\n", currentMode)
+	fmt.Println("Available modes:")
+	fmt.Println("  Auto-watch - Automatically detect and configure new projects in project root directory")
+	fmt.Println("  Manual - Manually register projects using 'devbox register' command")
+	fmt.Println()
+
+	newMode := selectOption("Select new Watchman mode", []string{"Auto-watch", "Manual"})
+
+	if newMode == currentMode {
+		fmt.Println("✅ Watchman mode unchanged")
+		return nil
+	}
+
+	// Update environment variable
+	if err := updateEnvVar("WATCHMAN_MODE", newMode); err != nil {
+		return fmt.Errorf("failed to update watchman mode: %w", err)
+	}
+
+	// Set in current process
+	os.Setenv("WATCHMAN_MODE", newMode)
+
+	// Restart Watchman container to pick up new mode
+	fmt.Println("🔄 Restarting Watchman container...")
+	cmd := exec.Command("docker", "compose", "-f", composeFile, "restart", "watchman")
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("⚠️  Warning: Failed to restart Watchman: %v\n", err)
+		fmt.Println("💡 Please restart manually: devbox global stop && devbox global start")
+	}
+
+	fmt.Printf("✅ Watchman mode changed to: %s\n", newMode)
+
+	if newMode == "Manual" {
+		fmt.Println("\n💡 Manual mode tips:")
+		fmt.Println("  • Use 'devbox register' in project directories to register them")
+		fmt.Println("  • Use 'devbox unregister' to remove projects")
+		fmt.Println("  • Use 'devbox watchman status' to see registered projects")
+	} else {
+		fmt.Println("\n💡 Auto-watch mode tips:")
+		fmt.Println("  • Projects in your root directory will be detected automatically")
+		fmt.Println("  • No manual registration needed")
+		fmt.Println("  • New folders will be picked up automatically")
+	}
+
+	return nil
+}
+
+func showWatchmanStatus() error {
+	fmt.Println("👁️  Watchman Status\n")
+
+	// Check if Watchman container is running
+	status := getContainerStatus("devbox_watchman")
+	fmt.Printf("Container Status: %s\n", status)
+
+	watchmanMode := os.Getenv("WATCHMAN_MODE")
+	if watchmanMode == "" {
+		watchmanMode = "Auto-watch"
+	}
+	fmt.Printf("Current Mode: %s\n", watchmanMode)
+
+	if watchmanMode == "Manual" {
+		fmt.Println("\n📝 Manually Registered Projects:")
+		registrationDir := filepath.Join(devboxDir, "manual-projects")
+
+		if !dirExists(registrationDir) {
+			fmt.Println("  No projects registered")
+			return nil
+		}
+
+		files, err := os.ReadDir(registrationDir)
+		if err != nil {
+			return fmt.Errorf("failed to read registration directory: %w", err)
+		}
+
+		if len(files) == 0 {
+			fmt.Println("  No projects registered")
+		} else {
+			for _, file := range files {
+				if !file.IsDir() {
+					projectName := file.Name()
+					registrationFile := filepath.Join(registrationDir, projectName)
+					config := getProjectConfigFromPath(registrationFile)
+					projectPath := config["PROJECT_PATH"]
+					registeredAt := config["REGISTERED_AT"]
+
+					fmt.Printf("  📦 %s\n", projectName)
+					if projectPath != "" {
+						fmt.Printf("     Path: %s\n", projectPath)
+					}
+					if registeredAt != "" {
+						fmt.Printf("     Registered: %s\n", registeredAt)
+					}
+					fmt.Printf("     URL: https://%s.test\n", projectName)
+					fmt.Println()
+				}
+			}
+		}
+	} else {
+		fmt.Println("\n🔍 Auto-watch Configuration:")
+		projectRoot := os.Getenv("DEVBOX_PROJECT_ROOT")
+		fmt.Printf("  Watching directory: %s\n", projectRoot)
+		fmt.Println("  Projects are detected automatically when folders are added")
+		fmt.Println("  💡 Use 'devbox projects' to see all detected projects")
+	}
+
 	return nil
 }
 
 func getEnvStatus(envVar string) string {
 	value := os.Getenv(envVar)
 	if value == "" {
-		return "❌ not set"
+		return "❌ Not set"
 	}
 	return fmt.Sprintf("✅ %s", value)
 }
