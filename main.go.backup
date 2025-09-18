@@ -1,0 +1,868 @@
+package main
+
+import (
+	"bufio"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strconv"
+	"strings"
+	"time"
+)
+
+const (
+	version      = "0.7.5"
+	githubRepo   = "aliasproject/devbox"
+	devboxBinary = "/usr/local/bin/devbox"
+	clientID     = "178c6fc778ccc68e1d6a"
+	githubAPI    = "https://api.github.com"
+	ghcrRegistry = "ghcr.io"
+)
+
+var (
+	homeDir   = os.Getenv("HOME")
+	devboxDir = filepath.Join(homeDir, ".devbox")
+	certsDir  = filepath.Join(devboxDir, "certs")
+	caPath    = filepath.Join(certsDir, "AliasProjectCASelfSigned.pem")
+)
+
+// Docker helper to reduce repetition
+type docker struct{}
+
+func (d docker) run(args ...string) error {
+	return exec.Command("docker", args...).Run()
+}
+
+func (d docker) output(args ...string) (string, error) {
+	out, err := exec.Command("docker", args...).Output()
+	return strings.TrimSpace(string(out)), err
+}
+
+func (d docker) exec(interactive bool, args ...string) error {
+	cmd := exec.Command("docker", args...)
+	if interactive {
+		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	}
+	return cmd.Run()
+}
+
+var dock = docker{}
+
+// HTTP client singleton
+var httpClient = &http.Client{Timeout: 10 * time.Second}
+
+func main() {
+	if len(os.Args) < 2 {
+		if isProjectInitialized() {
+			showProjectStatus()
+		} else {
+			fmt.Println("💡 No devbox project found in current directory")
+			fmt.Println("Run 'devbox start' to initialize and start a project, or 'devbox help' for more options")
+		}
+		return
+	}
+
+	cmd := os.Args[1]
+
+	// Version/help commands
+	if cmd == "-v" || cmd == "--version" {
+		fmt.Printf("Devbox v%s\n", version)
+		return
+	}
+	if cmd == "help" || cmd == "-h" || cmd == "--help" {
+		showHelp()
+		return
+	}
+
+	// Route commands
+	commands := map[string]func() error{
+		"status":        showStatus,
+		"network-help":  showNetworkHelp,
+		"cert-verify":   verifyCert,
+		"cert-install":  installCert,
+		"cert-debug":    debugCert,
+		"init":          initProject,
+		"php-version":   changePHPVersion,
+		"start":         startProject,
+		"stop":          stopProject,
+		"projects":      listProjects,
+		"register":      deprecatedCommand("SSL certificates and vhosts are created directly by 'devbox start'"),
+		"unregister":    deprecatedCommand("Use 'devbox remove' to completely clean up a project"),
+		"remove":        removeProject,
+		"dns-cleanup":   cleanupDNS,
+		"update":        updateDevbox,
+		"github-auth":   setupGitHubAuth,
+	}
+
+	// Handle compound commands
+	if cmd == "global" && len(os.Args) > 2 {
+		switch os.Args[2] {
+		case "start":
+			handleError(startGlobalServices())
+			return
+		case "stop":
+			handleError(stopGlobalServices())
+			return
+		}
+	}
+
+	if cmd == "database" && len(os.Args) > 2 {
+		switch os.Args[2] {
+		case "add":
+			handleError(addDatabase())
+			return
+		case "remove":
+			handleError(removeDatabase())
+			return
+		}
+	}
+
+	// Execute single commands
+	if fn, ok := commands[cmd]; ok {
+		handleError(fn())
+		return
+	}
+
+	// Check Docker
+	if !isDockerInstalled() {
+		fatal("Docker is not installed or not running. Please install Docker first.")
+	}
+
+	// Install if needed
+	if cmd == "install" {
+		if isInstalled() {
+			fmt.Printf("Devbox is already installed! Version: v%s\n", version)
+			showStatus()
+		} else {
+			handleError(install())
+		}
+		return
+	}
+
+	if !isInstalled() {
+		fmt.Println("Devbox is not installed. Installing...")
+		handleError(install())
+		return
+	}
+
+	// Handle project container commands
+	if isProjectInitialized() {
+		containerName := fmt.Sprintf("devbox_php_%s", getProjectName())
+		args := append([]string{"exec", containerName}, os.Args[1:]...)
+		handleError(dock.exec(true, args...))
+	} else {
+		fmt.Printf("Unknown command: %s\nRun 'devbox help' for available commands\n", cmd)
+		os.Exit(1)
+	}
+}
+
+func handleError(err error) {
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func fatal(msg string) {
+	fmt.Println(msg)
+	os.Exit(1)
+}
+
+func deprecatedCommand(msg string) func() error {
+	return func() error {
+		fmt.Printf("📝 %s\n", msg)
+		return nil
+	}
+}
+
+// Core functionality
+
+func isInstalled() bool {
+	_, err := os.Stat(devboxBinary)
+	return err == nil
+}
+
+func isDockerInstalled() bool {
+	return dock.run("--version") == nil
+}
+
+func getProjectName() string {
+	cwd, _ := os.Getwd()
+	return filepath.Base(cwd)
+}
+
+func isProjectInitialized() bool {
+	return dock.run("inspect", fmt.Sprintf("devbox_php_%s", getProjectName())) == nil
+}
+
+func getProjectPHPVersion() string {
+	out, err := dock.output("inspect", "-f",
+		`{{index .Config.Labels "devbox.project.php_version"}}`,
+		fmt.Sprintf("devbox_php_%s", getProjectName()))
+	if err != nil || out == "" || out == "<no value>" {
+		return "8.3"
+	}
+	return out
+}
+
+func getHostIP() (string, error) {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		return "", err
+	}
+	defer conn.Close()
+	return conn.LocalAddr().(*net.UDPAddr).IP.String(), nil
+}
+
+// Installation
+
+func install() error {
+	fmt.Println("🚀 Setting up Devbox...")
+
+	// Create directories
+	if err := os.MkdirAll(certsDir, 0755); err != nil {
+		return fmt.Errorf("failed to create devbox directory: %w", err)
+	}
+
+	// Database selection
+	var dbType, dbVersion string
+	if promptYesNo("Would you like to include a database service?") {
+		dbType = selectOption("Select Database Type", []string{"mysql", "postgresql"})
+		dbVersion = selectDatabaseVersion(dbType)
+		os.Setenv("DATABASE_TYPE", dbType)
+		os.Setenv("DATABASE_VERSION", dbVersion)
+	}
+
+	// Setup GitHub auth
+	fmt.Println("\n🔑 Setting up GitHub authentication...")
+	if token, err := getGitHubToken(); err == nil {
+		setupGHCR(token)
+	}
+
+	// Install binary
+	if err := installBinary(); err != nil {
+		return err
+	}
+
+	// Start services
+	if err := startGlobalServices(); err != nil {
+		return fmt.Errorf("failed to start services: %w", err)
+	}
+
+	// Setup DNS and SSL
+	setupTestDomainResolver()
+	if err := setupSSL(); err != nil {
+		return fmt.Errorf("failed to setup SSL: %w", err)
+	}
+
+	showInstallComplete(dbType, dbVersion)
+	return nil
+}
+
+func installBinary() error {
+	fmt.Println("\n📦 Installing devbox binary...")
+	currentBinary, _ := os.Executable()
+
+	if err := copyFile(currentBinary, devboxBinary); err != nil {
+		fmt.Println("Permission denied. Using sudo...")
+		cmd := exec.Command("sudo", "cp", currentBinary, devboxBinary)
+		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("failed to install binary: %w", err)
+		}
+		exec.Command("sudo", "chmod", "755", devboxBinary).Run()
+	} else {
+		os.Chmod(devboxBinary, 0755)
+	}
+	return nil
+}
+
+// Project management
+
+func initProject() error {
+	if isProjectInitialized() {
+		fmt.Println("✅ Project already initialized!")
+		return showProjectStatus()
+	}
+
+	projectName := getProjectName()
+	fmt.Printf("🚀 Initializing devbox project: %s\n", projectName)
+
+	phpVersion := selectOption("Select FrankenPHP version",
+		[]string{"8.3", "8.2", "8.1", "8.0", "7.4"})
+
+	fmt.Printf("✅ Project initialized: %s with PHP %s\n", projectName, phpVersion)
+	return nil
+}
+
+func startProject() error {
+	projectName := getProjectName()
+
+	if !isProjectInitialized() {
+		fmt.Printf("🔄 Initializing project: %s\n", projectName)
+		if err := initProject(); err != nil {
+			return err
+		}
+	}
+
+	fmt.Printf("🚀 Starting project: %s\n", projectName)
+
+	ensureGlobalServices()
+	ensureGitHubAuth()
+
+	phpVersion := getProjectPHPVersion()
+	if err := startProjectContainer(projectName, phpVersion); err != nil {
+		return err
+	}
+
+	if err := setupProjectSSL(projectName); err != nil {
+		fmt.Printf("Warning: SSL setup failed: %v\n", err)
+	}
+
+	fmt.Printf("✅ Project started at https://%s.test\n", projectName)
+	return showProjectStatus()
+}
+
+func stopProject() error {
+	if !isProjectInitialized() {
+		return fmt.Errorf("project not initialized")
+	}
+
+	projectName := getProjectName()
+	containerName := fmt.Sprintf("devbox_php_%s", projectName)
+
+	fmt.Printf("🛑 Stopping %s\n", containerName)
+	dock.run("stop", containerName)
+
+	fmt.Println("✅ Project stopped")
+	return nil
+}
+
+func removeProject() error {
+	if !isProjectInitialized() {
+		return fmt.Errorf("project not initialized")
+	}
+
+	projectName := getProjectName()
+	if !promptYesNo(fmt.Sprintf("Remove project %s?", projectName)) {
+		return nil
+	}
+
+	containerName := fmt.Sprintf("devbox_php_%s", projectName)
+	dock.run("stop", containerName)
+	dock.run("rm", containerName)
+	removeProjectSSL(projectName)
+
+	fmt.Println("✅ Project removed")
+	return nil
+}
+
+func startProjectContainer(name, phpVersion string) error {
+	cwd, _ := os.Getwd()
+	containerName := fmt.Sprintf("devbox_php_%s", name)
+
+	// Check if already running
+	if status, _ := dock.output("inspect", "-f", "{{.State.Status}}", containerName); status == "running" {
+		fmt.Printf("✅ Container %s already running\n", containerName)
+		return nil
+	}
+
+	// Start existing or create new
+	if err := dock.run("start", containerName); err != nil {
+		dock.run("rm", containerName) // Clean up if exists
+
+		args := []string{
+			"run", "-d",
+			"--name", containerName,
+			"--restart", "unless-stopped",
+			"-v", fmt.Sprintf("%s:/app", cwd),
+			"--network", "devbox_devbox-network",
+			"--dns", "192.168.237.4",
+			"-e", "SERVER_NAME=:80",
+			"--label", fmt.Sprintf("devbox.project.name=%s", name),
+			"--label", fmt.Sprintf("devbox.project.path=%s", cwd),
+			"--label", fmt.Sprintf("devbox.project.php_version=%s", phpVersion),
+			fmt.Sprintf("ghcr.io/aliasproject/php:%s-frankenphp", phpVersion),
+		}
+		return dock.run(args...)
+	}
+	return nil
+}
+
+func changePHPVersion() error {
+	if !isProjectInitialized() {
+		return fmt.Errorf("project not initialized")
+	}
+
+	projectName := getProjectName()
+	current := getProjectPHPVersion()
+	fmt.Printf("Current PHP: %s\n", current)
+
+	newVersion := selectOption("Select new PHP version",
+		[]string{"8.3", "8.2", "8.1", "8.0", "7.4"})
+
+	if newVersion == current {
+		fmt.Println("✅ Version unchanged")
+		return nil
+	}
+
+	containerName := fmt.Sprintf("devbox_php_%s", projectName)
+	dock.run("stop", containerName)
+	dock.run("rm", containerName)
+
+	fmt.Printf("✅ PHP changed to %s. Run 'devbox start' to apply.\n", newVersion)
+	return nil
+}
+
+// Global services
+
+func startGlobalServices() error {
+	fmt.Println("🚀 Starting global services...")
+
+	// Clean up networks
+	dock.run("network", "rm", "devbox_internal")
+	dock.run("network", "rm", "devbox_devbox-network")
+
+	ensureGitHubAuth()
+
+	hostIP, _ := getHostIP()
+	if hostIP == "" {
+		hostIP = "127.0.0.1"
+	}
+
+	dbType := os.Getenv("DATABASE_TYPE")
+	dbVersion := os.Getenv("DATABASE_VERSION")
+
+	cmd := exec.Command("docker", "compose", "-f", "-", "up", "-d")
+	cmd.Stdin = strings.NewReader(generateCompose(hostIP, dbType, dbVersion))
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to start services: %w", err)
+	}
+
+	fmt.Println("✅ Global services started")
+	return nil
+}
+
+func stopGlobalServices() error {
+	fmt.Println("🛑 Stopping global services...")
+
+	cmd := exec.Command("docker", "compose", "-f", "-", "down")
+	cmd.Stdin = strings.NewReader("name: devbox")
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+
+	cmd.Run()
+	fmt.Println("✅ Global services stopped")
+	return nil
+}
+
+func ensureGlobalServices() error {
+	if !isGlobalServicesRunning() {
+		return startGlobalServices()
+	}
+	return nil
+}
+
+func isGlobalServicesRunning() bool {
+	containers := []string{"devbox_dns", "devbox_nginx", "devbox_mail"}
+	for _, c := range containers {
+		if status, _ := dock.output("inspect", "-f", "{{.State.Status}}", c); status != "running" {
+			return false
+		}
+	}
+	return true
+}
+
+func generateCompose(hostIP, dbType, dbVersion string) string {
+	compose := fmt.Sprintf(`name: devbox
+services:
+    dns:
+        container_name: devbox_dns
+        image: ghcr.io/aliasproject/dns:latest
+        restart: unless-stopped
+        ports: ["0.0.0.0:5354:53/udp"]
+        networks:
+            internal: {ipv4_address: 192.168.237.4}
+        environment:
+            - COMMANDS=--address=/test/%s --server=1.1.1.1 --server=8.8.8.8 --log-facility=-
+        dns: [1.1.1.1, 8.8.8.8]
+    nginx:
+        container_name: devbox_nginx
+        image: ghcr.io/aliasproject/nginx:latest
+        restart: unless-stopped
+        volumes: [certs:/etc/nginx/ssl, vhosts:/etc/nginx/conf.d, .:/public]
+        ports: [80:80, 443:443]
+        networks: [devbox-network, internal]
+        depends_on: [dns]`, hostIP)
+
+	if dbType == "mysql" {
+		compose += fmt.Sprintf(`
+    mysql:
+        container_name: devbox_mysql
+        image: mysql:%s
+        platform: linux/amd64
+        restart: unless-stopped
+        environment: [MYSQL_ROOT_PASSWORD=, MYSQL_ALLOW_EMPTY_PASSWORD=yes]
+        ports: [3306:3306]
+        networks: [devbox-network, internal]
+        volumes: [mysql-%s:/var/lib/mysql]`, dbVersion, dbVersion)
+	} else if dbType == "postgresql" {
+		compose += fmt.Sprintf(`
+    postgresql:
+        container_name: devbox_postgresql
+        image: postgres:%s
+        restart: unless-stopped
+        environment: [POSTGRES_USER=devbox, POSTGRES_PASSWORD=devbox, POSTGRES_DB=devbox]
+        ports: [5432:5432]
+        networks: [devbox-network, internal]
+        volumes: [postgresql-%s:/var/lib/postgresql/data]`, dbVersion, dbVersion)
+	}
+
+	compose += `
+    mail:
+        container_name: devbox_mail
+        image: mailhog/mailhog:latest
+        platform: linux/amd64
+        restart: on-failure
+        ports: [1025:1025, 8025:8025]
+        networks: [internal]
+volumes:
+    certs:
+    vhosts:`
+
+	if dbType == "mysql" {
+		compose += "\n    mysql-8.0:\n    mysql-5.7:"
+	} else if dbType == "postgresql" {
+		compose += "\n    postgresql-16:\n    postgresql-15:\n    postgresql-14:\n    postgresql-13:"
+	}
+
+	compose += `
+networks:
+    internal:
+        driver: bridge
+        ipam: {config: [{subnet: 192.168.237.0/24}]}
+    devbox-network:
+        driver: bridge`
+
+	return compose
+}
+
+// Database management
+
+func addDatabase() error {
+	dbType := selectOption("Select Database", []string{"mysql", "postgresql"})
+	dbVersion := selectDatabaseVersion(dbType)
+
+	containerName := fmt.Sprintf("devbox_%s", dbType)
+	dock.run("stop", containerName)
+	dock.run("rm", containerName)
+
+	fmt.Printf("🚀 Starting %s %s...\n", dbType, dbVersion)
+
+	if dbType == "mysql" {
+		return startMySQL(dbVersion)
+	}
+	return startPostgreSQL(dbVersion)
+}
+
+func removeDatabase() error {
+	var databases []string
+	for _, db := range []string{"mysql", "postgresql"} {
+		containerName := fmt.Sprintf("devbox_%s", db)
+		if status, _ := dock.output("inspect", "-f", "{{.State.Status}}", containerName); status == "running" {
+			databases = append(databases, db)
+		}
+	}
+
+	if len(databases) == 0 {
+		fmt.Println("No databases running")
+		return nil
+	}
+
+	var dbType string
+	if len(databases) == 1 {
+		dbType = databases[0]
+	} else {
+		dbType = selectOption("Select database to remove", databases)
+	}
+
+	if !promptYesNo(fmt.Sprintf("Remove %s?", dbType)) {
+		return nil
+	}
+
+	containerName := fmt.Sprintf("devbox_%s", dbType)
+	dock.run("stop", containerName)
+	dock.run("rm", containerName)
+
+	fmt.Printf("✅ %s removed\n", dbType)
+	return nil
+}
+
+func startMySQL(version string) error {
+	dock.run("network", "create", "devbox_devbox-network")
+	dock.run("volume", "create", fmt.Sprintf("devbox_mysql-%s", version))
+
+	args := []string{
+		"run", "-d",
+		"--name", "devbox_mysql",
+		"--restart", "unless-stopped",
+		"--platform", "linux/amd64",
+		"-p", "3306:3306",
+		"-e", "MYSQL_ROOT_PASSWORD=",
+		"-e", "MYSQL_ALLOW_EMPTY_PASSWORD=yes",
+		"-v", fmt.Sprintf("devbox_mysql-%s:/var/lib/mysql", version),
+		"--network", "devbox_devbox-network",
+		fmt.Sprintf("mysql:%s", version),
+	}
+
+	if err := dock.run(args...); err != nil {
+		return err
+	}
+
+	dock.run("network", "connect", "devbox_internal", "devbox_mysql")
+	fmt.Println("✅ MySQL started at localhost:3306")
+	return nil
+}
+
+func startPostgreSQL(version string) error {
+	dock.run("network", "create", "devbox_devbox-network")
+	dock.run("volume", "create", fmt.Sprintf("devbox_postgresql-%s", version))
+
+	args := []string{
+		"run", "-d",
+		"--name", "devbox_postgresql",
+		"--restart", "unless-stopped",
+		"-p", "5432:5432",
+		"-e", "POSTGRES_USER=devbox",
+		"-e", "POSTGRES_PASSWORD=devbox",
+		"-e", "POSTGRES_DB=devbox",
+		"-v", fmt.Sprintf("devbox_postgresql-%s:/var/lib/postgresql/data", version),
+		"--network", "devbox_devbox-network",
+		fmt.Sprintf("postgres:%s", version),
+	}
+
+	if err := dock.run(args...); err != nil {
+		return err
+	}
+
+	dock.run("network", "connect", "devbox_internal", "devbox_postgresql")
+	fmt.Println("✅ PostgreSQL started at localhost:5432")
+	return nil
+}
+
+func selectDatabaseVersion(dbType string) string {
+	if dbType == "mysql" {
+		return selectOption("Select MySQL Version", []string{"8.0", "5.7"})
+	}
+	return selectOption("Select PostgreSQL Version", []string{"16", "15", "14", "13"})
+}
+
+// SSL/Certificate management
+
+func setupSSL() error {
+	fmt.Println("🔒 Setting up SSL certificates...")
+
+	dock.run("volume", "create", "devbox_certs")
+
+	// Check if CA exists
+	checkCmd := exec.Command("docker", "run", "--rm",
+		"-v", "devbox_certs:/certificates",
+		"alpine:latest", "test", "-f", "/certificates/AliasProjectCASelfSigned.pem")
+
+	if checkCmd.Run() != nil {
+		// Generate CA
+		fmt.Println("🔒 Generating CA certificate...")
+		genCmd := exec.Command("docker", "run", "--rm",
+			"-e", "DOMAIN=init",
+			"-v", "devbox_certs:/certificates",
+			"ghcr.io/aliasproject/openssl:latest")
+		if err := genCmd.Run(); err != nil {
+			return fmt.Errorf("failed to generate CA: %w", err)
+		}
+	}
+
+	// Copy CA to host
+	copyCmd := exec.Command("docker", "run", "--rm",
+		"-v", "devbox_certs:/source",
+		"-v", fmt.Sprintf("%s:/dest", devboxDir),
+		"alpine:latest", "cp", "/source/AliasProjectCASelfSigned.pem", "/dest/certs/AliasProjectCASelfSigned.pem")
+	copyCmd.Run()
+
+	if fileExists(caPath) && promptYesNo("Install CA certificate now?") {
+		installCertToSystem(caPath)
+	}
+
+	return nil
+}
+
+func setupProjectSSL(projectName string) error {
+	domain := fmt.Sprintf("%s.test", projectName)
+
+	// Generate certificate
+	genCmd := exec.Command("docker", "run", "--rm",
+		"-e", fmt.Sprintf("DOMAIN=%s", domain),
+		"-v", "devbox_certs:/certificates",
+		"ghcr.io/aliasproject/openssl:latest")
+	if err := genCmd.Run(); err != nil {
+		return err
+	}
+
+	// Create nginx vhost
+	vhost := fmt.Sprintf(`server {
+    listen 80;
+    server_name %s;
+    return 301 https://$server_name$request_uri;
+}
+server {
+    listen 443 ssl http2;
+    server_name %s;
+    ssl_certificate /etc/nginx/ssl/%s.crt;
+    ssl_certificate_key /etc/nginx/ssl/%s.key;
+    location / {
+        proxy_pass http://devbox_php_%s:80;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}`, domain, domain, domain, domain, projectName)
+
+	writeCmd := exec.Command("docker", "exec", "-i", "devbox_nginx",
+		"tee", fmt.Sprintf("/etc/nginx/conf.d/%s.conf", projectName))
+	writeCmd.Stdin = strings.NewReader(vhost)
+	writeCmd.Run()
+
+	// Reload nginx
+	dock.run("exec", "devbox_nginx", "nginx", "-s", "reload")
+	return nil
+}
+
+func removeProjectSSL(projectName string) error {
+	domain := fmt.Sprintf("%s.test", projectName)
+
+	dock.run("exec", "devbox_nginx", "rm", "-f",
+		fmt.Sprintf("/etc/nginx/ssl/%s.crt", domain),
+		fmt.Sprintf("/etc/nginx/ssl/%s.key", domain),
+		fmt.Sprintf("/etc/nginx/conf.d/%s.conf", projectName))
+
+	dock.run("exec", "devbox_nginx", "nginx", "-s", "reload")
+	return nil
+}
+
+func verifyCert() error {
+	if verifyCertificateInstalled() {
+		fmt.Println("✅ Certificate is properly installed and trusted!")
+	} else {
+		fmt.Println("❌ Certificate not properly installed")
+		fmt.Println("💡 Run 'devbox cert-install' to install")
+	}
+	return nil
+}
+
+func installCert() error {
+	if !fileExists(caPath) {
+		return fmt.Errorf("certificate not found at %s", caPath)
+	}
+	return installCertToSystem(caPath)
+}
+
+func installCertToSystem(path string) error {
+	fmt.Println("🔐 Installing CA certificate...")
+
+	switch runtime.GOOS {
+	case "darwin":
+		// Remove old cert
+		exec.Command("sudo", "security", "delete-certificate",
+			"-c", "AliasProjectCASelfSigned", "/Library/Keychains/System.keychain").Run()
+
+		// Import and trust
+		cmd := exec.Command("sudo", "security", "add-trusted-cert",
+			"-d", "-r", "trustRoot", "-p", "ssl", "-p", "basic",
+			"-k", "/Library/Keychains/System.keychain", path)
+		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+		if err := cmd.Run(); err != nil {
+			fmt.Println("💡 Manual trust may be required in Keychain Access")
+		}
+	case "linux":
+		destPath := "/usr/local/share/ca-certificates/devbox-ca.crt"
+		exec.Command("sudo", "cp", path, destPath).Run()
+		exec.Command("sudo", "update-ca-certificates").Run()
+	case "windows":
+		psCmd := fmt.Sprintf(`Import-Certificate -FilePath "%s" -CertStoreLocation "Cert:\LocalMachine\Root"`, path)
+		exec.Command("powershell", "-Command", psCmd).Run()
+	}
+
+	fmt.Println("✅ Certificate installed! Restart your browser.")
+	return nil
+}
+
+func verifyCertificateInstalled() bool {
+	switch runtime.GOOS {
+	case "darwin":
+		cmd := exec.Command("security", "find-certificate", "-c",
+			"AliasProjectCASelfSigned", "/Library/Keychains/System.keychain")
+		return cmd.Run() == nil
+	case "linux":
+		return fileExists("/usr/local/share/ca-certificates/devbox-ca.crt")
+	case "windows":
+		cmd := exec.Command("powershell", "-Command",
+			"Get-ChildItem -Path Cert:\\LocalMachine\\Root | Where-Object { $_.Subject -like '*AliasProjectCASelfSigned*' }")
+		return cmd.Run() == nil
+	}
+	return false
+}
+
+func debugCert() error {
+	fmt.Println("🔍 Certificate Debug Info")
+	fmt.Printf("CA Path: %s - %s\n", caPath, boolStatus(fileExists(caPath)))
+	fmt.Printf("Installed: %s\n", boolStatus(verifyCertificateInstalled()))
+
+	if runtime.GOOS == "darwin" && fileExists(caPath) {
+		verifyCmd := exec.Command("security", "verify-cert", "-c", caPath, "-p", "ssl")
+		if err := verifyCmd.Run(); err == nil {
+			fmt.Println("✅ Certificate passes SSL verification")
+		} else {
+			fmt.Println("❌ Certificate fails SSL verification")
+		}
+	}
+	return nil
+}
+
+// DNS management
+
+func setupTestDomainResolver() error {
+	if runtime.GOOS != "darwin" {
+		return nil
+	}
+
+	fmt.Println("🌐 Setting up .test domain resolver...")
+
+	resolverFile := "/etc/resolver/test"
+	content := "port 5354\nnameserver 127.0.0.1\n"
+
+	if data, _ := os.ReadFile(resolverFile); string(data) == content {
+		fmt.Println("✅ .test resolver already configured")
+		return nil
+	}
+
+	exec.Command("sudo", "mkdir", "-p", "/etc/resolver").Run()
+
+	cmd := exec.Command("sudo", "tee", resolverFile)
+	cmd.Stdin = strings.NewReader(content)
+	cmd.Run()
+
+	exec.Command("sudo", "dscacheutil", "-flushcache").Run()
+	exec.Command("sudo", "killall", "-HUP", "mDNSResponder").Run()
+
+	fmt.Println("✅ .test domains configured")
+	return nil
+}
+
+func clean

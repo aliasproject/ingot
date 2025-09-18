@@ -1,0 +1,414 @@
+package ssl
+
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"runtime"
+	"strings"
+
+	"github.com/aliasproject/devbox/internal/config"
+	"github.com/aliasproject/devbox/internal/docker"
+)
+
+// Manager handles SSL certificate operations
+type Manager struct {
+	docker *docker.Client
+	config *config.Config
+}
+
+// NewManager creates a new SSL manager
+func NewManager(dockerClient *docker.Client, cfg *config.Config) *Manager {
+	return &Manager{
+		docker: dockerClient,
+		config: cfg,
+	}
+}
+
+// SetupSSL sets up the SSL infrastructure
+func (m *Manager) SetupSSL() error {
+	fmt.Println("🔒 Setting up SSL certificates...")
+
+	// Create certificates volume
+	if err := m.docker.CreateVolume("devbox_certs"); err != nil {
+		return fmt.Errorf("failed to create certificates volume: %w", err)
+	}
+
+	// Check if CA certificate already exists
+	if !m.caExistsInVolume() {
+		fmt.Println("🔐 Generating CA certificate...")
+		if err := m.generateCA(); err != nil {
+			return fmt.Errorf("failed to generate CA certificate: %w", err)
+		}
+	}
+
+	// Copy CA to host
+	if err := m.copyCAToHost(); err != nil {
+		return fmt.Errorf("failed to copy CA to host: %w", err)
+	}
+
+	fmt.Println("✅ SSL setup complete")
+	return nil
+}
+
+// SetupProjectSSL generates SSL certificate for a project
+func (m *Manager) SetupProjectSSL(projectName string) error {
+	domain := projectName + ".test"
+
+	// Generate certificate for domain
+	if err := m.GenerateCertificate(domain); err != nil {
+		return fmt.Errorf("failed to generate certificate for %s: %w", domain, err)
+	}
+
+	// Create nginx vhost configuration
+	if err := m.createNginxVhost(projectName, domain); err != nil {
+		return fmt.Errorf("failed to create nginx vhost: %w", err)
+	}
+
+	// Reload nginx
+	if err := m.reloadNginx(); err != nil {
+		return fmt.Errorf("failed to reload nginx: %w", err)
+	}
+
+	return nil
+}
+
+// RemoveProjectSSL removes SSL configuration for a project
+func (m *Manager) RemoveProjectSSL(projectName string) error {
+	domain := projectName + ".test"
+
+	// Remove certificate files
+	m.docker.Run("exec", "devbox_nginx", "rm", "-f",
+		"/etc/nginx/ssl/"+domain+".crt",
+		"/etc/nginx/ssl/"+domain+".key",
+	)
+
+	// Remove vhost configuration
+	m.docker.Run("exec", "devbox_nginx", "rm", "-f",
+		"/etc/nginx/conf.d/"+projectName+".conf",
+	)
+
+	// Reload nginx
+	m.reloadNginx()
+
+	return nil
+}
+
+// GenerateCertificate generates a certificate for a domain
+func (m *Manager) GenerateCertificate(domain string) error {
+	// Run openssl container to generate certificate
+	return m.docker.Run("run", "--rm",
+		"-e", "DOMAIN="+domain,
+		"-v", "devbox_certs:/certificates",
+		"ghcr.io/aliasproject/openssl:latest",
+	)
+}
+
+// InstallCertificate installs the CA certificate to the system
+func (m *Manager) InstallCertificate() error {
+	caPath := m.config.CAPath
+
+	if !fileExists(caPath) {
+		// Try to copy from volume first
+		if err := m.copyCAToHost(); err != nil {
+			return fmt.Errorf("CA certificate not found at %s", caPath)
+		}
+	}
+
+	fmt.Println("🔐 Installing CA certificate to system...")
+
+	switch runtime.GOOS {
+	case "darwin":
+		if err := m.installCertMacOS(caPath); err != nil {
+			return err
+		}
+	case "linux":
+		if err := m.installCertLinux(caPath); err != nil {
+			return err
+		}
+	case "windows":
+		if err := m.installCertWindows(caPath); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("unsupported operating system: %s", runtime.GOOS)
+	}
+
+	fmt.Println("✅ Certificate installed successfully")
+	fmt.Println("🔄 Please restart your browser for the changes to take effect")
+	return nil
+}
+
+// VerifyCertificate checks if the CA certificate is installed
+func (m *Manager) VerifyCertificate() error {
+	installed := m.isCertificateInstalled()
+
+	if installed {
+		fmt.Println("✅ CA certificate is installed in the system")
+	} else {
+		fmt.Println("❌ CA certificate is not installed")
+		fmt.Println("Run 'devbox cert install' to install it")
+	}
+
+	// Check if certificate file exists
+	if fileExists(m.config.CAPath) {
+		fmt.Printf("✅ Certificate file exists at: %s\n", m.config.CAPath)
+	} else {
+		fmt.Printf("❌ Certificate file not found at: %s\n", m.config.CAPath)
+	}
+
+	return nil
+}
+
+// DebugCertificate provides detailed certificate debugging information
+func (m *Manager) DebugCertificate() error {
+	fmt.Println("🔍 Certificate Debug Information")
+	fmt.Println(strings.Repeat("-", 50))
+
+	// Check CA file
+	fmt.Printf("CA Path: %s\n", m.config.CAPath)
+	if fileExists(m.config.CAPath) {
+		info, _ := os.Stat(m.config.CAPath)
+		fmt.Printf("  ✅ Exists (size: %d bytes)\n", info.Size())
+
+		// Show certificate details
+		cmd := exec.Command("openssl", "x509", "-in", m.config.CAPath, "-text", "-noout")
+		if output, err := cmd.CombinedOutput(); err == nil {
+			lines := strings.Split(string(output), "\n")
+			for _, line := range lines {
+				if strings.Contains(line, "Subject:") || strings.Contains(line, "Issuer:") ||
+					strings.Contains(line, "Not Before") || strings.Contains(line, "Not After") {
+					fmt.Printf("  %s\n", strings.TrimSpace(line))
+				}
+			}
+		}
+	} else {
+		fmt.Println("  ❌ Not found")
+	}
+
+	// Check system installation
+	fmt.Printf("\nSystem Installation: ")
+	if m.isCertificateInstalled() {
+		fmt.Println("✅ Installed")
+		m.showSystemCertificateInfo()
+	} else {
+		fmt.Println("❌ Not installed")
+	}
+
+	// Check Docker volume
+	fmt.Println("\nDocker Volume:")
+	if m.caExistsInVolume() {
+		fmt.Println("  ✅ CA exists in volume")
+	} else {
+		fmt.Println("  ❌ CA not found in volume")
+	}
+
+	// Check nginx container
+	fmt.Println("\nNginx Container:")
+	if m.docker.IsContainerRunning("devbox_nginx") {
+		fmt.Println("  ✅ Running")
+
+		// List certificates in nginx
+		output, err := m.docker.RunWithOutput("exec", "devbox_nginx", "ls", "-la", "/etc/nginx/ssl/")
+		if err == nil {
+			fmt.Println("  Certificates:")
+			lines := strings.Split(output, "\n")
+			for _, line := range lines {
+				if strings.Contains(line, ".crt") || strings.Contains(line, ".key") {
+					fmt.Printf("    %s\n", line)
+				}
+			}
+		}
+	} else {
+		fmt.Println("  ❌ Not running")
+	}
+
+	return nil
+}
+
+// Private helper methods
+
+func (m *Manager) caExistsInVolume() bool {
+	err := m.docker.Run("run", "--rm",
+		"-v", "devbox_certs:/certificates",
+		"alpine:latest",
+		"test", "-f", "/certificates/AliasProjectCASelfSigned.pem",
+	)
+	return err == nil
+}
+
+func (m *Manager) generateCA() error {
+	return m.docker.Run("run", "--rm",
+		"-e", "DOMAIN=init",
+		"-v", "devbox_certs:/certificates",
+		"ghcr.io/aliasproject/openssl:latest",
+	)
+}
+
+func (m *Manager) copyCAToHost() error {
+	// Ensure certs directory exists
+	os.MkdirAll(m.config.CertsDir, 0755)
+
+	// Copy CA from volume to host
+	return m.docker.Run("run", "--rm",
+		"-v", "devbox_certs:/source",
+		"-v", m.config.DevboxDir+":/dest",
+		"alpine:latest",
+		"cp", "/source/AliasProjectCASelfSigned.pem", "/dest/certs/AliasProjectCASelfSigned.pem",
+	)
+}
+
+func (m *Manager) createNginxVhost(projectName, domain string) error {
+	vhostConfig := fmt.Sprintf(`server {
+    listen 80;
+    server_name %s;
+    return 301 https://$server_name$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name %s;
+
+    ssl_certificate /etc/nginx/ssl/%s.crt;
+    ssl_certificate_key /etc/nginx/ssl/%s.key;
+
+    # SSL configuration
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+
+    # Proxy configuration
+    location / {
+        proxy_pass http://devbox_php_%s:80;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Port $server_port;
+
+        # WebSocket support
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+        # Timeouts
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+
+        # Buffer settings
+        proxy_buffering off;
+        proxy_buffer_size 4k;
+        proxy_buffers 8 4k;
+    }
+}`, domain, domain, domain, domain, projectName)
+
+	// Write vhost configuration to nginx container
+	return m.docker.CopyToContainer("devbox_nginx",
+		"/etc/nginx/conf.d/"+projectName+".conf",
+		[]byte(vhostConfig),
+	)
+}
+
+func (m *Manager) reloadNginx() error {
+	return m.docker.Run("exec", "devbox_nginx", "nginx", "-s", "reload")
+}
+
+func (m *Manager) installCertMacOS(caPath string) error {
+	// Remove old certificate if exists
+	exec.Command("sudo", "security", "delete-certificate", "-c", "AliasProjectCASelfSigned", "/Library/Keychains/System.keychain").Run()
+
+	// Add new certificate
+	cmd := exec.Command("sudo", "security", "add-trusted-cert",
+		"-d",              // Add to admin trust store
+		"-r", "trustRoot", // Trust root certificate
+		"-p", "ssl", // Trust for SSL
+		"-p", "basic", // Trust for basic X.509
+		"-k", "/Library/Keychains/System.keychain",
+		caPath,
+	)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to install certificate: %w", err)
+	}
+
+	return nil
+}
+
+func (m *Manager) installCertLinux(caPath string) error {
+	// Copy to system certificate store
+	destPath := "/usr/local/share/ca-certificates/devbox-ca.crt"
+
+	cmd := exec.Command("sudo", "cp", caPath, destPath)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to copy certificate: %w", err)
+	}
+
+	// Update certificate store
+	cmd = exec.Command("sudo", "update-ca-certificates")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to update certificates: %w", err)
+	}
+
+	return nil
+}
+
+func (m *Manager) installCertWindows(caPath string) error {
+	// Use PowerShell to import certificate
+	script := fmt.Sprintf(`Import-Certificate -FilePath "%s" -CertStoreLocation "Cert:\LocalMachine\Root"`, caPath)
+
+	cmd := exec.Command("powershell", "-Command", script)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to install certificate: %w", err)
+	}
+
+	return nil
+}
+
+func (m *Manager) isCertificateInstalled() bool {
+	switch runtime.GOOS {
+	case "darwin":
+		cmd := exec.Command("security", "find-certificate", "-c", "AliasProjectCASelfSigned", "/Library/Keychains/System.keychain")
+		return cmd.Run() == nil
+	case "linux":
+		return fileExists("/usr/local/share/ca-certificates/devbox-ca.crt")
+	case "windows":
+		cmd := exec.Command("powershell", "-Command",
+			"Get-ChildItem -Path Cert:\\LocalMachine\\Root | Where-Object { $_.Subject -like '*AliasProjectCASelfSigned*' }")
+		return cmd.Run() == nil
+	default:
+		return false
+	}
+}
+
+func (m *Manager) showSystemCertificateInfo() {
+	switch runtime.GOOS {
+	case "darwin":
+		cmd := exec.Command("security", "find-certificate", "-c", "AliasProjectCASelfSigned", "-p", "/Library/Keychains/System.keychain")
+		if output, err := cmd.Output(); err == nil && len(output) > 0 {
+			fmt.Println("  Location: System Keychain")
+			fmt.Println("  Trust: SSL, Basic X.509")
+		}
+	case "linux":
+		if fileExists("/usr/local/share/ca-certificates/devbox-ca.crt") {
+			fmt.Println("  Location: /usr/local/share/ca-certificates/")
+		}
+	case "windows":
+		fmt.Println("  Location: Local Machine\\Root Certificate Store")
+	}
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
