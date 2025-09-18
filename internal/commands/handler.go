@@ -36,6 +36,21 @@ func NewHandler(dockerClient *docker.Client, cfg *config.Config) *Handler {
 	}
 }
 
+// GetServices returns the services manager
+func (h *Handler) GetServices() *services.Manager {
+	return h.services
+}
+
+// GetSSL returns the SSL manager
+func (h *Handler) GetSSL() *ssl.Manager {
+	return h.ssl
+}
+
+// GetGitHub returns the GitHub client
+func (h *Handler) GetGitHub() *github.Client {
+	return h.github
+}
+
 // Execute processes the command line arguments and executes the appropriate command
 func (h *Handler) Execute(args []string) error {
 	if len(args) < 2 {
