@@ -331,6 +331,13 @@ func (c *Client) RemoveContainer(name string, force bool) error {
 	return c.Run(args...)
 }
 
+// ForceRemoveContainer forcefully removes a container, ignoring errors if it doesn't exist
+func (c *Client) ForceRemoveContainer(name string) error {
+	// Always attempt force removal, don't check if exists first
+	// This ensures we try to clean up even partially created containers
+	return c.Run("rm", "-f", name)
+}
+
 // CreateNetwork creates a Docker network
 func (c *Client) CreateNetwork(name string, options ...string) error {
 	// Check if network already exists

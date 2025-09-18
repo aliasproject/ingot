@@ -54,9 +54,10 @@ func (m *Manager) GetCurrentProject() (*Project, error) {
 	if err != nil {
 		if err == docker.ErrContainerNotFound {
 			return &Project{
-				Name:   name,
-				Path:   cwd,
-				Status: "not initialized",
+				Name:      name,
+				Path:      cwd,
+				Status:    "not initialized",
+				Container: container,
 			}, nil
 		}
 		return nil, err
@@ -147,6 +148,12 @@ func (m *Manager) Start() error {
 	} else {
 		// Create new container
 		if err := m.createContainer(project); err != nil {
+			// Clean up any partially created container on failure
+			cleanupErr := m.docker.RemoveContainer(project.Container, true)
+			if cleanupErr != nil {
+				// Log but don't fail on cleanup error
+				fmt.Printf("⚠️  Warning: Failed to cleanup container after creation failure: %v\n", cleanupErr)
+			}
 			return fmt.Errorf("failed to create container: %w", err)
 		}
 	}
@@ -185,7 +192,16 @@ func (m *Manager) Remove(force bool) error {
 
 	// Stop and remove container
 	if err := m.docker.RemoveContainer(project.Container, force); err != nil {
-		return fmt.Errorf("failed to remove container: %w", err)
+		if !force {
+			return fmt.Errorf("failed to remove container: %w", err)
+		}
+		// When force is true, log the error but continue with cleanup
+		fmt.Printf("⚠️  Warning: Failed to remove container normally: %v\n", err)
+
+		// Try one more time with direct docker command
+		if forcedErr := m.docker.Run("rm", "-f", project.Container); forcedErr != nil {
+			fmt.Printf("⚠️  Warning: Forced removal also failed: %v\n", forcedErr)
+		}
 	}
 
 	// Remove project configuration
@@ -417,6 +433,11 @@ func (m *Manager) createContainer(project *Project) error {
 	}
 
 	if err := m.docker.RunContainer(containerConfig); err != nil {
+		// Best effort cleanup on failure - remove any partially created container
+		cleanupErr := m.docker.RemoveContainer(project.Container, true)
+		if cleanupErr != nil {
+			fmt.Printf("⚠️  Warning: Failed to cleanup container after run failure: %v\n", cleanupErr)
+		}
 		return fmt.Errorf("failed to run container: %w", err)
 	}
 

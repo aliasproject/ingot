@@ -304,13 +304,45 @@ func (h *Handler) handleInit(args []string) error {
 		return fmt.Errorf("failed to initialize project: %w", err)
 	}
 
-	fmt.Printf("✅ Project initialized successfully\n")
-	fmt.Printf("Run 'devbox start' to start the project\n")
+	fmt.Printf("✅ Project initialized successfully with PHP %s\n", phpVersion)
+	fmt.Println("\n📁 Project Details:")
+	fmt.Printf("  Name: %s\n", proj.Name)
+	fmt.Printf("  Path: %s\n", proj.Path)
+	fmt.Printf("  PHP Version: %s\n", phpVersion)
+	fmt.Println("\n🚀 Next step: Run 'devbox start' to start your project")
 	return nil
 }
 
 // handleStart starts the current project
 func (h *Handler) handleStart() error {
+	// Get project info early for cleanup purposes
+	project, err := h.projects.GetCurrentProject()
+	if err != nil {
+		return err
+	}
+
+	// Setup cleanup function that will be called on any failure
+	cleanupOnFailure := func(reason string) {
+		fmt.Printf("🧹 Cleaning up after failure: %s\n", reason)
+		containerName := fmt.Sprintf("devbox_php_%s", project.Name)
+
+		// Try to stop the container first
+		if stopErr := h.docker.Run("stop", containerName); stopErr != nil {
+			// Don't log if container doesn't exist
+			if !strings.Contains(stopErr.Error(), "No such container") {
+				fmt.Printf("⚠️  Warning: Failed to stop container: %v\n", stopErr)
+			}
+		}
+
+		// Force remove the container
+		if removeErr := h.docker.Run("rm", "-f", containerName); removeErr != nil {
+			// Don't log if container doesn't exist
+			if !strings.Contains(removeErr.Error(), "No such container") {
+				fmt.Printf("⚠️  Warning: Failed to remove container: %v\n", removeErr)
+			}
+		}
+	}
+
 	// Ensure global services are running
 	if err := h.services.EnsureRunning(); err != nil {
 		return fmt.Errorf("failed to start global services: %w", err)
@@ -321,29 +353,45 @@ func (h *Handler) handleStart() error {
 		fmt.Printf("⚠️  Warning: GitHub authentication failed: %v\n", err)
 	}
 
-	project, err := h.projects.GetCurrentProject()
-	if err != nil {
-		return err
-	}
-
 	fmt.Printf("🚀 Starting project '%s'...\n", project.Name)
 
 	if err := h.projects.Start(); err != nil {
+		cleanupOnFailure("project start failed")
 		return fmt.Errorf("failed to start project: %w", err)
 	}
 
 	// Setup SSL for project
 	if h.config.EnableSSL {
 		if err := h.ssl.SetupProjectSSL(project.Name); err != nil {
-			fmt.Printf("⚠️  Warning: Failed to setup SSL: %v\n", err)
+			// SSL setup failed - cleanup and return error
+			fmt.Printf("❌ Failed to setup SSL certificate: %v\n", err)
+			cleanupOnFailure("SSL certificate setup failed")
+
+			return fmt.Errorf("project startup failed due to SSL certificate error. Please check:\n"+
+				"  1. Nginx container is running (devbox global status)\n"+
+				"  2. CA certificate exists (devbox cert verify)\n"+
+				"  3. Try running: devbox global restart\n"+
+				"Error details: %w", err)
 		}
 	}
 
-	project, _ = h.projects.GetCurrentProject()
-	fmt.Printf("✅ Project started successfully\n")
-	fmt.Printf("🌐 Access your project at: %s\n", project.URL)
+	// Refresh project status after successful start
+	project, err = h.projects.GetCurrentProject()
+	if err != nil {
+		cleanupOnFailure("failed to get project status after start")
+		return fmt.Errorf("failed to get project status: %w", err)
+	}
 
-	return h.showProjectStatus(project)
+	// Only show success message if we have valid project info
+	if project.Status == "running" && project.URL != "" {
+		fmt.Printf("✅ Project started successfully\n")
+		fmt.Printf("🌐 Access your project at: %s\n", project.URL)
+		return h.showProjectStatus(project)
+	}
+
+	// Something went wrong if we get here
+	cleanupOnFailure("project started but status is unclear")
+	return fmt.Errorf("project started but status is unclear. Run 'devbox status' to check")
 }
 
 // handleStop stops the current project

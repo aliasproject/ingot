@@ -55,9 +55,35 @@ func (m *Manager) SetupSSL() error {
 func (m *Manager) SetupProjectSSL(projectName string) error {
 	domain := projectName + ".test"
 
+	fmt.Printf("  Generating SSL certificate for %s...\n", domain)
+
+	// Check if CA certificate exists first
+	if !m.caExistsInVolume() {
+		return fmt.Errorf("CA certificate not found. Run 'devbox cert install' first")
+	}
+
+	// Check if nginx is running
+	if !m.docker.ContainerExists("devbox_nginx") {
+		return fmt.Errorf("nginx container not found. Run 'devbox global start' first")
+	}
+
+	// Check nginx container is actually running
+	info, err := m.docker.InspectContainer("devbox_nginx")
+	if err != nil {
+		return fmt.Errorf("failed to inspect nginx container: %w", err)
+	}
+	if info.State != "running" {
+		return fmt.Errorf("nginx container is not running. Run 'devbox global start' first")
+	}
+
 	// Generate certificate for domain
 	if err := m.GenerateCertificate(domain); err != nil {
 		return fmt.Errorf("failed to generate certificate for %s: %w", domain, err)
+	}
+
+	// Verify certificate was created
+	if !m.certificateExists(domain) {
+		return fmt.Errorf("certificate generation failed - files not found for %s", domain)
 	}
 
 	// Create nginx vhost configuration
@@ -70,6 +96,7 @@ func (m *Manager) SetupProjectSSL(projectName string) error {
 		return fmt.Errorf("failed to reload nginx: %w", err)
 	}
 
+	fmt.Printf("  ✅ SSL certificate configured for %s\n", domain)
 	return nil
 }
 
@@ -96,12 +123,18 @@ func (m *Manager) RemoveProjectSSL(projectName string) error {
 
 // GenerateCertificate generates a certificate for a domain
 func (m *Manager) GenerateCertificate(domain string) error {
-	// Run openssl container to generate certificate
-	return m.docker.Run("run", "--rm",
+	// Run openssl container to generate certificate with output
+	cmd := exec.Command("docker", "run", "--rm",
 		"-e", "DOMAIN="+domain,
 		"-v", "devbox_certs:/certificates",
-		"ghcr.io/aliasproject/openssl:latest",
-	)
+		"ghcr.io/aliasproject/openssl:latest")
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("certificate generation failed: %w\nOutput: %s", err, string(output))
+	}
+
+	return nil
 }
 
 // InstallCertificate installs the CA certificate to the system
@@ -228,6 +261,7 @@ func (m *Manager) DebugCertificate() error {
 
 // Private helper methods
 
+// caExistsInVolume checks if CA certificate exists in volume
 func (m *Manager) caExistsInVolume() bool {
 	err := m.docker.Run("run", "--rm",
 		"-v", "devbox_certs:/certificates",
@@ -235,6 +269,24 @@ func (m *Manager) caExistsInVolume() bool {
 		"test", "-f", "/certificates/AliasProjectCASelfSigned.pem",
 	)
 	return err == nil
+}
+
+// certificateExists checks if a domain certificate exists in volume
+func (m *Manager) certificateExists(domain string) bool {
+	// Check for both certificate and key
+	certCheck := m.docker.Run("run", "--rm",
+		"-v", "devbox_certs:/certificates",
+		"alpine:latest",
+		"test", "-f", fmt.Sprintf("/certificates/%s.crt", domain),
+	)
+
+	keyCheck := m.docker.Run("run", "--rm",
+		"-v", "devbox_certs:/certificates",
+		"alpine:latest",
+		"test", "-f", fmt.Sprintf("/certificates/%s.key", domain),
+	)
+
+	return certCheck == nil && keyCheck == nil
 }
 
 func (m *Manager) generateCA() error {

@@ -10,7 +10,7 @@ import (
 
 const (
 	// Version is the current version of Devbox
-	Version = "0.8.0"
+	Version = "0.9.5"
 
 	// GithubRepo is the GitHub repository for updates
 	GithubRepo = "aliasproject/devbox"
