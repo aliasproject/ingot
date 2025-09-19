@@ -1,8 +1,10 @@
 package commands
 
 import (
+	"bufio"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/aliasproject/devbox/internal/config"
@@ -11,6 +13,7 @@ import (
 	"github.com/aliasproject/devbox/internal/project"
 	"github.com/aliasproject/devbox/internal/services"
 	"github.com/aliasproject/devbox/internal/ssl"
+	"github.com/aliasproject/devbox/internal/updater"
 	"github.com/aliasproject/devbox/internal/utils"
 )
 
@@ -22,6 +25,7 @@ type Handler struct {
 	services *services.Manager
 	ssl      *ssl.Manager
 	github   *github.Client
+	updater  *updater.Updater
 }
 
 // NewHandler creates a new command handler
@@ -33,6 +37,7 @@ func NewHandler(dockerClient *docker.Client, cfg *config.Config) *Handler {
 		services: services.NewManager(dockerClient),
 		ssl:      ssl.NewManager(dockerClient, cfg),
 		github:   github.NewClient(cfg),
+		updater:  updater.New(),
 	}
 }
 
@@ -90,7 +95,7 @@ func (h *Handler) Execute(args []string) error {
 	case "init":
 		return h.handleInit(commandArgs)
 	case "start":
-		return h.handleStart()
+		return h.handleStart(commandArgs...)
 	case "stop":
 		return h.handleStop()
 	case "restart":
@@ -103,6 +108,12 @@ func (h *Handler) Execute(args []string) error {
 		return h.handleList()
 	case "php", "php-version":
 		return h.handlePHPVersion(commandArgs)
+
+	// Container interaction
+	case "exec", "run":
+		return h.handleExec(commandArgs)
+	case "shell", "sh", "bash":
+		return h.handleShell()
 
 	// Network and DNS
 	case "network-help":
@@ -240,8 +251,7 @@ func (h *Handler) handleInstall() error {
 
 // handleUpdate updates Devbox to the latest version
 func (h *Handler) handleUpdate() error {
-	updater := NewUpdater(h.config, h.github)
-	return updater.Update()
+	return h.updater.Update(false)
 }
 
 // handleUninstall uninstalls Devbox
@@ -280,51 +290,32 @@ func (h *Handler) handleUninstall() error {
 
 // handleInit initializes a new project
 func (h *Handler) handleInit(args []string) error {
+	// Init is now just an alias for start with PHP version selection
+	fmt.Println("ℹ️  'devbox init' is deprecated. Using 'devbox start' instead...")
+	return h.handleStart(args...)
+}
+
+// handleStart starts the current project
+func (h *Handler) handleStart(args ...string) error {
+	// Get project info early for cleanup purposes
 	proj, err := h.projects.GetCurrentProject()
 	if err != nil {
 		return err
 	}
 
-	if proj.Status != "not initialized" {
-		fmt.Printf("✅ Project '%s' is already initialized with PHP %s\n", proj.Name, proj.PHPVersion)
-		return h.showProjectStatus(proj)
-	}
-
-	// Select PHP version
+	// Select PHP version if not specified
 	phpVersion := h.config.DefaultPHPVersion
 	if len(args) > 0 && project.ValidatePHPVersion(args[0]) {
 		phpVersion = args[0]
-	} else {
+	} else if proj.Status == "not initialized" {
+		// Only prompt for PHP version on first start
 		phpVersion = utils.SelectOption("Select PHP Version", project.GetAvailablePHPVersions())
-	}
-
-	fmt.Printf("🚀 Initializing project '%s' with PHP %s...\n", proj.Name, phpVersion)
-
-	if err := h.projects.Initialize(phpVersion); err != nil {
-		return fmt.Errorf("failed to initialize project: %w", err)
-	}
-
-	fmt.Printf("✅ Project initialized successfully with PHP %s\n", phpVersion)
-	fmt.Println("\n📁 Project Details:")
-	fmt.Printf("  Name: %s\n", proj.Name)
-	fmt.Printf("  Path: %s\n", proj.Path)
-	fmt.Printf("  PHP Version: %s\n", phpVersion)
-	fmt.Println("\n🚀 Next step: Run 'devbox start' to start your project")
-	return nil
-}
-
-// handleStart starts the current project
-func (h *Handler) handleStart() error {
-	// Get project info early for cleanup purposes
-	project, err := h.projects.GetCurrentProject()
-	if err != nil {
-		return err
 	}
 
 	// Setup cleanup function that will be called on any failure
 	cleanupOnFailure := func(reason string) {
 		fmt.Printf("🧹 Cleaning up after failure: %s\n", reason)
-		containerName := fmt.Sprintf("devbox_php_%s", project.Name)
+		containerName := fmt.Sprintf("devbox_php_%s", proj.Name)
 
 		// Try to stop the container first
 		if stopErr := h.docker.Run("stop", containerName); stopErr != nil {
@@ -353,16 +344,16 @@ func (h *Handler) handleStart() error {
 		fmt.Printf("⚠️  Warning: GitHub authentication failed: %v\n", err)
 	}
 
-	fmt.Printf("🚀 Starting project '%s'...\n", project.Name)
+	fmt.Printf("🚀 Starting project '%s' with PHP %s...\n", proj.Name, phpVersion)
 
-	if err := h.projects.Start(); err != nil {
+	if err := h.projects.Start(phpVersion); err != nil {
 		cleanupOnFailure("project start failed")
 		return fmt.Errorf("failed to start project: %w", err)
 	}
 
 	// Setup SSL for project
 	if h.config.EnableSSL {
-		if err := h.ssl.SetupProjectSSL(project.Name); err != nil {
+		if err := h.ssl.SetupProjectSSL(proj.Name); err != nil {
 			// SSL setup failed - cleanup and return error
 			fmt.Printf("❌ Failed to setup SSL certificate: %v\n", err)
 			cleanupOnFailure("SSL certificate setup failed")
@@ -376,7 +367,7 @@ func (h *Handler) handleStart() error {
 	}
 
 	// Refresh project status after successful start
-	project, err = h.projects.GetCurrentProject()
+	project, err := h.projects.GetCurrentProject()
 	if err != nil {
 		cleanupOnFailure("failed to get project status after start")
 		return fmt.Errorf("failed to get project status: %w", err)
@@ -384,7 +375,7 @@ func (h *Handler) handleStart() error {
 
 	// Only show success message if we have valid project info
 	if project.Status == "running" && project.URL != "" {
-		fmt.Printf("✅ Project started successfully\n")
+		fmt.Printf("✅ Project started successfully with PHP %s\n", phpVersion)
 		fmt.Printf("🌐 Access your project at: %s\n", project.URL)
 		return h.showProjectStatus(project)
 	}
@@ -524,7 +515,7 @@ func (h *Handler) handlePHPVersion(args []string) error {
 	return nil
 }
 
-// handleContainerExec executes a command in the project container
+// handleContainerExec executes a command in the project container (for backward compatibility)
 func (h *Handler) handleContainerExec(command string, args []string) error {
 	project, err := h.projects.GetCurrentProject()
 	if err != nil {
@@ -536,12 +527,67 @@ func (h *Handler) handleContainerExec(command string, args []string) error {
 	}
 
 	if project.Status != "running" {
-		return fmt.Errorf("project container is not running")
+		return fmt.Errorf("project container is not running. Run 'devbox start' first")
 	}
 
 	// Prepare command for execution
 	execCommand := append([]string{command}, args...)
-	return h.projects.Exec(execCommand, true)
+	err = h.projects.Exec(execCommand, true)
+	if err != nil {
+		// If the error indicates the command wasn't found, provide a helpful message
+		if strings.Contains(err.Error(), "not found") {
+			return fmt.Errorf("'%s' is not a devbox command or available in the container\nTry 'devbox help' for available commands or 'devbox shell' to explore the container", command)
+		}
+	}
+	return err
+}
+
+// handleExec explicitly executes a command in the project container
+func (h *Handler) handleExec(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("no command specified. Usage: devbox exec <command> [args...]")
+	}
+
+	project, err := h.projects.GetCurrentProject()
+	if err != nil {
+		return err
+	}
+
+	if project.Status == "not initialized" {
+		return fmt.Errorf("project not initialized. Run 'devbox start' first")
+	}
+
+	if project.Status != "running" {
+		return fmt.Errorf("project container is not running. Run 'devbox start' first")
+	}
+
+	err = h.projects.Exec(args, true)
+	if err != nil {
+		// The project manager already provides a good error message
+		return err
+	}
+	return nil
+}
+
+// handleShell opens an interactive shell in the project container
+func (h *Handler) handleShell() error {
+	project, err := h.projects.GetCurrentProject()
+	if err != nil {
+		return err
+	}
+
+	if project.Status == "not initialized" {
+		return fmt.Errorf("project not initialized. Run 'devbox start' first")
+	}
+
+	if project.Status != "running" {
+		return fmt.Errorf("project container is not running. Run 'devbox start' first")
+	}
+
+	fmt.Printf("📂 Opening shell in %s container...\n", project.Name)
+
+	// Open an interactive shell, trying multiple shell types
+	return h.projects.OpenShell()
 }
 
 // handleLogs shows container logs
@@ -615,29 +661,46 @@ func (h *Handler) handleGitHubAuth() error {
 
 // handleDatabaseAdd adds a database service
 func (h *Handler) handleDatabaseAdd() error {
-	dbType := utils.SelectOption("Select database type", []string{"mysql", "postgresql"})
+	// Get a name for the database instance
+	fmt.Print("Enter a name for this database instance: ")
+	scanner := bufio.NewScanner(os.Stdin)
+	if !scanner.Scan() {
+		return fmt.Errorf("no name provided")
+	}
+	name := strings.TrimSpace(scanner.Text())
+	if name == "" {
+		return fmt.Errorf("database name cannot be empty")
+	}
+
+	// Validate name (alphanumeric and underscore only)
+	if !regexp.MustCompile(`^[a-zA-Z0-9_]+$`).MatchString(name) {
+		return fmt.Errorf("database name must be alphanumeric with underscores only")
+	}
+
+	// Show proper capitalization in UI
+	options := []string{"MySQL", "PostgreSQL"}
+	selected := utils.SelectOption("Select database type", options)
+
+	// Map to internal names
+	dbType := "mysql"
+	if selected == "PostgreSQL" {
+		dbType = "postgresql"
+	}
 
 	versions := []string{"8.0", "5.7"}
 	if dbType == "postgresql" {
 		versions = []string{"16", "15", "14", "13"}
 	}
 
-	version := utils.SelectOption(fmt.Sprintf("Select %s version", dbType), versions)
+	version := utils.SelectOption(fmt.Sprintf("Select %s version", selected), versions)
 
-	fmt.Printf("🚀 Adding %s %s...\n", dbType, version)
+	fmt.Printf("🚀 Adding %s '%s' (version %s)...\n", selected, name, version)
 
-	if err := h.services.AddDatabase(dbType, version); err != nil {
+	if err := h.services.AddDatabase(name, dbType, version); err != nil {
 		return fmt.Errorf("failed to add database: %w", err)
 	}
 
-	port := "3306"
-	if dbType == "postgresql" {
-		port = "5432"
-	}
-
-	fmt.Printf("✅ %s %s added successfully\n", dbType, version)
-	fmt.Printf("📍 Available at localhost:%s\n", port)
-
+	// Database port will be assigned automatically and shown by AddDatabase
 	if dbType == "mysql" {
 		fmt.Println("👤 User: root (no password)")
 	} else {
@@ -655,32 +718,42 @@ func (h *Handler) handleDatabaseRemove() error {
 	}
 
 	if len(databases) == 0 {
-		fmt.Println("No databases running")
+		fmt.Println("No databases configured")
 		return nil
 	}
 
-	dbNames := make([]string, len(databases))
+	// Create list with database info
+	dbOptions := make([]string, len(databases))
 	for i, db := range databases {
-		dbNames[i] = db.Name
+		// Show name, type, and status
+		dbType := "MySQL"
+		if strings.Contains(db.Image, "postgres") {
+			dbType = "PostgreSQL"
+		}
+		status := "stopped"
+		if db.Status == "running" {
+			status = "running"
+		}
+		dbOptions[i] = fmt.Sprintf("%s (%s - %s)", db.Name, dbType, status)
 	}
 
-	dbType := dbNames[0]
-	if len(dbNames) > 1 {
-		dbType = utils.SelectOption("Select database to remove", dbNames)
-	}
+	selected := utils.SelectOption("Select database to remove", dbOptions)
 
-	if !utils.PromptYesNo(fmt.Sprintf("Remove %s database?", dbType)) {
+	// Extract the name from the selection
+	selectedName := strings.Split(selected, " (")[0]
+
+	if !utils.PromptYesNo(fmt.Sprintf("Remove database '%s'?", selectedName)) {
 		fmt.Println("Remove cancelled")
 		return nil
 	}
 
-	fmt.Printf("🗑 Removing %s...\n", dbType)
+	fmt.Printf("🗑️  Removing '%s'...\n", selectedName)
 
-	if err := h.services.RemoveDatabase(dbType); err != nil {
+	if err := h.services.RemoveDatabase(selectedName); err != nil {
 		return fmt.Errorf("failed to remove database: %w", err)
 	}
 
-	fmt.Printf("✅ %s removed\n", dbType)
+	fmt.Printf("✅ Database '%s' removed\n", selectedName)
 	return nil
 }
 
@@ -692,7 +765,8 @@ func (h *Handler) handleDatabaseList() error {
 	}
 
 	if len(databases) == 0 {
-		fmt.Println("No databases running")
+		fmt.Println("No databases configured")
+		fmt.Println("\nUse 'devbox database add' to add a database")
 		return nil
 	}
 
@@ -703,10 +777,16 @@ func (h *Handler) handleDatabaseList() error {
 			status = "✅ running"
 		}
 
-		fmt.Printf("  %s (%s)\n", db.Name, status)
+		// Determine database type from image
+		dbType := "MySQL"
+		if strings.Contains(db.Image, "postgres") {
+			dbType = "PostgreSQL"
+		}
+
+		fmt.Printf("  %s (%s) - %s\n", db.Name, dbType, status)
 		fmt.Printf("    Image: %s\n", db.Image)
 		if len(db.Ports) > 0 {
-			fmt.Printf("    Ports: %s\n", strings.Join(db.Ports, ", "))
+			fmt.Printf("    Port: %s\n", strings.Join(db.Ports, ", "))
 		}
 		fmt.Println()
 	}
@@ -718,7 +798,6 @@ func (h *Handler) handleDatabaseList() error {
 
 func (h *Handler) showVersion() error {
 	fmt.Printf("Devbox v%s\n", config.Version)
-	fmt.Printf("GitHub: https://github.com/%s\n", config.GithubRepo)
 	return nil
 }
 
@@ -829,14 +908,18 @@ USAGE:
 
 COMMANDS:
   Project Management:
-    init [version]      Initialize a new project (optional PHP version)
-    start              Start the current project
+    start [version]    Start project (with optional PHP version)
     stop               Stop the current project
     restart            Restart the current project
     remove             Remove the current project
     status             Show project status
     list               List all projects
     php [version]      Change PHP version
+
+  Container Commands:
+    exec <cmd>         Execute command in project container
+    shell              Open interactive shell in container
+    logs               Show container logs
 
   Global Services:
     global start       Start global services (DNS, Nginx, Mail)
@@ -858,6 +941,14 @@ COMMANDS:
     install            Install Devbox
     update             Update to latest version
     uninstall          Uninstall Devbox
+
+EXAMPLES:
+  devbox start              # Start project with default/saved PHP version
+  devbox start 8.2          # Start project with PHP 8.2
+  devbox exec composer install  # Run composer install in container
+  devbox exec npm run dev   # Run npm dev script in container
+  devbox shell              # Open bash shell in container
+  devbox logs              # View container logs
     version            Show version information
     help               Show this help message
 
@@ -884,6 +975,6 @@ EXAMPLES:
   devbox database add       # Add a database
   devbox php 8.2           # Change to PHP 8.2
 
-For more information, visit: https://github.com/%s
-`, config.Version, config.GithubRepo)
+For more information, visit: https://devbox.app
+`, config.Version)
 }

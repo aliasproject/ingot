@@ -7,11 +7,11 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"runtime"
 	"strings"
 	"time"
 
 	"github.com/aliasproject/devbox/internal/config"
+	"github.com/aliasproject/devbox/internal/utils"
 )
 
 // Client handles GitHub authentication and API operations
@@ -156,7 +156,7 @@ func (c *Client) authenticateWithOAuth() error {
 	fmt.Println("\nWaiting for authorization...")
 
 	// Open browser
-	c.openURL(deviceCode.VerificationURI)
+	utils.OpenURL(deviceCode.VerificationURI)
 
 	// Poll for token
 	token, err := c.pollForToken(deviceCode)
@@ -400,67 +400,4 @@ func (c *Client) checkDeviceAuthorization(deviceCode string) (string, error) {
 	}
 
 	return result.AccessToken, nil
-}
-
-// openURL opens a URL in the default browser
-func (c *Client) openURL(url string) error {
-	var cmd *exec.Cmd
-
-	switch runtime.GOOS {
-	case "darwin":
-		cmd = exec.Command("open", url)
-	case "linux":
-		cmd = exec.Command("xdg-open", url)
-	case "windows":
-		cmd = exec.Command("cmd", "/c", "start", url)
-	default:
-		return fmt.Errorf("unsupported platform")
-	}
-
-	return cmd.Start()
-}
-
-// CheckForUpdates checks for new releases
-func (c *Client) CheckForUpdates() (*ReleaseInfo, error) {
-	req, err := http.NewRequest("GET",
-		fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", config.GithubRepo),
-		nil,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	// Add token if available for higher rate limits
-	if token := c.config.GetGithubToken(); token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-	req.Header.Set("Accept", "application/vnd.github.v3+json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to check for updates (status: %d)", resp.StatusCode)
-	}
-
-	var release ReleaseInfo
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return nil, err
-	}
-
-	return &release, nil
-}
-
-// ReleaseInfo holds information about a GitHub release
-type ReleaseInfo struct {
-	TagName     string    `json:"tag_name"`
-	Name        string    `json:"name"`
-	Body        string    `json:"body"`
-	Draft       bool      `json:"draft"`
-	Prerelease  bool      `json:"prerelease"`
-	PublishedAt time.Time `json:"published_at"`
-	HTMLURL     string    `json:"html_url"`
 }

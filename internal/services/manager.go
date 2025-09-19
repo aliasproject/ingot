@@ -136,11 +136,12 @@ func (m *Manager) Status() ([]*Service, error) {
 	}
 
 	// Check database services
-	dbType, _ := m.config.GetDatabase()
-	if dbType != "" {
-		dbContainer := "devbox_" + dbType
+	databases := m.config.GetDatabases()
+	for name, dbConfig := range databases {
+		displayName := name
+		dbContainer := "devbox_db_" + name
 		service := &Service{
-			Name:      dbType,
+			Name:      displayName,
 			Container: dbContainer,
 			Status:    "not found",
 		}
@@ -212,7 +213,7 @@ func (m *Manager) waitForServices(timeout time.Duration) error {
 
 // generateComposeConfig generates docker-compose configuration
 func (m *Manager) generateComposeConfig(hostIP string) string {
-	dbType, dbVersion := m.config.GetDatabase()
+	databases := m.config.GetDatabases()
 	networkConfig := config.GetNetworkConfig()
 
 	compose := fmt.Sprintf(`name: devbox
@@ -260,11 +261,12 @@ services:
       - internal
 `, networkConfig.DNSServer, hostIP)
 
-	// Add database if configured
-	if dbType == "mysql" && dbVersion != "" {
-		compose += fmt.Sprintf(`
-  mysql:
-    container_name: devbox_mysql
+	// Add databases
+	for name, dbConfig := range databases {
+		if dbConfig.Type == "mysql" {
+			compose += fmt.Sprintf(`
+  db_%s:
+    container_name: devbox_db_%s
     image: mysql:%s
     platform: linux/amd64
     restart: unless-stopped
@@ -272,17 +274,17 @@ services:
       - MYSQL_ROOT_PASSWORD=
       - MYSQL_ALLOW_EMPTY_PASSWORD=yes
     ports:
-      - "3306:3306"
+      - "%s:3306"
     networks:
       - devbox-network
       - internal
     volumes:
-      - mysql-%s:/var/lib/mysql
-`, dbVersion, dbVersion)
-	} else if dbType == "postgresql" && dbVersion != "" {
-		compose += fmt.Sprintf(`
-  postgresql:
-    container_name: devbox_postgresql
+      - db_%s:/var/lib/mysql
+`, name, name, dbConfig.Version, dbConfig.Port, name)
+		} else if dbConfig.Type == "postgresql" {
+			compose += fmt.Sprintf(`
+  db_%s:
+    container_name: devbox_db_%s
     image: postgres:%s
     restart: unless-stopped
     environment:
@@ -290,13 +292,14 @@ services:
       - POSTGRES_PASSWORD=devbox
       - POSTGRES_DB=devbox
     ports:
-      - "5432:5432"
+      - "%s:5432"
     networks:
       - devbox-network
       - internal
     volumes:
-      - postgresql-%s:/var/lib/postgresql/data
-`, dbVersion, dbVersion)
+      - db_%s:/var/lib/postgresql/data
+`, name, name, dbConfig.Version, dbConfig.Port, name)
+		}
 	}
 
 	// Add volumes
@@ -307,22 +310,11 @@ volumes:
   vhosts:
     name: devbox_vhosts`
 
-	if dbType == "mysql" {
-		compose += `
-  mysql-8.0:
-    name: devbox_mysql-8.0
-  mysql-5.7:
-    name: devbox_mysql-5.7`
-	} else if dbType == "postgresql" {
-		compose += `
-  postgresql-16:
-    name: devbox_postgresql-16
-  postgresql-15:
-    name: devbox_postgresql-15
-  postgresql-14:
-    name: devbox_postgresql-14
-  postgresql-13:
-    name: devbox_postgresql-13`
+	// Add volumes for each database
+	for name := range databases {
+		compose += fmt.Sprintf(`
+  db_%s:
+    name: devbox_db_%s`, name, name)
 	}
 
 	// Add networks
@@ -342,147 +334,157 @@ networks:
 }
 
 // AddDatabase adds a database service
-func (m *Manager) AddDatabase(dbType, version string) error {
+func (m *Manager) AddDatabase(name, dbType, version string) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	// Validate database type
 	if dbType != "mysql" && dbType != "postgresql" {
+		m.mu.Unlock()
 		return fmt.Errorf("invalid database type: %s", dbType)
 	}
 
-	// Stop existing database if running
-	existingContainer := "devbox_" + dbType
-	if m.docker.ContainerExists(existingContainer) {
-		if err := m.docker.RemoveContainer(existingContainer, true); err != nil {
-			return fmt.Errorf("failed to remove existing database: %w", err)
-		}
+	// Check if name already exists
+	databases := m.config.GetDatabases()
+	if _, exists := databases[name]; exists {
+		m.mu.Unlock()
+		return fmt.Errorf("database '%s' already exists", name)
 	}
 
+	// Find an available port
+	port := m.findAvailablePort(dbType, databases)
+
 	// Save configuration
-	if err := m.config.SetDatabase(dbType, version); err != nil {
+	if err := m.config.AddDatabase(name, dbType, version, port); err != nil {
+		m.mu.Unlock()
 		return fmt.Errorf("failed to save database config: %w", err)
 	}
 
 	// Create volume
-	volumeName := fmt.Sprintf("devbox_%s-%s", dbType, version)
+	volumeName := fmt.Sprintf("devbox_db_%s", name)
 	if err := m.docker.CreateVolume(volumeName); err != nil {
+		m.mu.Unlock()
 		return fmt.Errorf("failed to create volume: %w", err)
 	}
 
-	// Ensure networks exist
-	networkConfig := config.GetNetworkConfig()
-	m.docker.CreateNetwork(networkConfig.BridgeName)
-	m.docker.CreateNetwork(networkConfig.InternalNet)
+	// Display name for output
+	displayName := "MySQL"
+	if dbType == "postgresql" {
+		displayName = "PostgreSQL"
+	}
 
-	// Create container configuration
-	var containerConfig *docker.ContainerConfig
+	fmt.Printf("✅ %s '%s' (version %s) configured on port %s\n", displayName, name, version, port)
+	fmt.Println("Restarting global services to apply changes...")
 
-	if dbType == "mysql" {
-		containerConfig = &docker.ContainerConfig{
-			Name:     existingContainer,
-			Image:    fmt.Sprintf("mysql:%s", version),
-			Platform: "linux/amd64",
-			Detached: true,
-			Restart:  "unless-stopped",
-			Network:  networkConfig.BridgeName,
-			Volumes: []string{
-				fmt.Sprintf("%s:/var/lib/mysql", volumeName),
-			},
-			Ports: []string{"3306:3306"},
-			Environment: map[string]string{
-				"MYSQL_ROOT_PASSWORD":        "",
-				"MYSQL_ALLOW_EMPTY_PASSWORD": "yes",
-			},
-		}
-	} else {
-		containerConfig = &docker.ContainerConfig{
-			Name:     existingContainer,
-			Image:    fmt.Sprintf("postgres:%s", version),
-			Detached: true,
-			Restart:  "unless-stopped",
-			Network:  networkConfig.BridgeName,
-			Volumes: []string{
-				fmt.Sprintf("%s:/var/lib/postgresql/data", volumeName),
-			},
-			Ports: []string{"5432:5432"},
-			Environment: map[string]string{
-				"POSTGRES_USER":     "devbox",
-				"POSTGRES_PASSWORD": "devbox",
-				"POSTGRES_DB":       "devbox",
-			},
+	// Release mutex before calling Restart to avoid deadlock
+	m.mu.Unlock()
+
+	// Restart services to apply the new database configuration
+	// The database will be added to the compose group
+	return m.Restart()
+}
+
+// findAvailablePort finds an available port for the database
+func (m *Manager) findAvailablePort(dbType string, databases map[string]config.DatabaseConfig) string {
+	basePort := 3306
+	if dbType == "postgresql" {
+		basePort = 5432
+	}
+
+	usedPorts := make(map[int]bool)
+	for _, db := range databases {
+		var port int
+		fmt.Sscanf(db.Port, "%d", &port)
+		usedPorts[port] = true
+	}
+
+	// Find first available port starting from base
+	for port := basePort; port < basePort+100; port++ {
+		if !usedPorts[port] {
+			return fmt.Sprintf("%d", port)
 		}
 	}
 
-	// Run the container
-	if err := m.docker.RunContainer(containerConfig); err != nil {
-		return fmt.Errorf("failed to start database: %w", err)
-	}
-
-	// Connect to internal network
-	m.docker.Run("network", "connect", networkConfig.InternalNet, existingContainer)
-
-	return nil
+	// Fallback to a random high port
+	return fmt.Sprintf("%d", basePort+100)
 }
 
 // RemoveDatabase removes a database service
-func (m *Manager) RemoveDatabase(dbType string) error {
+func (m *Manager) RemoveDatabase(name string) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
-	container := "devbox_" + dbType
-	if !m.docker.ContainerExists(container) {
-		return fmt.Errorf("database %s not found", dbType)
+	databases := m.config.GetDatabases()
+	dbConfig, exists := databases[name]
+	if !exists {
+		m.mu.Unlock()
+		return fmt.Errorf("database '%s' not found", name)
 	}
 
-	// Stop and remove container
-	if err := m.docker.RemoveContainer(container, true); err != nil {
-		return fmt.Errorf("failed to remove database: %w", err)
+	// Clear configuration
+	if err := m.config.RemoveDatabase(name); err != nil {
+		m.mu.Unlock()
+		return fmt.Errorf("failed to update config: %w", err)
 	}
 
-	// Clear configuration if this is the configured database
-	currentDB, _ := m.config.GetDatabase()
-	if currentDB == dbType {
-		m.config.SetDatabase("", "")
+	// Display name for output
+	displayName := "MySQL"
+	if dbConfig.Type == "postgresql" {
+		displayName = "PostgreSQL"
 	}
 
-	return nil
+	fmt.Printf("Removing %s '%s'...\n", displayName, name)
+
+	// Release mutex before calling Restart to avoid deadlock
+	m.mu.Unlock()
+
+	// Restart services to remove the database from compose group
+	return m.Restart()
 }
 
-// GetDatabases returns list of running database services
+// GetDatabases returns list of database services
 func (m *Manager) GetDatabases() ([]*Service, error) {
-	databases := make([]*Service, 0)
+	services := make([]*Service, 0)
+	databases := m.config.GetDatabases()
 
-	for _, dbType := range []string{"mysql", "postgresql"} {
-		container := "devbox_" + dbType
-		info, err := m.docker.InspectContainer(container)
-		if err != nil {
-			continue // Database not running
-		}
+	for name, dbConfig := range databases {
+		container := "devbox_db_" + name
 
 		service := &Service{
-			Name:      dbType,
+			Name:      name,
 			Container: container,
-			Image:     info.Image,
-			Status:    info.State,
+			Status:    "not found",
 		}
 
-		// Extract ports
-		for _, port := range info.Ports {
-			portStr := fmt.Sprintf("%s:%s", port.HostPort, port.ContainerPort)
-			service.Ports = append(service.Ports, portStr)
-		}
+		// Get actual container info
+		info, err := m.docker.InspectContainer(container)
+		if err == nil {
+			service.Status = info.State
+			service.Image = info.Image
 
-		if info.State == "running" {
-			service.Health = "healthy"
+			// Extract ports
+			for _, port := range info.Ports {
+				portStr := fmt.Sprintf("%s:%s", port.HostPort, port.ContainerPort)
+				service.Ports = append(service.Ports, portStr)
+			}
+
+			if info.State == "running" {
+				service.Health = "healthy"
+			} else {
+				service.Health = "unhealthy"
+			}
 		} else {
-			service.Health = "unhealthy"
+			// Database configured but not running
+			if dbConfig.Type == "mysql" {
+				service.Image = fmt.Sprintf("mysql:%s", dbConfig.Version)
+			} else {
+				service.Image = fmt.Sprintf("postgres:%s", dbConfig.Version)
+			}
+			service.Ports = []string{fmt.Sprintf("%s:*", dbConfig.Port)}
 		}
 
-		databases = append(databases, service)
+		services = append(services, service)
 	}
 
-	return databases, nil
+	return services, nil
 }
 
 // GetHostIP returns the host machine's IP address

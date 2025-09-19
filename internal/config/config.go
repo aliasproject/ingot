@@ -12,9 +12,6 @@ const (
 	// Version is the current version of Devbox
 	Version = "0.9.5"
 
-	// GithubRepo is the GitHub repository for updates
-	GithubRepo = "aliasproject/devbox"
-
 	// ClientID is the GitHub OAuth application client ID
 	ClientID = "178c6fc778ccc68e1d6a"
 
@@ -32,16 +29,16 @@ type Config struct {
 	// Paths
 	HomeDir    string `json:"-"`
 	DevboxDir  string `json:"-"`
+	ConfigDir  string `json:"-"`
 	CertsDir   string `json:"-"`
 	CAPath     string `json:"-"`
 	ConfigFile string `json:"-"`
 
 	// Settings
-	DatabaseType      string `json:"database_type,omitempty"`
-	DatabaseVersion   string `json:"database_version,omitempty"`
-	GithubToken       string `json:"github_token,omitempty"`
-	DefaultPHPVersion string `json:"default_php_version,omitempty"`
-	AutoStartGlobal   bool   `json:"auto_start_global,omitempty"`
+	Databases         map[string]DatabaseConfig `json:"databases,omitempty"`
+	GithubToken       string                    `json:"github_token,omitempty"`
+	DefaultPHPVersion string                    `json:"default_php_version,omitempty"`
+	AutoStartGlobal   bool                      `json:"auto_start_global,omitempty"`
 
 	// Network
 	HostIP  string `json:"host_ip,omitempty"`
@@ -50,6 +47,13 @@ type Config struct {
 	// Features
 	EnableSSL bool `json:"enable_ssl,omitempty"`
 	EnableDNS bool `json:"enable_dns,omitempty"`
+}
+
+// DatabaseConfig holds configuration for a database instance
+type DatabaseConfig struct {
+	Type    string `json:"type"`    // mysql or postgresql
+	Version string `json:"version"` // e.g., 8.0, 16
+	Port    string `json:"port"`    // external port
 }
 
 var (
@@ -74,6 +78,7 @@ func (c *Config) initialize() {
 	}
 
 	c.DevboxDir = filepath.Join(c.HomeDir, ".devbox")
+	c.ConfigDir = c.DevboxDir
 	c.CertsDir = filepath.Join(c.DevboxDir, "certs")
 	c.CAPath = filepath.Join(c.CertsDir, "AliasProjectCASelfSigned.pem")
 	c.ConfigFile = filepath.Join(c.DevboxDir, "config.json")
@@ -84,6 +89,7 @@ func (c *Config) initialize() {
 	c.EnableSSL = true
 	c.EnableDNS = true
 	c.DNSPort = "5354"
+	c.Databases = make(map[string]DatabaseConfig)
 
 	// Create directories if they don't exist
 	os.MkdirAll(c.DevboxDir, 0755)
@@ -140,14 +146,6 @@ func (c *Config) loadFromEnv() {
 		c.GithubToken = token
 	}
 
-	if dbType := os.Getenv("DATABASE_TYPE"); dbType != "" {
-		c.DatabaseType = dbType
-	}
-
-	if dbVersion := os.Getenv("DATABASE_VERSION"); dbVersion != "" {
-		c.DatabaseVersion = dbVersion
-	}
-
 	if phpVersion := os.Getenv("DEFAULT_PHP_VERSION"); phpVersion != "" {
 		c.DefaultPHPVersion = phpVersion
 	}
@@ -163,15 +161,28 @@ func (c *Config) SetGithubToken(token string) error {
 	return c.Save()
 }
 
-// SetDatabase sets the database configuration and saves
-func (c *Config) SetDatabase(dbType, version string) error {
+// AddDatabase adds a database configuration and saves
+func (c *Config) AddDatabase(name, dbType, version, port string) error {
 	c.mu.Lock()
-	c.DatabaseType = dbType
-	c.DatabaseVersion = version
+	if c.Databases == nil {
+		c.Databases = make(map[string]DatabaseConfig)
+	}
+	c.Databases[name] = DatabaseConfig{
+		Type:    dbType,
+		Version: version,
+		Port:    port,
+	}
 	c.mu.Unlock()
 
-	os.Setenv("DATABASE_TYPE", dbType)
-	os.Setenv("DATABASE_VERSION", version)
+	return c.Save()
+}
+
+// RemoveDatabase removes a database configuration and saves
+func (c *Config) RemoveDatabase(name string) error {
+	c.mu.Lock()
+	delete(c.Databases, name)
+	c.mu.Unlock()
+
 	return c.Save()
 }
 
@@ -182,11 +193,15 @@ func (c *Config) GetGithubToken() string {
 	return c.GithubToken
 }
 
-// GetDatabase returns the database configuration
-func (c *Config) GetDatabase() (string, string) {
+// GetDatabases returns all database configurations
+func (c *Config) GetDatabases() map[string]DatabaseConfig {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.DatabaseType, c.DatabaseVersion
+	databases := make(map[string]DatabaseConfig)
+	for k, v := range c.Databases {
+		databases[k] = v
+	}
+	return databases
 }
 
 // IsInstalled checks if Devbox is installed
