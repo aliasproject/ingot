@@ -137,7 +137,7 @@ func (m *Manager) Status() ([]*Service, error) {
 
 	// Check database services
 	databases := m.config.GetDatabases()
-	for name, dbConfig := range databases {
+	for name := range databases {
 		displayName := name
 		dbContainer := "devbox_db_" + name
 		service := &Service{

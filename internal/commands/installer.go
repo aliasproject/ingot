@@ -126,21 +126,34 @@ func (i *Installer) configureDatabase() error {
 		return nil
 	}
 
-	dbType := utils.SelectOption("Select database type", []string{"mysql", "postgresql"})
+	// Show proper capitalization
+	dbTypeOptions := []string{"MySQL", "PostgreSQL"}
+	selected := utils.SelectOption("Select database type", dbTypeOptions)
+
+	dbType := "mysql"
+	if selected == "PostgreSQL" {
+		dbType = "postgresql"
+	}
 
 	versions := []string{"8.0", "5.7"}
 	if dbType == "postgresql" {
 		versions = []string{"16", "15", "14", "13"}
 	}
 
-	dbVersion := utils.SelectOption(fmt.Sprintf("Select %s version", dbType), versions)
+	dbVersion := utils.SelectOption(fmt.Sprintf("Select %s version", selected), versions)
 
-	// Save configuration
-	if err := i.config.SetDatabase(dbType, dbVersion); err != nil {
+	// Find default port
+	port := "3306"
+	if dbType == "postgresql" {
+		port = "5432"
+	}
+
+	// Save configuration with default name
+	if err := i.config.AddDatabase("main", dbType, dbVersion, port); err != nil {
 		return err
 	}
 
-	fmt.Printf("  ✅ Configured %s %s\n", dbType, dbVersion)
+	fmt.Printf("  ✅ Configured %s %s as 'main' database\n", selected, dbVersion)
 	return nil
 }
 
