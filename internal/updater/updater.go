@@ -84,8 +84,6 @@ func (u *Updater) CheckForUpdate() (*Release, bool, error) {
 	if u.githubToken != "" {
 		release, err := u.fetchLatestGitHubRelease()
 		if err == nil {
-			fmt.Printf("Current version: v%s\n", config.Version)
-			fmt.Printf("Latest version: v%s\n", release.Version)
 			isNewer := compareVersions(release.Version, config.Version) > 0
 			return release, isNewer, nil
 		}
@@ -124,8 +122,6 @@ func (u *Updater) Update(force bool) error {
 	}
 
 	// Show update info
-	fmt.Printf("Current version: v%s\n", config.Version)
-	fmt.Printf("New version:     v%s\n", release.Version)
 	if release.Critical {
 		fmt.Println("⚠️  This is a critical security update")
 	}

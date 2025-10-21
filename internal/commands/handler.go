@@ -321,8 +321,6 @@ func (h *Handler) handleCheckUpdate() error {
 		return fmt.Errorf("failed to check for updates: %w", err)
 	}
 
-	fmt.Printf("Current version: v%s\n", config.Version)
-
 	if !isNewer {
 		fmt.Println("✅ You are running the latest version")
 		return nil
