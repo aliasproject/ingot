@@ -215,6 +215,7 @@ type ProjectConfig struct {
 	Name        string            `json:"name"`
 	Path        string            `json:"path"`
 	PHPVersion  string            `json:"php_version"`
+	ServerRoot  string            `json:"server_root,omitempty"`
 	Databases   []string          `json:"databases,omitempty"`
 	Environment map[string]string `json:"environment,omitempty"`
 	Ports       map[string]string `json:"ports,omitempty"`

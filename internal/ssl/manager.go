@@ -104,19 +104,74 @@ func (m *Manager) SetupProjectSSL(projectName string) error {
 func (m *Manager) RemoveProjectSSL(projectName string) error {
 	domain := projectName + ".test"
 
-	// Remove certificate files
-	m.docker.Run("exec", "devbox_nginx", "rm", "-f",
-		"/etc/nginx/ssl/"+domain+".crt",
-		"/etc/nginx/ssl/"+domain+".key",
-	)
+	// Remove certificate files directly from devbox_certs volume
+	// This works regardless of nginx container state
+	if err := m.docker.Run("run", "--rm", "-v", "devbox_certs:/certs", "alpine:latest",
+		"sh", "-c", fmt.Sprintf("rm -f /certs/%s.crt /certs/%s.key", domain, domain)); err != nil {
+		fmt.Printf("⚠️  Warning: Failed to remove certificate files: %v\n", err)
+	}
 
-	// Remove vhost configuration
-	m.docker.Run("exec", "devbox_nginx", "rm", "-f",
-		"/etc/nginx/conf.d/"+projectName+".conf",
-	)
+	// Update vhost to use HTTP instead of HTTPS
+	if err := m.updateVhostToHTTP(projectName); err != nil {
+		fmt.Printf("⚠️  Warning: Failed to update vhost to HTTP: %v\n", err)
+	}
 
-	// Reload nginx
-	m.reloadNginx()
+	return nil
+}
+
+// RemoveProjectVhost removes the nginx vhost configuration for a project
+func (m *Manager) RemoveProjectVhost(projectName string) error {
+	// Remove vhost file directly from devbox_vhosts volume
+	// This works regardless of nginx container state
+	if err := m.docker.Run("run", "--rm", "-v", "devbox_vhosts:/vhosts", "alpine:latest",
+		"rm", "-f", fmt.Sprintf("/vhosts/%s.conf", projectName)); err != nil {
+		fmt.Printf("⚠️  Warning: Failed to remove vhost configuration: %v\n", err)
+	}
+
+	// Reload nginx to apply configuration changes if it's running
+	if m.docker.ContainerExists("devbox_nginx") && m.docker.IsContainerRunning("devbox_nginx") {
+		if err := m.reloadNginx(); err != nil {
+			fmt.Printf("⚠️  Warning: Failed to reload nginx: %v\n", err)
+		}
+	}
+
+	return nil
+}
+
+// updateVhostToHTTP updates a project's vhost configuration to use HTTP instead of HTTPS
+func (m *Manager) updateVhostToHTTP(projectName string) error {
+	// Create HTTP-only vhost configuration
+	httpVhostConfig := fmt.Sprintf(`server {
+    listen 80;
+    server_name %s.test;
+    root /var/www/%s;
+    index index.php index.html index.htm;
+
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    location ~ \.php$ {
+        proxy_pass http://%s:80;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}`, projectName, projectName, fmt.Sprintf("devbox_php_%s", projectName))
+
+	// Write HTTP vhost configuration to volume
+	if err := m.docker.Run("run", "--rm", "-v", "devbox_vhosts:/vhosts", "alpine:latest",
+		"sh", "-c", fmt.Sprintf("echo '%s' > /vhosts/%s.conf", httpVhostConfig, projectName)); err != nil {
+		return fmt.Errorf("failed to write HTTP vhost configuration: %w", err)
+	}
+
+	// Reload nginx to apply configuration changes if it's running
+	if m.docker.ContainerExists("devbox_nginx") && m.docker.IsContainerRunning("devbox_nginx") {
+		if err := m.reloadNginx(); err != nil {
+			fmt.Printf("⚠️  Warning: Failed to reload nginx: %v\n", err)
+		}
+	}
 
 	return nil
 }

@@ -32,10 +32,27 @@ type Binary struct {
 	Size   int64  `json:"size"`
 }
 
+// GitHubRelease represents a GitHub release
+type GitHubRelease struct {
+	TagName     string `json:"tag_name"`
+	Name        string `json:"name"`
+	Body        string `json:"body"`
+	Draft       bool   `json:"draft"`
+	Prerelease  bool   `json:"prerelease"`
+	PublishedAt string `json:"published_at"`
+	Assets      []struct {
+		Name               string `json:"name"`
+		BrowserDownloadURL string `json:"browser_download_url"`
+		Size               int64  `json:"size"`
+	} `json:"assets"`
+}
+
 // Updater handles self-updates
 type Updater struct {
 	manifestURL string
 	httpClient  *http.Client
+	githubToken string
+	githubRepo  string
 }
 
 // New creates a new updater instance
@@ -46,14 +63,35 @@ func New() *Updater {
 		manifestURL = "https://devbox-updates.s3.amazonaws.com/stable/manifest.json"
 	}
 
+	// Get GitHub configuration
+	githubRepo := os.Getenv("DEVBOX_GITHUB_REPO")
+	if githubRepo == "" {
+		githubRepo = "aliasproject/devbox" // default repo
+	}
+
 	return &Updater{
 		manifestURL: manifestURL,
 		httpClient:  &http.Client{Timeout: 30 * time.Second},
+		githubRepo:  githubRepo,
 	}
 }
 
 // CheckForUpdate checks if a new version is available
 func (u *Updater) CheckForUpdate() (*Release, bool, error) {
+	// Try GitHub releases first if token is available
+	if u.githubToken != "" {
+		release, err := u.fetchLatestGitHubRelease()
+		if err == nil {
+			fmt.Printf("Current version: v%s\n", config.Version)
+			fmt.Printf("Latest version: v%s\n", release.Version)
+			isNewer := compareVersions(release.Version, config.Version) > 0
+			return release, isNewer, nil
+		}
+		// If GitHub fails, fall back to manifest
+		fmt.Printf("Warning: GitHub release check failed: %v\nFalling back to manifest...\n", err)
+	}
+
+	// Fall back to S3 manifest
 	release, err := u.fetchLatestRelease()
 	if err != nil {
 		return nil, false, err
@@ -98,7 +136,12 @@ func (u *Updater) Update(force bool) error {
 	return u.performUpdate(&binary)
 }
 
-// fetchLatestRelease fetches the latest release information
+// SetGitHubToken sets the GitHub token for accessing private repositories
+func (u *Updater) SetGitHubToken(token string) {
+	u.githubToken = token
+}
+
+// fetchLatestRelease fetches the latest release information from S3 manifest
 func (u *Updater) fetchLatestRelease() (*Release, error) {
 	resp, err := u.httpClient.Get(u.manifestURL)
 	if err != nil {
@@ -116,6 +159,108 @@ func (u *Updater) fetchLatestRelease() (*Release, error) {
 	}
 
 	return &release, nil
+}
+
+// fetchLatestGitHubRelease fetches the latest release from GitHub
+func (u *Updater) fetchLatestGitHubRelease() (*Release, error) {
+	url := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", u.githubRepo)
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if u.githubToken != "" {
+		req.Header.Set("Authorization", "Bearer "+u.githubToken)
+	}
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+
+	resp, err := u.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to fetch GitHub release: %s", resp.Status)
+	}
+
+	var githubRelease GitHubRelease
+	if err := json.NewDecoder(resp.Body).Decode(&githubRelease); err != nil {
+		return nil, err
+	}
+
+	// Skip drafts and prereleases
+	if githubRelease.Draft || githubRelease.Prerelease {
+		return nil, fmt.Errorf("latest release is a draft or prerelease")
+	}
+
+	// Convert GitHub release to our Release format
+	release := &Release{
+		Version:   strings.TrimPrefix(githubRelease.TagName, "v"),
+		Date:      githubRelease.PublishedAt,
+		Notes:     githubRelease.Body,
+		Critical:  strings.Contains(strings.ToLower(githubRelease.Body), "critical") || strings.Contains(strings.ToLower(githubRelease.Body), "security"),
+		Downloads: make(map[string]Binary),
+	}
+
+	// Map assets to downloads
+	for _, asset := range githubRelease.Assets {
+		platform := u.detectPlatformFromAssetName(asset.Name)
+		if platform != "" {
+			release.Downloads[platform] = Binary{
+				URL:  asset.BrowserDownloadURL,
+				Size: asset.Size,
+				// Note: GitHub doesn't provide SHA256 in API, would need to be in release notes or separate
+			}
+		}
+	}
+
+	return release, nil
+}
+
+// detectPlatformFromAssetName detects platform from asset filename
+func (u *Updater) detectPlatformFromAssetName(filename string) string {
+	filename = strings.ToLower(filename)
+
+	// Common patterns for different platforms
+	platforms := map[string]string{
+		"linux_amd64":   "linux_amd64",
+		"linux-amd64":   "linux_amd64",
+		"linux_arm64":   "linux_arm64",
+		"linux-arm64":   "linux_arm64",
+		"darwin_amd64":  "darwin_amd64",
+		"darwin-amd64":  "darwin_amd64",
+		"darwin_arm64":  "darwin_arm64",
+		"darwin-arm64":  "darwin_arm64",
+		"windows_amd64": "windows_amd64",
+		"windows-amd64": "windows_amd64",
+	}
+
+	for pattern, platform := range platforms {
+		if strings.Contains(filename, pattern) {
+			return platform
+		}
+	}
+
+	// Fallback detection
+	if strings.Contains(filename, "linux") {
+		if strings.Contains(filename, "arm64") || strings.Contains(filename, "aarch64") {
+			return "linux_arm64"
+		}
+		return "linux_amd64"
+	}
+	if strings.Contains(filename, "darwin") || strings.Contains(filename, "macos") {
+		if strings.Contains(filename, "arm64") {
+			return "darwin_arm64"
+		}
+		return "darwin_amd64"
+	}
+	if strings.Contains(filename, "windows") || strings.Contains(filename, ".exe") {
+		return "windows_amd64"
+	}
+
+	return ""
 }
 
 // performUpdate downloads and replaces the binary

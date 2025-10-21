@@ -35,6 +35,7 @@ type Project struct {
 	Name       string
 	Path       string
 	PHPVersion string
+	ServerRoot string
 	Status     string
 	Container  string
 	URL        string
@@ -52,15 +53,23 @@ func (m *Manager) GetCurrentProject() (*Project, error) {
 	name := filepath.Base(cwd)
 	container := m.getContainerName(name)
 
+	// Load project configuration for server root and other settings
+	projectConfig, _ := m.loadProjectConfig(cwd)
+	serverRoot := "public" // default
+	if projectConfig != nil && projectConfig.ServerRoot != "" {
+		serverRoot = projectConfig.ServerRoot
+	}
+
 	// Check if project is initialized
 	info, err := m.docker.InspectContainer(container)
 	if err != nil {
 		if err == docker.ErrContainerNotFound {
 			return &Project{
-				Name:      name,
-				Path:      cwd,
-				Status:    "not initialized",
-				Container: container,
+				Name:       name,
+				Path:       cwd,
+				ServerRoot: serverRoot,
+				Status:     "not initialized",
+				Container:  container,
 			}, nil
 		}
 		return nil, err
@@ -80,6 +89,7 @@ func (m *Manager) GetCurrentProject() (*Project, error) {
 		Name:       name,
 		Path:       cwd,
 		PHPVersion: phpVersion,
+		ServerRoot: serverRoot,
 		Status:     status,
 		Container:  container,
 		URL:        fmt.Sprintf("https://%s.test", name),
@@ -118,7 +128,7 @@ func (m *Manager) Initialize(phpVersion string) error {
 }
 
 // Start starts the project container with optional PHP version
-func (m *Manager) Start(phpVersion ...string) error {
+func (m *Manager) Start(phpVersion string, serverRoot ...string) error {
 	project, err := m.GetCurrentProject()
 	if err != nil {
 		return err
@@ -126,8 +136,8 @@ func (m *Manager) Start(phpVersion ...string) error {
 
 	// Determine PHP version to use
 	var desiredPHPVersion string
-	if len(phpVersion) > 0 && phpVersion[0] != "" {
-		desiredPHPVersion = phpVersion[0]
+	if phpVersion != "" {
+		desiredPHPVersion = phpVersion
 	} else {
 		// Load from saved config if exists
 		projectConfig, _ := m.loadProjectConfig(project.Path)
@@ -139,6 +149,20 @@ func (m *Manager) Start(phpVersion ...string) error {
 	// Use default if no version specified
 	if desiredPHPVersion == "" {
 		desiredPHPVersion = m.config.DefaultPHPVersion
+	}
+
+	// Determine server root to use
+	var desiredServerRoot string
+	if len(serverRoot) > 0 && serverRoot[0] != "" {
+		desiredServerRoot = serverRoot[0]
+	} else {
+		// Load from saved config if exists
+		projectConfig, _ := m.loadProjectConfig(project.Path)
+		if projectConfig != nil && projectConfig.ServerRoot != "" {
+			desiredServerRoot = projectConfig.ServerRoot
+		} else {
+			desiredServerRoot = "public" // default
+		}
 	}
 
 	// Check if container exists
@@ -158,7 +182,7 @@ func (m *Manager) Start(phpVersion ...string) error {
 					return fmt.Errorf("failed to create container with new PHP version: %w", err)
 				}
 				// Save the new configuration
-				m.saveProjectConfigSimple(project.Path, desiredPHPVersion)
+				m.saveProjectConfigWithRoot(project.Path, desiredPHPVersion, desiredServerRoot)
 				return nil
 			}
 		}
@@ -170,6 +194,7 @@ func (m *Manager) Start(phpVersion ...string) error {
 	} else {
 		// Create new container
 		project.PHPVersion = desiredPHPVersion
+		project.ServerRoot = desiredServerRoot
 		if err := m.createContainer(project); err != nil {
 			// Clean up any partially created container on failure
 			cleanupErr := m.docker.RemoveContainer(project.Container, true)
@@ -180,7 +205,7 @@ func (m *Manager) Start(phpVersion ...string) error {
 			return fmt.Errorf("failed to create container: %w", err)
 		}
 		// Save the configuration
-		m.saveProjectConfigSimple(project.Path, desiredPHPVersion)
+		m.saveProjectConfigWithRoot(project.Path, desiredPHPVersion, desiredServerRoot)
 	}
 
 	return nil
@@ -274,6 +299,63 @@ func (m *Manager) ChangePHPVersion(newVersion string) error {
 	project.PHPVersion = newVersion
 	if err := m.createContainer(project); err != nil {
 		return fmt.Errorf("failed to create new container: %w", err)
+	}
+
+	return nil
+}
+
+// ChangeServerRoot changes the server root for the current project
+func (m *Manager) ChangeServerRoot(newServerRoot string) error {
+	project, err := m.GetCurrentProject()
+	if err != nil {
+		return err
+	}
+
+	if project.Status == "not initialized" {
+		return fmt.Errorf("project not initialized")
+	}
+
+	// Get current server root from config
+	currentServerRoot := project.ServerRoot
+	if currentServerRoot == "" {
+		currentServerRoot = "public" // default
+	}
+
+	if currentServerRoot == newServerRoot {
+		return nil // Already using this server root
+	}
+
+	// Stop and remove existing container if running
+	if project.Status == "running" {
+		if err := m.docker.RemoveContainer(project.Container, true); err != nil {
+			return fmt.Errorf("failed to remove old container: %w", err)
+		}
+	}
+
+	// Update project configuration in central location
+	projectConfig, _ := m.loadProjectConfig(project.Path)
+	if projectConfig == nil {
+		projectConfig = &config.ProjectConfig{
+			Name:        project.Name,
+			Path:        project.Path,
+			Environment: make(map[string]string),
+			Ports:       make(map[string]string),
+			CreatedAt:   time.Now().Format(time.RFC3339),
+		}
+	}
+	projectConfig.ServerRoot = newServerRoot
+	projectConfig.UpdatedAt = time.Now().Format(time.RFC3339)
+
+	if err := m.saveProjectConfig(project.Path, projectConfig); err != nil {
+		return fmt.Errorf("failed to update project config: %w", err)
+	}
+
+	// Create new container with new server root if it was running
+	if project.Status == "running" {
+		project.ServerRoot = newServerRoot
+		if err := m.createContainer(project); err != nil {
+			return fmt.Errorf("failed to create new container: %w", err)
+		}
 	}
 
 	return nil
@@ -471,6 +553,8 @@ func (m *Manager) createContainer(project *Project) error {
 		},
 		Environment: map[string]string{
 			"SERVER_NAME": ":80",
+			"SERVER_ROOT": project.ServerRoot,
+			"HTTPS":       "on",
 		},
 		Labels: map[string]string{
 			"devbox.project.name":        project.Name,
@@ -579,6 +663,11 @@ func (m *Manager) saveProjectConfig(projectPath string, config *config.ProjectCo
 
 // saveProjectConfigSimple saves just the PHP version for a project
 func (m *Manager) saveProjectConfigSimple(projectPath string, phpVersion string) error {
+	return m.saveProjectConfigWithSettings(projectPath, phpVersion, "")
+}
+
+// saveProjectConfigWithSettings saves PHP version and server root for a project
+func (m *Manager) saveProjectConfigWithSettings(projectPath string, phpVersion string, serverRoot string) error {
 	projectConfig, _ := m.loadProjectConfig(projectPath)
 	if projectConfig == nil {
 		projectConfig = &config.ProjectConfig{
@@ -589,7 +678,37 @@ func (m *Manager) saveProjectConfigSimple(projectPath string, phpVersion string)
 			CreatedAt:   time.Now().Format(time.RFC3339),
 		}
 	}
-	projectConfig.PHPVersion = phpVersion
+
+	if phpVersion != "" {
+		projectConfig.PHPVersion = phpVersion
+	}
+	if serverRoot != "" {
+		projectConfig.ServerRoot = serverRoot
+	}
+	projectConfig.UpdatedAt = time.Now().Format(time.RFC3339)
+
+	return m.saveProjectConfig(projectPath, projectConfig)
+}
+
+// saveProjectConfigWithRoot saves both PHP version and server root for a project
+func (m *Manager) saveProjectConfigWithRoot(projectPath string, phpVersion string, serverRoot string) error {
+	projectConfig, _ := m.loadProjectConfig(projectPath)
+	if projectConfig == nil {
+		projectConfig = &config.ProjectConfig{
+			Name:        filepath.Base(projectPath),
+			Path:        projectPath,
+			Environment: make(map[string]string),
+			Ports:       make(map[string]string),
+			CreatedAt:   time.Now().Format(time.RFC3339),
+		}
+	}
+
+	if phpVersion != "" {
+		projectConfig.PHPVersion = phpVersion
+	}
+	if serverRoot != "" {
+		projectConfig.ServerRoot = serverRoot
+	}
 	projectConfig.UpdatedAt = time.Now().Format(time.RFC3339)
 
 	return m.saveProjectConfig(projectPath, projectConfig)

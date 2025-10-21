@@ -88,6 +88,8 @@ func (h *Handler) Execute(args []string) error {
 		return h.handleInstall()
 	case "update":
 		return h.handleUpdate()
+	case "check-update":
+		return h.handleCheckUpdate()
 	case "uninstall":
 		return h.handleUninstall()
 
@@ -108,6 +110,8 @@ func (h *Handler) Execute(args []string) error {
 		return h.handleList()
 	case "php", "php-version":
 		return h.handlePHPVersion(commandArgs)
+	case "server-root", "root":
+		return h.handleServerRoot(commandArgs)
 
 	// Container interaction
 	case "exec", "run":
@@ -214,7 +218,7 @@ func (h *Handler) handleDatabaseCommand(args []string) error {
 // handleCertCommand handles certificate commands
 func (h *Handler) handleCertCommand(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("missing cert subcommand. Use: cert [install|verify|debug]")
+		return fmt.Errorf("missing cert subcommand. Use: cert [install|verify|debug|remove]")
 	}
 
 	switch args[0] {
@@ -232,6 +236,23 @@ func (h *Handler) handleCertCommand(args []string) error {
 			return fmt.Errorf("missing domain for certificate generation")
 		}
 		return h.ssl.GenerateCertificate(args[1])
+
+	case "remove":
+		proj, err := h.projects.GetCurrentProject()
+		if err != nil {
+			return err
+		}
+		if proj.Status == "not initialized" {
+			return fmt.Errorf("project not initialized")
+		}
+
+		fmt.Printf("🔒 Removing SSL certificate for project '%s'...\n", proj.Name)
+		if err := h.ssl.RemoveProjectSSL(proj.Name); err != nil {
+			return fmt.Errorf("failed to remove SSL certificate: %w", err)
+		}
+
+		fmt.Printf("✅ SSL certificate removed. Project now accessible via HTTP at: http://%s.test\n", proj.Name)
+		return nil
 
 	default:
 		return fmt.Errorf("unknown cert command: %s", args[0])
@@ -251,7 +272,72 @@ func (h *Handler) handleInstall() error {
 
 // handleUpdate updates Devbox to the latest version
 func (h *Handler) handleUpdate() error {
+	// Set GitHub token if available for private repo access
+	if token := h.config.GetGithubToken(); token != "" {
+		h.updater.SetGitHubToken(token)
+	} else {
+		// Try to ensure GitHub authentication for update checks
+		fmt.Println("🔍 Checking for updates from private repository...")
+		if err := h.github.EnsureAuthenticated(); err != nil {
+			fmt.Printf("⚠️  Warning: No GitHub authentication available for private repo updates.\n")
+			fmt.Printf("   Run 'devbox github-auth' to authenticate for access to latest releases.\n")
+			fmt.Printf("   Falling back to public update manifest...\n\n")
+		} else {
+			// Authentication successful, set token
+			if token := h.config.GetGithubToken(); token != "" {
+				h.updater.SetGitHubToken(token)
+				fmt.Println("✅ GitHub authentication found, checking private repository...")
+			}
+		}
+	}
+
 	return h.updater.Update(false)
+}
+
+// handleCheckUpdate checks for available updates without installing
+func (h *Handler) handleCheckUpdate() error {
+	// Set GitHub token if available for private repo access
+	if token := h.config.GetGithubToken(); token != "" {
+		h.updater.SetGitHubToken(token)
+	} else {
+		// Try to ensure GitHub authentication for update checks
+		fmt.Println("🔍 Checking for updates from private repository...")
+		if err := h.github.EnsureAuthenticated(); err != nil {
+			fmt.Printf("⚠️  Warning: No GitHub authentication available for private repo updates.\n")
+			fmt.Printf("   Run 'devbox github-auth' to authenticate for access to latest releases.\n")
+			fmt.Printf("   Falling back to public update manifest...\n\n")
+		} else {
+			// Authentication successful, set token
+			if token := h.config.GetGithubToken(); token != "" {
+				h.updater.SetGitHubToken(token)
+				fmt.Println("✅ GitHub authentication found, checking private repository...")
+			}
+		}
+	}
+
+	// Check for updates
+	release, isNewer, err := h.updater.CheckForUpdate()
+	if err != nil {
+		return fmt.Errorf("failed to check for updates: %w", err)
+	}
+
+	fmt.Printf("Current version: v%s\n", config.Version)
+
+	if !isNewer {
+		fmt.Println("✅ You are running the latest version")
+		return nil
+	}
+
+	fmt.Printf("New version available: v%s\n", release.Version)
+	if release.Critical {
+		fmt.Println("⚠️  This is a critical security update")
+	}
+	if release.Notes != "" {
+		fmt.Printf("\nRelease notes:\n%s\n", release.Notes)
+	}
+	fmt.Printf("\nRun 'devbox update' to install the latest version.\n")
+
+	return nil
 }
 
 // handleUninstall uninstalls Devbox
@@ -312,6 +398,16 @@ func (h *Handler) handleStart(args ...string) error {
 		phpVersion = utils.SelectOption("Select PHP Version", project.GetAvailablePHPVersions())
 	}
 
+	// Collect server root path (default to "/app")
+	serverRoot := "/app"
+	if proj.Status == "not initialized" {
+		// Only prompt for server root on first start
+		input := utils.GetInput("Enter server root path (default: /app): ")
+		if input != "" {
+			serverRoot = input
+		}
+	}
+
 	// Setup cleanup function that will be called on any failure
 	cleanupOnFailure := func(reason string) {
 		fmt.Printf("🧹 Cleaning up after failure: %s\n", reason)
@@ -346,7 +442,7 @@ func (h *Handler) handleStart(args ...string) error {
 
 	fmt.Printf("🚀 Starting project '%s' with PHP %s...\n", proj.Name, phpVersion)
 
-	if err := h.projects.Start(phpVersion); err != nil {
+	if err := h.projects.Start(phpVersion, serverRoot); err != nil {
 		cleanupOnFailure("project start failed")
 		return fmt.Errorf("failed to start project: %w", err)
 	}
@@ -428,9 +524,15 @@ func (h *Handler) handleRemove() error {
 
 	fmt.Printf("🗑 Removing project '%s'...\n", project.Name)
 
-	// Remove SSL certificates
-	if h.config.EnableSSL {
-		h.ssl.RemoveProjectSSL(project.Name)
+	// Remove SSL certificates and vhost configuration
+	fmt.Println("🔒 Cleaning up SSL certificates...")
+	if err := h.ssl.RemoveProjectSSL(project.Name); err != nil {
+		fmt.Printf("⚠️  Warning: Failed to clean up SSL certificates: %v\n", err)
+	}
+
+	fmt.Println("🌐 Removing vhost configuration...")
+	if err := h.ssl.RemoveProjectVhost(project.Name); err != nil {
+		fmt.Printf("⚠️  Warning: Failed to remove vhost configuration: %v\n", err)
 	}
 
 	// Remove project
@@ -512,6 +614,61 @@ func (h *Handler) handlePHPVersion(args []string) error {
 
 	fmt.Printf("✅ PHP version changed to %s\n", newVersion)
 	fmt.Println("Run 'devbox start' to start with the new version")
+	return nil
+}
+
+// handleServerRoot changes server root for the current project
+func (h *Handler) handleServerRoot(args []string) error {
+	proj, err := h.projects.GetCurrentProject()
+	if err != nil {
+		return err
+	}
+
+	if proj.Status == "not initialized" {
+		return fmt.Errorf("project not initialized. Run 'devbox init' first")
+	}
+
+	// Get current server root from config
+	currentServerRoot := proj.ServerRoot
+	if currentServerRoot == "" {
+		currentServerRoot = "public" // default
+	}
+
+	fmt.Printf("Current server root: %s\n", currentServerRoot)
+
+	// Get new server root
+	newServerRoot := ""
+	if len(args) > 0 && args[0] != "" {
+		newServerRoot = args[0]
+	} else {
+		input := utils.GetInput("Enter new server root path: ")
+		if input == "" {
+			fmt.Println("❌ Server root cannot be empty")
+			return nil
+		}
+		newServerRoot = input
+	}
+
+	if newServerRoot == currentServerRoot {
+		fmt.Printf("✅ Already using server root: %s\n", newServerRoot)
+		return nil
+	}
+
+	fmt.Printf("🔄 Changing server root to %s...\n", newServerRoot)
+
+	if err := h.projects.ChangeServerRoot(newServerRoot); err != nil {
+		return fmt.Errorf("failed to change server root: %w", err)
+	}
+
+	fmt.Printf("✅ Server root changed to %s\n", newServerRoot)
+	if proj.Status == "running" {
+		fmt.Println("🔄 Restarting container to apply changes...")
+		if err := h.handleRestart(); err != nil {
+			return fmt.Errorf("failed to restart container: %w", err)
+		}
+	} else {
+		fmt.Println("Run 'devbox start' to start with the new server root")
+	}
 	return nil
 }
 
@@ -915,6 +1072,7 @@ COMMANDS:
     status             Show project status
     list               List all projects
     php [version]      Change PHP version
+    server-root [path] Change server root path
 
   Container Commands:
     exec <cmd>         Execute command in project container
@@ -936,15 +1094,20 @@ COMMANDS:
     cert install       Install the CA certificate
     cert verify        Verify certificate installation
     cert debug         Debug certificate issues
+    cert remove        Remove SSL certificate (fallback to HTTP)
 
   System:
     install            Install Devbox
     update             Update to latest version
+    check-update       Check for available updates
     uninstall          Uninstall Devbox
 
 EXAMPLES:
   devbox start              # Start project with default/saved PHP version
   devbox start 8.2          # Start project with PHP 8.2
+  devbox server-root public # Change server root to 'public' directory
+  devbox check-update       # Check for available updates
+  devbox update             # Update to latest version
   devbox exec composer install  # Run composer install in container
   devbox exec npm run dev   # Run npm dev script in container
   devbox shell              # Open bash shell in container
