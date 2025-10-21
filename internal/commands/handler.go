@@ -277,7 +277,7 @@ func (h *Handler) handleUpdate() error {
 		h.updater.SetGitHubToken(token)
 	} else {
 		// Try to ensure GitHub authentication for update checks
-		fmt.Println("🔍 Checking for updates from private repository...")
+		fmt.Println("🔍 Checking for updates...")
 		if err := h.github.EnsureAuthenticated(); err != nil {
 			fmt.Printf("⚠️  Warning: No GitHub authentication available for private repo updates.\n")
 			fmt.Printf("   Run 'devbox github-auth' to authenticate for access to latest releases.\n")
@@ -301,7 +301,7 @@ func (h *Handler) handleCheckUpdate() error {
 		h.updater.SetGitHubToken(token)
 	} else {
 		// Try to ensure GitHub authentication for update checks
-		fmt.Println("🔍 Checking for updates from private repository...")
+		fmt.Println("🔍 Checking for updates...")
 		if err := h.github.EnsureAuthenticated(); err != nil {
 			fmt.Printf("⚠️  Warning: No GitHub authentication available for private repo updates.\n")
 			fmt.Printf("   Run 'devbox github-auth' to authenticate for access to latest releases.\n")
@@ -365,10 +365,8 @@ func (h *Handler) handleUninstall() error {
 	// Remove binary
 	os.Remove(config.DevboxBinary)
 
-	// Remove configuration directory
-	if utils.PromptYesNo("Remove configuration and certificates?") {
-		os.RemoveAll(h.config.DevboxDir)
-	}
+	// No local configuration directory to remove since we use environment variables only
+	fmt.Println("💡 Configuration is stored in environment variables and project directories only")
 
 	fmt.Println("✅ Devbox uninstalled")
 	return nil
@@ -970,7 +968,7 @@ func (h *Handler) showStatus() error {
 	// Installation status
 	fmt.Printf("\n📦 Installation:\n")
 	fmt.Printf("  Binary: %s %s\n", config.DevboxBinary, utils.BoolStatus(h.config.IsInstalled()))
-	fmt.Printf("  Config: %s %s\n", h.config.ConfigFile, utils.BoolStatus(utils.FileExists(h.config.ConfigFile)))
+	fmt.Printf("  Config: Environment variables %s\n", utils.BoolStatus(h.config.GetGithubToken() != ""))
 
 	// Global services status
 	fmt.Printf("\n🌐 Global Services:\n")

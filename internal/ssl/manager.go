@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -42,10 +43,8 @@ func (m *Manager) SetupSSL() error {
 		}
 	}
 
-	// Copy CA to host
-	if err := m.copyCAToHost(); err != nil {
-		return fmt.Errorf("failed to copy CA to host: %w", err)
-	}
+	// CA certificate is now handled via temporary files during installation
+	// No need to copy to host directory
 
 	fmt.Println("✅ SSL setup complete")
 	return nil
@@ -194,28 +193,33 @@ func (m *Manager) GenerateCertificate(domain string) error {
 
 // InstallCertificate installs the CA certificate to the system
 func (m *Manager) InstallCertificate() error {
-	caPath := m.config.CAPath
+	// Create temporary file for CA certificate
+	tmpFile, err := os.CreateTemp("", "devbox-ca-*.pem")
+	if err != nil {
+		return fmt.Errorf("failed to create temp file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	tmpFile.Close()
+	defer os.Remove(tmpPath) // Clean up temp file
 
-	if !fileExists(caPath) {
-		// Try to copy from volume first
-		if err := m.copyCAToHost(); err != nil {
-			return fmt.Errorf("CA certificate not found at %s", caPath)
-		}
+	// Copy CA certificate from Docker volume to temp file
+	if err := m.copyCAToTempFile(tmpPath); err != nil {
+		return fmt.Errorf("failed to copy CA certificate: %w", err)
 	}
 
 	fmt.Println("🔐 Installing CA certificate to system...")
 
 	switch runtime.GOOS {
 	case "darwin":
-		if err := m.installCertMacOS(caPath); err != nil {
+		if err := m.installCertMacOS(tmpPath); err != nil {
 			return err
 		}
 	case "linux":
-		if err := m.installCertLinux(caPath); err != nil {
+		if err := m.installCertLinux(tmpPath); err != nil {
 			return err
 		}
 	case "windows":
-		if err := m.installCertWindows(caPath); err != nil {
+		if err := m.installCertWindows(tmpPath); err != nil {
 			return err
 		}
 	default:
@@ -238,11 +242,12 @@ func (m *Manager) VerifyCertificate() error {
 		fmt.Println("Run 'devbox cert install' to install it")
 	}
 
-	// Check if certificate file exists
-	if fileExists(m.config.CAPath) {
-		fmt.Printf("✅ Certificate file exists at: %s\n", m.config.CAPath)
+	// Check if CA certificate exists in Docker volume
+	if m.caExistsInVolume() {
+		fmt.Println("✅ CA certificate exists in Docker volume")
 	} else {
-		fmt.Printf("❌ Certificate file not found at: %s\n", m.config.CAPath)
+		fmt.Println("❌ CA certificate not found in Docker volume")
+		fmt.Println("Run 'devbox global start' to generate it")
 	}
 
 	return nil
@@ -253,25 +258,12 @@ func (m *Manager) DebugCertificate() error {
 	fmt.Println("🔍 Certificate Debug Information")
 	fmt.Println(strings.Repeat("-", 50))
 
-	// Check CA file
-	fmt.Printf("CA Path: %s\n", m.config.CAPath)
-	if fileExists(m.config.CAPath) {
-		info, _ := os.Stat(m.config.CAPath)
-		fmt.Printf("  ✅ Exists (size: %d bytes)\n", info.Size())
-
-		// Show certificate details
-		cmd := exec.Command("openssl", "x509", "-in", m.config.CAPath, "-text", "-noout")
-		if output, err := cmd.CombinedOutput(); err == nil {
-			lines := strings.Split(string(output), "\n")
-			for _, line := range lines {
-				if strings.Contains(line, "Subject:") || strings.Contains(line, "Issuer:") ||
-					strings.Contains(line, "Not Before") || strings.Contains(line, "Not After") {
-					fmt.Printf("  %s\n", strings.TrimSpace(line))
-				}
-			}
-		}
+	// Check CA certificate in Docker volume
+	fmt.Println("CA Certificate:")
+	if m.caExistsInVolume() {
+		fmt.Println("  ✅ Exists in Docker volume")
 	} else {
-		fmt.Println("  ❌ Not found")
+		fmt.Println("  ❌ Not found in Docker volume")
 	}
 
 	// Check system installation
@@ -352,16 +344,14 @@ func (m *Manager) generateCA() error {
 	)
 }
 
-func (m *Manager) copyCAToHost() error {
-	// Ensure certs directory exists
-	os.MkdirAll(m.config.CertsDir, 0755)
-
-	// Copy CA from volume to host
+// copyCAToTempFile copies the CA certificate from Docker volume to a temporary file
+func (m *Manager) copyCAToTempFile(tmpPath string) error {
+	// Copy CA from volume to temporary file
 	return m.docker.Run("run", "--rm",
 		"-v", "devbox_certs:/source",
-		"-v", m.config.DevboxDir+":/dest",
+		"-v", filepath.Dir(tmpPath)+":/dest",
 		"alpine:latest",
-		"cp", "/source/AliasProjectCASelfSigned.pem", "/dest/certs/AliasProjectCASelfSigned.pem",
+		"cp", "/source/AliasProjectCASelfSigned.pem", "/dest/"+filepath.Base(tmpPath),
 	)
 }
 

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -41,6 +42,7 @@ type GitHubRelease struct {
 	Prerelease  bool   `json:"prerelease"`
 	PublishedAt string `json:"published_at"`
 	Assets      []struct {
+		ID                 int64  `json:"id"`
 		Name               string `json:"name"`
 		BrowserDownloadURL string `json:"browser_download_url"`
 		Size               int64  `json:"size"`
@@ -208,22 +210,36 @@ func (u *Updater) fetchLatestGitHubRelease() (*Release, error) {
 	for _, asset := range githubRelease.Assets {
 		platform := u.detectPlatformFromAssetName(asset.Name)
 		if platform != "" {
+			// For private repos, use API endpoint instead of direct download URL
+			apiURL := fmt.Sprintf("https://api.github.com/repos/%s/releases/assets/%d", u.githubRepo, asset.ID)
 			release.Downloads[platform] = Binary{
-				URL:  asset.BrowserDownloadURL,
+				URL:  apiURL,
 				Size: asset.Size,
-				// Note: GitHub doesn't provide SHA256 in API, would need to be in release notes or separate
 			}
 		}
 	}
 
+	// If no platform-specific assets found but there's a generic binary, use it for current platform
+	if len(release.Downloads) == 0 && len(githubRelease.Assets) > 0 {
+		currentPlatform := fmt.Sprintf("%s_%s", runtime.GOOS, runtime.GOARCH)
+
+		// Use the first asset as a fallback
+		asset := githubRelease.Assets[0]
+		apiURL := fmt.Sprintf("https://api.github.com/repos/%s/releases/assets/%d", u.githubRepo, asset.ID)
+		release.Downloads[currentPlatform] = Binary{
+			URL:  apiURL,
+			Size: asset.Size,
+		}
+	}
 	return release, nil
 }
 
 // detectPlatformFromAssetName detects platform from asset filename
 func (u *Updater) detectPlatformFromAssetName(filename string) string {
+	original := filename
 	filename = strings.ToLower(filename)
 
-	// Common patterns for different platforms
+	// Exact platform patterns
 	platforms := map[string]string{
 		"linux_amd64":   "linux_amd64",
 		"linux-amd64":   "linux_amd64",
@@ -235,29 +251,45 @@ func (u *Updater) detectPlatformFromAssetName(filename string) string {
 		"darwin-arm64":  "darwin_arm64",
 		"windows_amd64": "windows_amd64",
 		"windows-amd64": "windows_amd64",
+		"macos_amd64":   "darwin_amd64",
+		"macos-amd64":   "darwin_amd64",
+		"macos_arm64":   "darwin_arm64",
+		"macos-arm64":   "darwin_arm64",
 	}
 
+	// Check exact patterns first
 	for pattern, platform := range platforms {
 		if strings.Contains(filename, pattern) {
 			return platform
 		}
 	}
 
-	// Fallback detection
+	// Fallback detection for less specific names
 	if strings.Contains(filename, "linux") {
 		if strings.Contains(filename, "arm64") || strings.Contains(filename, "aarch64") {
 			return "linux_arm64"
 		}
 		return "linux_amd64"
 	}
+
 	if strings.Contains(filename, "darwin") || strings.Contains(filename, "macos") {
-		if strings.Contains(filename, "arm64") {
+		if strings.Contains(filename, "arm64") || strings.Contains(filename, "aarch64") {
 			return "darwin_arm64"
 		}
 		return "darwin_amd64"
 	}
+
 	if strings.Contains(filename, "windows") || strings.Contains(filename, ".exe") {
+		if strings.Contains(filename, "arm64") {
+			return "windows_arm64"
+		}
 		return "windows_amd64"
+	}
+
+	// If filename is just "devbox" or similar generic name, return empty
+	// The caller will handle this case by using it as fallback for current platform
+	if filename == "devbox" || filename == original {
+		return ""
 	}
 
 	return ""
@@ -297,32 +329,112 @@ func (u *Updater) performUpdate(binary *Binary) error {
 		realPath = execPath
 	}
 
-	// Create backup
-	backupPath := realPath + ".backup"
-	if err := copyFile(realPath, backupPath); err != nil {
-		return fmt.Errorf("failed to create backup: %w", err)
+	// Try to replace binary
+	if err := u.replaceBinary(tmpPath, realPath); err != nil {
+		return fmt.Errorf("failed to replace binary: %w", err)
 	}
 
-	// Replace binary (atomic on Unix systems)
-	if err := os.Rename(tmpPath, realPath); err != nil {
-		// Try copy if rename fails (Windows or cross-device)
-		if err := copyFile(tmpPath, realPath); err != nil {
-			// Restore backup
-			copyFile(backupPath, realPath)
-			return fmt.Errorf("failed to replace binary: %w", err)
+	fmt.Println("✅ Update complete! The new version is now active.")
+	return nil
+}
+
+// replaceBinary handles replacing the binary with proper permission handling
+func (u *Updater) replaceBinary(tmpPath, realPath string) error {
+	// First, try direct replacement
+	if err := os.Rename(tmpPath, realPath); err == nil {
+		return nil
+	}
+
+	// If rename failed, try copy
+	if err := copyFile(tmpPath, realPath); err != nil {
+		// If we have permission issues and this looks like a system install, try sudo
+		if os.IsPermission(err) && u.isSystemInstall(realPath) {
+			fmt.Printf("🔐 Devbox is installed system-wide at %s\n", realPath)
+			fmt.Printf("   Requesting administrator privileges to update...\n")
+
+			return u.updateWithSudo(tmpPath, realPath)
+		}
+		return fmt.Errorf("permission denied updating binary at %s", realPath)
+	}
+
+	return nil
+}
+
+// isSystemInstall checks if the binary is in a system directory
+func (u *Updater) isSystemInstall(path string) bool {
+	systemPaths := []string{"/usr/local/bin", "/usr/bin", "/bin", "/opt"}
+	for _, sysPath := range systemPaths {
+		if strings.HasPrefix(path, sysPath) {
+			return true
 		}
 	}
+	return false
+}
 
-	// Clean up backup
-	os.Remove(backupPath)
+// updateWithSudo updates the binary using elevated permissions
+func (u *Updater) updateWithSudo(tmpPath, realPath string) error {
+	if runtime.GOOS == "windows" {
+		return u.updateWithWindowsElevation(tmpPath, realPath)
+	}
 
-	fmt.Println("✅ Update complete! Please restart devbox.")
+	// Use sudo to copy the file (Unix/Linux/macOS)
+	cmd := exec.Command("sudo", "cp", tmpPath, realPath)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("sudo update failed: %w", err)
+	}
+
+	// Make sure the binary is executable
+	chmodCmd := exec.Command("sudo", "chmod", "755", realPath)
+	if err := chmodCmd.Run(); err != nil {
+		fmt.Printf("⚠️  Warning: Could not set executable permissions: %v\n", err)
+	}
+
+	return nil
+}
+
+// updateWithWindowsElevation updates the binary on Windows with UAC elevation
+func (u *Updater) updateWithWindowsElevation(tmpPath, realPath string) error {
+	// Create a PowerShell script to copy the file with elevation
+	script := fmt.Sprintf(`
+		if (-NOT ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
+			$arguments = "& { Copy-Item '%s' '%s' -Force }"
+			Start-Process powershell -Verb runAs -ArgumentList $arguments -Wait
+		} else {
+			Copy-Item '%s' '%s' -Force
+		}
+	`, tmpPath, realPath, tmpPath, realPath)
+
+	cmd := exec.Command("powershell", "-Command", script)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("Windows elevation update failed: %w", err)
+	}
+
 	return nil
 }
 
 // downloadFile downloads a file and verifies its checksum
 func (u *Updater) downloadFile(url string, dest *os.File, expectedSHA256 string) error {
-	resp, err := u.httpClient.Get(url)
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return err
+	}
+
+	// Add GitHub authentication if token is available and URL is from GitHub
+	if u.githubToken != "" && strings.Contains(url, "api.github.com") {
+		// For GitHub API asset downloads
+		req.Header.Set("Authorization", "token "+u.githubToken)
+		req.Header.Set("Accept", "application/octet-stream")
+		req.Header.Set("User-Agent", "devbox-updater")
+	}
+
+	resp, err := u.httpClient.Do(req)
 	if err != nil {
 		return err
 	}

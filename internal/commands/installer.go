@@ -84,11 +84,9 @@ func (i *Installer) Install() error {
 	}
 
 	// Step 8: Optional - Install CA certificate
-	if utils.FileExists(i.config.CAPath) {
-		if utils.PromptYesNo("\nInstall CA certificate to system?") {
-			if err := i.ssl.InstallCertificate(); err != nil {
-				utils.PrintWarning("Failed to install certificate: " + err.Error())
-			}
+	if utils.PromptYesNo("\nInstall CA certificate to system?") {
+		if err := i.ssl.InstallCertificate(); err != nil {
+			utils.PrintWarning("Failed to install certificate: " + err.Error())
 		}
 	}
 
@@ -103,19 +101,10 @@ func (i *Installer) Install() error {
 	return nil
 }
 
-// createDirectories creates necessary directories
+// createDirectories creates the necessary directories (no-op since we don't use local directories)
 func (i *Installer) createDirectories() error {
-	dirs := []string{
-		i.config.DevboxDir,
-		i.config.CertsDir,
-	}
-
-	for _, dir := range dirs {
-		if err := utils.EnsureDirectory(dir); err != nil {
-			return err
-		}
-	}
-
+	// No local directories to create anymore - everything uses environment variables
+	// and project-local configuration files
 	return nil
 }
 
@@ -305,12 +294,12 @@ func (i *Installer) Uninstall(removeConfig bool) error {
 		}
 	}
 
-	// Remove configuration if requested
-	if removeConfig && utils.DirectoryExists(i.config.DevboxDir) {
-		fmt.Printf("Removing configuration from %s...\n", i.config.DevboxDir)
-		if err := os.RemoveAll(i.config.DevboxDir); err != nil {
-			utils.PrintWarning("Failed to remove configuration: " + err.Error())
-		}
+	// No local configuration directory to remove since we use environment variables only
+	if removeConfig {
+		fmt.Println("💡 Configuration is stored in environment variables and project directories only")
+		fmt.Println("   To completely remove devbox configuration:")
+		fmt.Println("   - Unset GITHUB_TOKEN environment variable")
+		fmt.Println("   - Remove .devbox.json files from project directories")
 	}
 
 	utils.PrintSuccess("Devbox uninstalled")

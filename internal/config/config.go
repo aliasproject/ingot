@@ -1,10 +1,7 @@
 package config
 
 import (
-	"encoding/json"
-	"fmt"
 	"os"
-	"path/filepath"
 	"sync"
 )
 
@@ -26,27 +23,19 @@ const (
 type Config struct {
 	mu sync.RWMutex
 
-	// Paths
-	HomeDir    string `json:"-"`
-	DevboxDir  string `json:"-"`
-	ConfigDir  string `json:"-"`
-	CertsDir   string `json:"-"`
-	CAPath     string `json:"-"`
-	ConfigFile string `json:"-"`
-
-	// Settings
-	Databases         map[string]DatabaseConfig `json:"databases,omitempty"`
-	GithubToken       string                    `json:"github_token,omitempty"`
-	DefaultPHPVersion string                    `json:"default_php_version,omitempty"`
-	AutoStartGlobal   bool                      `json:"auto_start_global,omitempty"`
+	// Settings (loaded from environment variables)
+	Databases         map[string]DatabaseConfig
+	GithubToken       string
+	DefaultPHPVersion string
+	AutoStartGlobal   bool
 
 	// Network
-	HostIP  string `json:"host_ip,omitempty"`
-	DNSPort string `json:"dns_port,omitempty"`
+	HostIP  string
+	DNSPort string
 
 	// Features
-	EnableSSL bool `json:"enable_ssl,omitempty"`
-	EnableDNS bool `json:"enable_dns,omitempty"`
+	EnableSSL bool
+	EnableDNS bool
 }
 
 // DatabaseConfig holds configuration for a database instance
@@ -72,34 +61,23 @@ func Get() *Config {
 
 // initialize sets up the config with default values and loads from file
 func (c *Config) initialize() {
-	c.HomeDir = os.Getenv("HOME")
-	if c.HomeDir == "" {
-		c.HomeDir = os.Getenv("USERPROFILE") // Windows fallback
-	}
-
-	c.DevboxDir = filepath.Join(c.HomeDir, ".devbox")
-	c.ConfigDir = c.DevboxDir
-	c.CertsDir = filepath.Join(c.DevboxDir, "certs")
-	c.CAPath = filepath.Join(c.CertsDir, "AliasProjectCASelfSigned.pem")
-	c.ConfigFile = filepath.Join(c.DevboxDir, "config.json")
-
 	// Set defaults
 	c.DefaultPHPVersion = DefaultPHPVersion
-	c.AutoStartGlobal = true
+	c.DNSPort = "53"
 	c.EnableSSL = true
 	c.EnableDNS = true
-	c.DNSPort = "5354"
+	c.AutoStartGlobal = true
 	c.Databases = make(map[string]DatabaseConfig)
 
-	// Create directories if they don't exist
-	os.MkdirAll(c.DevboxDir, 0755)
-	os.MkdirAll(c.CertsDir, 0755)
+	// Network detection - use default or environment variable
+	if hostIP := os.Getenv("DEVBOX_HOST_IP"); hostIP != "" {
+		c.HostIP = hostIP
+	} else {
+		c.HostIP = "127.0.0.1" // default
+	}
 
-	// Load from file if exists
-	c.Load()
-
-	// Override with environment variables
-	c.loadFromEnv()
+	// Load all configuration from environment variables
+	c.loadFromEnvironment()
 }
 
 // Load reads configuration from file
@@ -107,36 +85,14 @@ func (c *Config) Load() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if _, err := os.Stat(c.ConfigFile); os.IsNotExist(err) {
-		return nil // No config file yet
-	}
-
-	data, err := os.ReadFile(c.ConfigFile)
-	if err != nil {
-		return fmt.Errorf("failed to read config file: %w", err)
-	}
-
-	if err := json.Unmarshal(data, c); err != nil {
-		return fmt.Errorf("failed to parse config file: %w", err)
-	}
+	// Only load from environment variables - no config file
+	c.loadFromEnvironment()
 
 	return nil
 }
 
-// Save writes configuration to file
+// Save is a no-op since we don't save configuration locally
 func (c *Config) Save() error {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	data, err := json.MarshalIndent(c, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal config: %w", err)
-	}
-
-	if err := os.WriteFile(c.ConfigFile, data, 0644); err != nil {
-		return fmt.Errorf("failed to write config file: %w", err)
-	}
-
 	return nil
 }
 
@@ -151,14 +107,11 @@ func (c *Config) loadFromEnv() {
 	}
 }
 
-// SetGithubToken sets the GitHub token and saves config
+// SetGithubToken sets the GitHub token in environment variable
 func (c *Config) SetGithubToken(token string) error {
-	c.mu.Lock()
-	c.GithubToken = token
-	c.mu.Unlock()
-
+	// Set environment variable
 	os.Setenv("GITHUB_TOKEN", token)
-	return c.Save()
+	return nil
 }
 
 // AddDatabase adds a database configuration and saves
@@ -183,14 +136,43 @@ func (c *Config) RemoveDatabase(name string) error {
 	delete(c.Databases, name)
 	c.mu.Unlock()
 
-	return c.Save()
+	return nil
 }
 
-// GetGithubToken returns the GitHub token
+// loadFromEnvironment loads configuration from environment variables
+func (c *Config) loadFromEnvironment() {
+	// Default PHP version
+	if version := os.Getenv("DEVBOX_DEFAULT_PHP_VERSION"); version != "" {
+		c.DefaultPHPVersion = version
+	}
+
+	// Network settings
+	if hostIP := os.Getenv("DEVBOX_HOST_IP"); hostIP != "" {
+		c.HostIP = hostIP
+	}
+
+	if dnsPort := os.Getenv("DEVBOX_DNS_PORT"); dnsPort != "" {
+		c.DNSPort = dnsPort
+	}
+
+	// Feature flags
+	if enableSSL := os.Getenv("DEVBOX_ENABLE_SSL"); enableSSL != "" {
+		c.EnableSSL = enableSSL == "true" || enableSSL == "1"
+	}
+
+	if enableDNS := os.Getenv("DEVBOX_ENABLE_DNS"); enableDNS != "" {
+		c.EnableDNS = enableDNS == "true" || enableDNS == "1"
+	}
+
+	// Auto start global services
+	if autoStart := os.Getenv("DEVBOX_AUTO_START_GLOBAL"); autoStart != "" {
+		c.AutoStartGlobal = autoStart == "true" || autoStart == "1"
+	}
+}
+
+// GetGithubToken returns the GitHub token from environment variable
 func (c *Config) GetGithubToken() string {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.GithubToken
+	return os.Getenv("GITHUB_TOKEN")
 }
 
 // GetDatabases returns all database configurations
@@ -210,55 +192,10 @@ func (c *Config) IsInstalled() bool {
 	return err == nil
 }
 
-// ProjectConfig holds project-specific configuration
-type ProjectConfig struct {
-	Name        string            `json:"name"`
-	Path        string            `json:"path"`
-	PHPVersion  string            `json:"php_version"`
-	ServerRoot  string            `json:"server_root,omitempty"`
-	Databases   []string          `json:"databases,omitempty"`
-	Environment map[string]string `json:"environment,omitempty"`
-	Ports       map[string]string `json:"ports,omitempty"`
-	CreatedAt   string            `json:"created_at"`
-	UpdatedAt   string            `json:"updated_at"`
-}
+// ProjectConfig is no longer needed - all configuration is ephemeral or stored in Docker labels
 
-// LoadProjectConfig loads configuration for a specific project
-func LoadProjectConfig(projectPath string) (*ProjectConfig, error) {
-	configFile := filepath.Join(projectPath, ".devbox.json")
-
-	if _, err := os.Stat(configFile); os.IsNotExist(err) {
-		return nil, nil // No project config yet
-	}
-
-	data, err := os.ReadFile(configFile)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read project config: %w", err)
-	}
-
-	var config ProjectConfig
-	if err := json.Unmarshal(data, &config); err != nil {
-		return nil, fmt.Errorf("failed to parse project config: %w", err)
-	}
-
-	return &config, nil
-}
-
-// SaveProjectConfig saves project configuration
-func SaveProjectConfig(projectPath string, config *ProjectConfig) error {
-	configFile := filepath.Join(projectPath, ".devbox.json")
-
-	data, err := json.MarshalIndent(config, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal project config: %w", err)
-	}
-
-	if err := os.WriteFile(configFile, data, 0644); err != nil {
-		return fmt.Errorf("failed to write project config: %w", err)
-	}
-
-	return nil
-}
+// LoadProjectConfig and SaveProjectConfig are no longer needed
+// All project configuration is now ephemeral or stored in Docker container labels
 
 // NetworkConfig holds network configuration
 type NetworkConfig struct {

@@ -1,9 +1,6 @@
 package project
 
 import (
-	"crypto/md5"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -53,13 +50,6 @@ func (m *Manager) GetCurrentProject() (*Project, error) {
 	name := filepath.Base(cwd)
 	container := m.getContainerName(name)
 
-	// Load project configuration for server root and other settings
-	projectConfig, _ := m.loadProjectConfig(cwd)
-	serverRoot := "public" // default
-	if projectConfig != nil && projectConfig.ServerRoot != "" {
-		serverRoot = projectConfig.ServerRoot
-	}
-
 	// Check if project is initialized
 	info, err := m.docker.InspectContainer(container)
 	if err != nil {
@@ -67,7 +57,7 @@ func (m *Manager) GetCurrentProject() (*Project, error) {
 			return &Project{
 				Name:       name,
 				Path:       cwd,
-				ServerRoot: serverRoot,
+				ServerRoot: "public", // default for new projects
 				Status:     "not initialized",
 				Container:  container,
 			}, nil
@@ -75,9 +65,15 @@ func (m *Manager) GetCurrentProject() (*Project, error) {
 		return nil, err
 	}
 
+	// Get configuration from Docker labels
 	phpVersion := info.Labels["devbox.project.php_version"]
 	if phpVersion == "" {
 		phpVersion = config.DefaultPHPVersion
+	}
+
+	serverRoot := info.Labels["devbox.project.server_root"]
+	if serverRoot == "" {
+		serverRoot = "public" // default
 	}
 
 	status := "stopped"
@@ -109,20 +105,7 @@ func (m *Manager) Initialize(phpVersion string) error {
 		return fmt.Errorf("project already initialized")
 	}
 
-	// Save project configuration in central location
-	projectConfig := &config.ProjectConfig{
-		Name:        project.Name,
-		Path:        project.Path,
-		PHPVersion:  phpVersion,
-		Environment: make(map[string]string),
-		Ports:       make(map[string]string),
-		CreatedAt:   time.Now().Format(time.RFC3339),
-		UpdatedAt:   time.Now().Format(time.RFC3339),
-	}
-
-	if err := m.saveProjectConfig(project.Path, projectConfig); err != nil {
-		return fmt.Errorf("failed to save project config: %w", err)
-	}
+	// No project configuration to save - everything is stored in Docker labels
 
 	return nil
 }
@@ -139,16 +122,11 @@ func (m *Manager) Start(phpVersion string, serverRoot ...string) error {
 	if phpVersion != "" {
 		desiredPHPVersion = phpVersion
 	} else {
-		// Load from saved config if exists
-		projectConfig, _ := m.loadProjectConfig(project.Path)
-		if projectConfig != nil {
-			desiredPHPVersion = projectConfig.PHPVersion
+		// Use current project's version or default
+		desiredPHPVersion = project.PHPVersion
+		if desiredPHPVersion == "" {
+			desiredPHPVersion = m.config.DefaultPHPVersion
 		}
-	}
-
-	// Use default if no version specified
-	if desiredPHPVersion == "" {
-		desiredPHPVersion = m.config.DefaultPHPVersion
 	}
 
 	// Determine server root to use
@@ -156,11 +134,9 @@ func (m *Manager) Start(phpVersion string, serverRoot ...string) error {
 	if len(serverRoot) > 0 && serverRoot[0] != "" {
 		desiredServerRoot = serverRoot[0]
 	} else {
-		// Load from saved config if exists
-		projectConfig, _ := m.loadProjectConfig(project.Path)
-		if projectConfig != nil && projectConfig.ServerRoot != "" {
-			desiredServerRoot = projectConfig.ServerRoot
-		} else {
+		// Use current project's server root or default
+		desiredServerRoot = project.ServerRoot
+		if desiredServerRoot == "" {
 			desiredServerRoot = "public" // default
 		}
 	}
@@ -181,8 +157,6 @@ func (m *Manager) Start(phpVersion string, serverRoot ...string) error {
 				if err := m.createContainer(project); err != nil {
 					return fmt.Errorf("failed to create container with new PHP version: %w", err)
 				}
-				// Save the new configuration
-				m.saveProjectConfigWithRoot(project.Path, desiredPHPVersion, desiredServerRoot)
 				return nil
 			}
 		}
@@ -204,8 +178,6 @@ func (m *Manager) Start(phpVersion string, serverRoot ...string) error {
 			}
 			return fmt.Errorf("failed to create container: %w", err)
 		}
-		// Save the configuration
-		m.saveProjectConfigWithRoot(project.Path, desiredPHPVersion, desiredServerRoot)
 	}
 
 	return nil
@@ -254,8 +226,7 @@ func (m *Manager) Remove(force bool) error {
 		}
 	}
 
-	// Remove project configuration from central location
-	m.removeProjectConfig(project.Path)
+	// No project configuration files to remove
 
 	return nil
 }
@@ -278,21 +249,6 @@ func (m *Manager) ChangePHPVersion(newVersion string) error {
 	// Stop and remove existing container
 	if err := m.docker.RemoveContainer(project.Container, true); err != nil {
 		return fmt.Errorf("failed to remove old container: %w", err)
-	}
-
-	// Update project configuration in central location
-	projectConfig, _ := m.loadProjectConfig(project.Path)
-	if projectConfig == nil {
-		projectConfig = &config.ProjectConfig{
-			Name: project.Name,
-			Path: project.Path,
-		}
-	}
-	projectConfig.PHPVersion = newVersion
-	projectConfig.UpdatedAt = time.Now().Format(time.RFC3339)
-
-	if err := m.saveProjectConfig(project.Path, projectConfig); err != nil {
-		return fmt.Errorf("failed to update project config: %w", err)
 	}
 
 	// Create new container with new PHP version
@@ -330,24 +286,6 @@ func (m *Manager) ChangeServerRoot(newServerRoot string) error {
 		if err := m.docker.RemoveContainer(project.Container, true); err != nil {
 			return fmt.Errorf("failed to remove old container: %w", err)
 		}
-	}
-
-	// Update project configuration in central location
-	projectConfig, _ := m.loadProjectConfig(project.Path)
-	if projectConfig == nil {
-		projectConfig = &config.ProjectConfig{
-			Name:        project.Name,
-			Path:        project.Path,
-			Environment: make(map[string]string),
-			Ports:       make(map[string]string),
-			CreatedAt:   time.Now().Format(time.RFC3339),
-		}
-	}
-	projectConfig.ServerRoot = newServerRoot
-	projectConfig.UpdatedAt = time.Now().Format(time.RFC3339)
-
-	if err := m.saveProjectConfig(project.Path, projectConfig); err != nil {
-		return fmt.Errorf("failed to update project config: %w", err)
 	}
 
 	// Create new container with new server root if it was running
@@ -496,13 +434,12 @@ func (m *Manager) GetStatus() (*ProjectStatus, error) {
 		}
 	}
 
-	// Load project configuration from central location
-	projectConfig, err := m.loadProjectConfig(project.Path)
-	if err == nil && projectConfig != nil {
-		status.Databases = projectConfig.Databases
-		status.Environment = projectConfig.Environment
-		status.Ports = projectConfig.Ports
+	// Auto-detect running databases instead of loading from config
+	databases, err := m.getRunningDatabases()
+	if err == nil {
+		status.Databases = databases
 	}
+	// No environment or ports config - everything is ephemeral
 
 	return status, nil
 }
@@ -560,23 +497,12 @@ func (m *Manager) createContainer(project *Project) error {
 			"devbox.project.name":        project.Name,
 			"devbox.project.path":        project.Path,
 			"devbox.project.php_version": project.PHPVersion,
+			"devbox.project.server_root": project.ServerRoot,
 		},
 		DNS: []string{networkConfig.DNSServer},
 	}
 
-	// Load project configuration for additional settings from central location
-	projectConfig, err := m.loadProjectConfig(project.Path)
-	if err == nil && projectConfig != nil {
-		// Add custom environment variables
-		for key, value := range projectConfig.Environment {
-			containerConfig.Environment[key] = value
-		}
-
-		// Add custom ports
-		for _, port := range projectConfig.Ports {
-			containerConfig.Ports = append(containerConfig.Ports, port)
-		}
-	}
+	// No additional configuration needed - everything is ephemeral or in Docker labels
 
 	if err := m.docker.RunContainer(containerConfig); err != nil {
 		// Best effort cleanup on failure - remove any partially created container
@@ -611,111 +537,21 @@ func GetAvailablePHPVersions() []string {
 	return []string{"8.3", "8.2", "8.1", "8.0", "7.4"}
 }
 
-// getProjectConfigPath returns the central config path for a project
-func (m *Manager) getProjectConfigPath(projectPath string) string {
-	// Create a unique identifier from the project path
-	hash := md5.Sum([]byte(projectPath))
-	hashStr := hex.EncodeToString(hash[:])
-
-	// Store in ~/.devbox/projects/<hash>.json
-	configDir := filepath.Join(m.config.ConfigDir, "projects")
-	os.MkdirAll(configDir, 0755)
-
-	return filepath.Join(configDir, hashStr+".json")
-}
-
-// loadProjectConfig loads project configuration from central location
-func (m *Manager) loadProjectConfig(projectPath string) (*config.ProjectConfig, error) {
-	configFile := m.getProjectConfigPath(projectPath)
-
-	if _, err := os.Stat(configFile); os.IsNotExist(err) {
-		return nil, nil // No project config yet
-	}
-
-	data, err := os.ReadFile(configFile)
+// getRunningDatabases returns a list of currently running database services
+func (m *Manager) getRunningDatabases() ([]string, error) {
+	containers, err := m.docker.ListContainers("label=devbox.service.type=database")
 	if err != nil {
-		return nil, fmt.Errorf("failed to read project config: %w", err)
+		return nil, err
 	}
 
-	var projectConfig config.ProjectConfig
-	if err := json.Unmarshal(data, &projectConfig); err != nil {
-		return nil, fmt.Errorf("failed to parse project config: %w", err)
-	}
-
-	return &projectConfig, nil
-}
-
-// saveProjectConfig saves project configuration to central location
-func (m *Manager) saveProjectConfig(projectPath string, config *config.ProjectConfig) error {
-	configFile := m.getProjectConfigPath(projectPath)
-
-	data, err := json.MarshalIndent(config, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal project config: %w", err)
-	}
-
-	if err := os.WriteFile(configFile, data, 0644); err != nil {
-		return fmt.Errorf("failed to write project config: %w", err)
-	}
-
-	return nil
-}
-
-// saveProjectConfigSimple saves just the PHP version for a project
-func (m *Manager) saveProjectConfigSimple(projectPath string, phpVersion string) error {
-	return m.saveProjectConfigWithSettings(projectPath, phpVersion, "")
-}
-
-// saveProjectConfigWithSettings saves PHP version and server root for a project
-func (m *Manager) saveProjectConfigWithSettings(projectPath string, phpVersion string, serverRoot string) error {
-	projectConfig, _ := m.loadProjectConfig(projectPath)
-	if projectConfig == nil {
-		projectConfig = &config.ProjectConfig{
-			Name:        filepath.Base(projectPath),
-			Path:        projectPath,
-			Environment: make(map[string]string),
-			Ports:       make(map[string]string),
-			CreatedAt:   time.Now().Format(time.RFC3339),
+	var databases []string
+	for _, container := range containers {
+		// Extract database name from container name (devbox_db_mysql -> mysql)
+		if strings.HasPrefix(container, "devbox_db_") {
+			dbName := strings.TrimPrefix(container, "devbox_db_")
+			databases = append(databases, dbName)
 		}
 	}
 
-	if phpVersion != "" {
-		projectConfig.PHPVersion = phpVersion
-	}
-	if serverRoot != "" {
-		projectConfig.ServerRoot = serverRoot
-	}
-	projectConfig.UpdatedAt = time.Now().Format(time.RFC3339)
-
-	return m.saveProjectConfig(projectPath, projectConfig)
-}
-
-// saveProjectConfigWithRoot saves both PHP version and server root for a project
-func (m *Manager) saveProjectConfigWithRoot(projectPath string, phpVersion string, serverRoot string) error {
-	projectConfig, _ := m.loadProjectConfig(projectPath)
-	if projectConfig == nil {
-		projectConfig = &config.ProjectConfig{
-			Name:        filepath.Base(projectPath),
-			Path:        projectPath,
-			Environment: make(map[string]string),
-			Ports:       make(map[string]string),
-			CreatedAt:   time.Now().Format(time.RFC3339),
-		}
-	}
-
-	if phpVersion != "" {
-		projectConfig.PHPVersion = phpVersion
-	}
-	if serverRoot != "" {
-		projectConfig.ServerRoot = serverRoot
-	}
-	projectConfig.UpdatedAt = time.Now().Format(time.RFC3339)
-
-	return m.saveProjectConfig(projectPath, projectConfig)
-}
-
-// removeProjectConfig removes project configuration from central location
-func (m *Manager) removeProjectConfig(projectPath string) error {
-	configFile := m.getProjectConfigPath(projectPath)
-	return os.Remove(configFile)
+	return databases, nil
 }
