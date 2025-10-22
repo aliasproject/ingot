@@ -137,12 +137,12 @@ func (i *Installer) configureDatabase() error {
 		port = "5432"
 	}
 
-	// Save configuration with default name
-	if err := i.config.AddDatabase("main", dbType, dbVersion, port); err != nil {
+	// Save configuration with database type as name
+	if err := i.config.AddDatabase(dbType, dbType, dbVersion, port); err != nil {
 		return err
 	}
 
-	fmt.Printf("  ✅ Configured %s %s as 'main' database\n", selected, dbVersion)
+	fmt.Printf("  ✅ Configured %s %s as '%s' database\n", selected, dbVersion, dbType)
 	return nil
 }
 

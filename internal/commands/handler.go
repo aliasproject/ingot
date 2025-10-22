@@ -1,10 +1,8 @@
 package commands
 
 import (
-	"bufio"
 	"fmt"
 	"os"
-	"regexp"
 	"strings"
 
 	"github.com/aliasproject/devbox/internal/config"
@@ -814,30 +812,18 @@ func (h *Handler) handleGitHubAuth() error {
 
 // handleDatabaseAdd adds a database service
 func (h *Handler) handleDatabaseAdd() error {
-	// Get a name for the database instance
-	fmt.Print("Enter a name for this database instance: ")
-	scanner := bufio.NewScanner(os.Stdin)
-	if !scanner.Scan() {
-		return fmt.Errorf("no name provided")
-	}
-	name := strings.TrimSpace(scanner.Text())
-	if name == "" {
-		return fmt.Errorf("database name cannot be empty")
-	}
-
-	// Validate name (alphanumeric and underscore only)
-	if !regexp.MustCompile(`^[a-zA-Z0-9_]+$`).MatchString(name) {
-		return fmt.Errorf("database name must be alphanumeric with underscores only")
-	}
-
 	// Show proper capitalization in UI
 	options := []string{"MySQL", "PostgreSQL"}
 	selected := utils.SelectOption("Select database type", options)
 
-	// Map to internal names
-	dbType := "mysql"
+	// Map to internal names and use as database name
+	var dbType, name string
 	if selected == "PostgreSQL" {
 		dbType = "postgresql"
+		name = "postgresql"
+	} else {
+		dbType = "mysql"
+		name = "mysql"
 	}
 
 	versions := []string{"8.0", "5.7"}

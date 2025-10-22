@@ -546,9 +546,9 @@ func (m *Manager) getRunningDatabases() ([]string, error) {
 
 	var databases []string
 	for _, container := range containers {
-		// Extract database name from container name (devbox_db_mysql -> mysql)
-		if strings.HasPrefix(container, "devbox_db_") {
-			dbName := strings.TrimPrefix(container, "devbox_db_")
+		// Extract database name from container name (devbox_mysql -> mysql)
+		if strings.HasPrefix(container, "devbox_") && !strings.Contains(container, "_nginx") && !strings.Contains(container, "_mailhog") {
+			dbName := strings.TrimPrefix(container, "devbox_")
 			databases = append(databases, dbName)
 		}
 	}

@@ -139,7 +139,7 @@ func (m *Manager) Status() ([]*Service, error) {
 	databases := m.config.GetDatabases()
 	for name := range databases {
 		displayName := name
-		dbContainer := "devbox_db_" + name
+		dbContainer := "devbox_" + name
 		service := &Service{
 			Name:      displayName,
 			Container: dbContainer,
@@ -265,8 +265,8 @@ services:
 	for name, dbConfig := range databases {
 		if dbConfig.Type == "mysql" {
 			compose += fmt.Sprintf(`
-  db_%s:
-    container_name: devbox_db_%s
+  %s:
+    container_name: devbox_%s
     image: mysql:%s
     platform: linux/amd64
     restart: unless-stopped
@@ -279,12 +279,12 @@ services:
       - devbox-network
       - internal
     volumes:
-      - db_%s:/var/lib/mysql
-`, name, name, dbConfig.Version, dbConfig.Port, name)
+      - %s-%s:/var/lib/mysql
+`, name, name, dbConfig.Version, dbConfig.Port, name, dbConfig.Version)
 		} else if dbConfig.Type == "postgresql" {
 			compose += fmt.Sprintf(`
-  db_%s:
-    container_name: devbox_db_%s
+  %s:
+    container_name: devbox_%s
     image: postgres:%s
     restart: unless-stopped
     environment:
@@ -297,8 +297,8 @@ services:
       - devbox-network
       - internal
     volumes:
-      - db_%s:/var/lib/postgresql/data
-`, name, name, dbConfig.Version, dbConfig.Port, name)
+      - %s-%s:/var/lib/postgresql/data
+`, name, name, dbConfig.Version, dbConfig.Port, name, dbConfig.Version)
 		}
 	}
 
@@ -311,10 +311,10 @@ volumes:
     name: devbox_vhosts`
 
 	// Add volumes for each database
-	for name := range databases {
+	for name, dbConfig := range databases {
 		compose += fmt.Sprintf(`
-  db_%s:
-    name: devbox_db_%s`, name, name)
+  %s-%s:
+    name: devbox_%s-%s`, name, dbConfig.Version, name, dbConfig.Version)
 	}
 
 	// Add networks
@@ -343,11 +343,11 @@ func (m *Manager) AddDatabase(name, dbType, version string) error {
 		return fmt.Errorf("invalid database type: %s", dbType)
 	}
 
-	// Check if name already exists
+	// Check if database type already exists (since name is now the database type)
 	databases := m.config.GetDatabases()
 	if _, exists := databases[name]; exists {
 		m.mu.Unlock()
-		return fmt.Errorf("database '%s' already exists", name)
+		return fmt.Errorf("database type '%s' is already configured", dbType)
 	}
 
 	// Find an available port
@@ -360,7 +360,7 @@ func (m *Manager) AddDatabase(name, dbType, version string) error {
 	}
 
 	// Create volume
-	volumeName := fmt.Sprintf("devbox_db_%s", name)
+	volumeName := fmt.Sprintf("devbox_%s-%s", name, version)
 	if err := m.docker.CreateVolume(volumeName); err != nil {
 		m.mu.Unlock()
 		return fmt.Errorf("failed to create volume: %w", err)
@@ -446,7 +446,7 @@ func (m *Manager) GetDatabases() ([]*Service, error) {
 	databases := m.config.GetDatabases()
 
 	for name, dbConfig := range databases {
-		container := "devbox_db_" + name
+		container := "devbox_" + name
 
 		service := &Service{
 			Name:      name,
