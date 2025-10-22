@@ -7,7 +7,7 @@ import (
 
 const (
 	// Version is the current version of Devbox
-	Version = "0.9.6"
+	Version = "0.9.7"
 
 	// ClientID is the GitHub OAuth application client ID
 	ClientID = "178c6fc778ccc68e1d6a"
