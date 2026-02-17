@@ -210,7 +210,7 @@ type PortMapping struct {
 func (c *Client) InspectContainer(name string) (*ContainerInfo, error) {
 	output, err := c.RunWithOutput("inspect", name)
 	if err != nil {
-		if strings.Contains(err.Error(), "No such object") {
+		if strings.Contains(strings.ToLower(err.Error()), "no such object") {
 			return nil, ErrContainerNotFound
 		}
 		return nil, err

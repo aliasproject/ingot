@@ -1,6 +1,7 @@
 package services
 
 import (
+	"github.com/aliasproject/devbox/internal/utils"
 	"fmt"
 	"net"
 	"strings"
@@ -244,7 +245,6 @@ services:
       - "80:80"
       - "443:443"
     networks:
-      - devbox-network
       - internal
     depends_on:
       - dns
@@ -276,7 +276,6 @@ services:
     ports:
       - "%s:3306"
     networks:
-      - devbox-network
       - internal
     volumes:
       - %s-%s:/var/lib/mysql
@@ -294,7 +293,6 @@ services:
     ports:
       - "%s:5432"
     networks:
-      - devbox-network
       - internal
     volumes:
       - %s-%s:/var/lib/postgresql/data
@@ -326,8 +324,6 @@ networks:
     ipam:
       config:
         - subnet: %s
-  devbox-network:
-    driver: bridge
 `, networkConfig.Subnet)
 
 	return compose
@@ -372,7 +368,7 @@ func (m *Manager) AddDatabase(name, dbType, version string) error {
 		displayName = "PostgreSQL"
 	}
 
-	fmt.Printf("✅ %s '%s' (version %s) configured on port %s\n", displayName, name, version, port)
+	fmt.Printf(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " %s '%s' (version %s) configured on port %s\n", displayName, name, version, port)
 	fmt.Println("Restarting global services to apply changes...")
 
 	// Release mutex before calling Restart to avoid deadlock

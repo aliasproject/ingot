@@ -7,13 +7,13 @@ import (
 
 const (
 	// Version is the current version of Devbox
-	Version = "0.9.7"
+	Version = "0.9.8"
 
 	// ClientID is the GitHub OAuth application client ID
 	ClientID = "178c6fc778ccc68e1d6a"
 
 	// DefaultPHPVersion is the default PHP version for new projects
-	DefaultPHPVersion = "8.3"
+	DefaultPHPVersion = "0.9.8"
 
 	// DevboxBinary is the installation path for the devbox binary
 	DevboxBinary = "/usr/local/bin/devbox"
@@ -208,7 +208,7 @@ type NetworkConfig struct {
 // GetNetworkConfig returns the default network configuration
 func GetNetworkConfig() *NetworkConfig {
 	return &NetworkConfig{
-		BridgeName:  "devbox_devbox-network",
+		BridgeName:  "devbox_internal",
 		Subnet:      "192.168.237.0/24",
 		DNSServer:   "192.168.237.4",
 		InternalNet: "devbox_internal",

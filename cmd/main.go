@@ -7,6 +7,7 @@ import (
 	"github.com/aliasproject/devbox/internal/commands"
 	"github.com/aliasproject/devbox/internal/config"
 	"github.com/aliasproject/devbox/internal/docker"
+	"github.com/aliasproject/devbox/internal/utils"
 )
 
 func main() {
@@ -16,13 +17,14 @@ func main() {
 	// Initialize Docker client
 	dockerClient, err := docker.NewClient()
 	if err != nil {
+		fmt.Println("Error initializing Docker client:", err)
 		// Docker not available - show helpful message
 		if len(os.Args) > 1 && (os.Args[1] == "help" || os.Args[1] == "-h" || os.Args[1] == "--help") {
 			commands.ShowHelp()
 			return
 		}
 		fmt.Fprintf(os.Stderr, "Error: Docker is not installed or not running\n")
-		fmt.Fprintf(os.Stderr, "Please ensure Docker Desktop is installed and running\n")
+		fmt.Fprintf(os.Stderr, "Please ensure Docker is installed and running\n")
 		os.Exit(1)
 	}
 
@@ -40,13 +42,13 @@ func main() {
 
 	// Check for first-time installation
 	if !cfg.IsInstalled() {
-		fmt.Println("🚀 Welcome to Devbox! Installing for first-time use...")
+		fmt.Println(utils.Colorize("[DEVBOX]", utils.ColorCyan) + " Welcome to Devbox! Installing for first-time use...")
 		installer := commands.NewInstaller(dockerClient, cfg, handler.GetServices(), handler.GetSSL(), handler.GetGitHub())
 		if err := installer.Install(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error during installation: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Println("\n✅ Installation complete! You can now use Devbox.")
+		fmt.Println("\n" + utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Installation complete! You can now use Devbox.")
 		fmt.Println("\nRun 'devbox help' to see available commands.")
 		return
 	}

@@ -1,6 +1,7 @@
 package ssl
 
 import (
+	"github.com/aliasproject/devbox/internal/utils"
 	"fmt"
 	"os"
 	"os/exec"
@@ -37,7 +38,7 @@ func (m *Manager) SetupSSL() error {
 
 	// Check if CA certificate already exists
 	if !m.caExistsInVolume() {
-		fmt.Println("🔐 Generating CA certificate...")
+		fmt.Println(utils.Colorize("[AUTH]", utils.ColorBlue) + " Generating CA certificate...")
 		if err := m.generateCA(); err != nil {
 			return fmt.Errorf("failed to generate CA certificate: %w", err)
 		}
@@ -46,7 +47,7 @@ func (m *Manager) SetupSSL() error {
 	// CA certificate is now handled via temporary files during installation
 	// No need to copy to host directory
 
-	fmt.Println("✅ SSL setup complete")
+	fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " SSL setup complete")
 	return nil
 }
 
@@ -95,7 +96,7 @@ func (m *Manager) SetupProjectSSL(projectName string) error {
 		return fmt.Errorf("failed to reload nginx: %w", err)
 	}
 
-	fmt.Printf("  ✅ SSL certificate configured for %s\n", domain)
+	fmt.Printf("  [SUCCESS] SSL certificate configured for %s\n", domain)
 	return nil
 }
 
@@ -107,12 +108,12 @@ func (m *Manager) RemoveProjectSSL(projectName string) error {
 	// This works regardless of nginx container state
 	if err := m.docker.Run("run", "--rm", "-v", "devbox_certs:/certs", "alpine:latest",
 		"sh", "-c", fmt.Sprintf("rm -f /certs/%s.crt /certs/%s.key", domain, domain)); err != nil {
-		fmt.Printf("⚠️  Warning: Failed to remove certificate files: %v\n", err)
+		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow) + " Warning: Failed to remove certificate files: %v\n", err)
 	}
 
 	// Update vhost to use HTTP instead of HTTPS
 	if err := m.updateVhostToHTTP(projectName); err != nil {
-		fmt.Printf("⚠️  Warning: Failed to update vhost to HTTP: %v\n", err)
+		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow) + " Warning: Failed to update vhost to HTTP: %v\n", err)
 	}
 
 	return nil
@@ -124,13 +125,13 @@ func (m *Manager) RemoveProjectVhost(projectName string) error {
 	// This works regardless of nginx container state
 	if err := m.docker.Run("run", "--rm", "-v", "devbox_vhosts:/vhosts", "alpine:latest",
 		"rm", "-f", fmt.Sprintf("/vhosts/%s.conf", projectName)); err != nil {
-		fmt.Printf("⚠️  Warning: Failed to remove vhost configuration: %v\n", err)
+		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow) + " Warning: Failed to remove vhost configuration: %v\n", err)
 	}
 
 	// Reload nginx to apply configuration changes if it's running
 	if m.docker.ContainerExists("devbox_nginx") && m.docker.IsContainerRunning("devbox_nginx") {
 		if err := m.reloadNginx(); err != nil {
-			fmt.Printf("⚠️  Warning: Failed to reload nginx: %v\n", err)
+			fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow) + " Warning: Failed to reload nginx: %v\n", err)
 		}
 	}
 
@@ -168,7 +169,7 @@ func (m *Manager) updateVhostToHTTP(projectName string) error {
 	// Reload nginx to apply configuration changes if it's running
 	if m.docker.ContainerExists("devbox_nginx") && m.docker.IsContainerRunning("devbox_nginx") {
 		if err := m.reloadNginx(); err != nil {
-			fmt.Printf("⚠️  Warning: Failed to reload nginx: %v\n", err)
+			fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow) + " Warning: Failed to reload nginx: %v\n", err)
 		}
 	}
 
@@ -207,7 +208,7 @@ func (m *Manager) InstallCertificate() error {
 		return fmt.Errorf("failed to copy CA certificate: %w", err)
 	}
 
-	fmt.Println("🔐 Installing CA certificate to system...")
+	fmt.Println(utils.Colorize("[AUTH]", utils.ColorBlue) + " Installing CA certificate to system...")
 
 	switch runtime.GOOS {
 	case "darwin":
@@ -226,8 +227,8 @@ func (m *Manager) InstallCertificate() error {
 		return fmt.Errorf("unsupported operating system: %s", runtime.GOOS)
 	}
 
-	fmt.Println("✅ Certificate installed successfully")
-	fmt.Println("🔄 Please restart your browser for the changes to take effect")
+	fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Certificate installed successfully")
+	fmt.Println(utils.Colorize("[RESTARTING]", utils.ColorCyan) + " Please restart your browser for the changes to take effect")
 	return nil
 }
 
@@ -236,17 +237,17 @@ func (m *Manager) VerifyCertificate() error {
 	installed := m.isCertificateInstalled()
 
 	if installed {
-		fmt.Println("✅ CA certificate is installed in the system")
+		fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " CA certificate is installed in the system")
 	} else {
-		fmt.Println("❌ CA certificate is not installed")
+		fmt.Println(utils.Colorize("[ERROR]", utils.ColorRed) + " CA certificate is not installed")
 		fmt.Println("Run 'devbox cert install' to install it")
 	}
 
 	// Check if CA certificate exists in Docker volume
 	if m.caExistsInVolume() {
-		fmt.Println("✅ CA certificate exists in Docker volume")
+		fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " CA certificate exists in Docker volume")
 	} else {
-		fmt.Println("❌ CA certificate not found in Docker volume")
+		fmt.Println(utils.Colorize("[ERROR]", utils.ColorRed) + " CA certificate not found in Docker volume")
 		fmt.Println("Run 'devbox global start' to generate it")
 	}
 
@@ -261,32 +262,32 @@ func (m *Manager) DebugCertificate() error {
 	// Check CA certificate in Docker volume
 	fmt.Println("CA Certificate:")
 	if m.caExistsInVolume() {
-		fmt.Println("  ✅ Exists in Docker volume")
+		fmt.Println("  [SUCCESS] Exists in Docker volume")
 	} else {
-		fmt.Println("  ❌ Not found in Docker volume")
+		fmt.Println("  [ERROR] Not found in Docker volume")
 	}
 
 	// Check system installation
 	fmt.Printf("\nSystem Installation: ")
 	if m.isCertificateInstalled() {
-		fmt.Println("✅ Installed")
+		fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Installed")
 		m.showSystemCertificateInfo()
 	} else {
-		fmt.Println("❌ Not installed")
+		fmt.Println(utils.Colorize("[ERROR]", utils.ColorRed) + " Not installed")
 	}
 
 	// Check Docker volume
 	fmt.Println("\nDocker Volume:")
 	if m.caExistsInVolume() {
-		fmt.Println("  ✅ CA exists in volume")
+		fmt.Println("  [SUCCESS] CA exists in volume")
 	} else {
-		fmt.Println("  ❌ CA not found in volume")
+		fmt.Println("  [ERROR] CA not found in volume")
 	}
 
 	// Check nginx container
 	fmt.Println("\nNginx Container:")
 	if m.docker.IsContainerRunning("devbox_nginx") {
-		fmt.Println("  ✅ Running")
+		fmt.Println("  [SUCCESS] Running")
 
 		// List certificates in nginx
 		output, err := m.docker.RunWithOutput("exec", "devbox_nginx", "ls", "-la", "/etc/nginx/ssl/")
@@ -300,7 +301,7 @@ func (m *Manager) DebugCertificate() error {
 			}
 		}
 	} else {
-		fmt.Println("  ❌ Not running")
+		fmt.Println("  [ERROR] Not running")
 	}
 
 	return nil
@@ -437,6 +438,15 @@ func (m *Manager) installCertMacOS(caPath string) error {
 }
 
 func (m *Manager) installCertLinux(caPath string) error {
+	fmt.Println("Installing certificate on Linux...")
+	fmt.Println(caPath)
+
+	// Check if 'trust' is available
+	_, err := exec.LookPath("trust")
+    if err == nil {
+        return exec.Command("sudo", "trust", "anchor", caPath).Run()
+    }
+
 	// Copy to system certificate store
 	destPath := "/usr/local/share/ca-certificates/devbox-ca.crt"
 

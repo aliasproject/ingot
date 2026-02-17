@@ -65,16 +65,16 @@ func (c *Client) EnsureAuthenticated() error {
 
 // Authenticate performs interactive GitHub authentication
 func (c *Client) Authenticate() error {
-	fmt.Println("🔑 GitHub Authentication Setup")
+	fmt.Println(utils.Colorize("[AUTH]", utils.ColorBlue) + " GitHub Authentication Setup")
 	fmt.Println(strings.Repeat("-", 50))
 
 	// Check if already authenticated
 	if token := c.config.GetGithubToken(); token != "" {
 		if err := c.validateToken(token); err == nil {
-			fmt.Println("✅ Already authenticated")
+			fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Already authenticated")
 			username := c.getUsername(token)
 			if username != "" {
-				fmt.Printf("👤 Logged in as: %s\n", username)
+				fmt.Printf(utils.Colorize("[USER]", utils.ColorCyan) + " Logged in as: %s\n", username)
 			}
 			return nil
 		}
@@ -134,16 +134,20 @@ func (c *Client) authenticateWithToken() error {
 	}
 
 	// Setup GHCR
-	c.setupGHCR(token)
+	if err := c.setupGHCR(token); err != nil {
+		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow) + " Warning: GitHub authentication succeeded but Docker login failed\n")
+		fmt.Printf("   You may need to manually run: docker login ghcr.io\n")
+		return err
+	}
 
 	username := c.getUsername(token)
-	fmt.Printf("✅ Authenticated successfully as %s\n", username)
+	fmt.Printf(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Authenticated successfully as %s\n", username)
 	return nil
 }
 
 // authenticateWithOAuth handles OAuth device flow authentication
 func (c *Client) authenticateWithOAuth() error {
-	fmt.Println("\n🔐 GitHub OAuth Authentication (Device Flow)")
+	fmt.Println("\n[AUTH] GitHub OAuth Authentication (Device Flow)")
 
 	// Request device code
 	deviceCode, err := c.requestDeviceCode()
@@ -151,8 +155,8 @@ func (c *Client) authenticateWithOAuth() error {
 		return fmt.Errorf("failed to request device code: %w", err)
 	}
 
-	fmt.Printf("\n🌐 Visit: %s\n", deviceCode.VerificationURI)
-	fmt.Printf("📋 Enter code: %s\n", deviceCode.UserCode)
+	fmt.Printf("\n[WEB] Visit: %s\n", deviceCode.VerificationURI)
+	fmt.Printf(utils.Colorize("[CODE]", utils.ColorWhite) + " Enter code: %s\n", deviceCode.UserCode)
 	fmt.Println("\nWaiting for authorization...")
 
 	// Open browser
@@ -170,16 +174,20 @@ func (c *Client) authenticateWithOAuth() error {
 	}
 
 	// Setup GHCR
-	c.setupGHCR(token)
+	if err := c.setupGHCR(token); err != nil {
+		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow) + " Warning: GitHub authentication succeeded but Docker login failed\n")
+		fmt.Printf("   You may need to manually run: docker login ghcr.io\n")
+		return err
+	}
 
 	username := c.getUsername(token)
-	fmt.Printf("✅ Authenticated successfully as %s\n", username)
+	fmt.Printf(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Authenticated successfully as %s\n", username)
 	return nil
 }
 
 // authenticateWithGitHubCLI handles GitHub CLI authentication
 func (c *Client) authenticateWithGitHubCLI() error {
-	fmt.Println("\n🚀 GitHub CLI Authentication")
+	fmt.Println("\n[STARTING] GitHub CLI Authentication")
 
 	// Check if gh is installed
 	if _, err := exec.LookPath("gh"); err != nil {
@@ -211,10 +219,14 @@ func (c *Client) authenticateWithGitHubCLI() error {
 	}
 
 	// Setup GHCR
-	c.setupGHCR(token)
+	if err := c.setupGHCR(token); err != nil {
+		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow) + " Warning: GitHub authentication succeeded but Docker login failed\n")
+		fmt.Printf("   You may need to manually run: docker login ghcr.io\n")
+		return err
+	}
 
 	username := c.getUsername(token)
-	fmt.Printf("✅ Authenticated successfully as %s\n", username)
+	fmt.Printf(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Authenticated successfully as %s\n", username)
 	return nil
 }
 
@@ -293,15 +305,37 @@ func (c *Client) getUsername(token string) string {
 }
 
 // setupGHCR configures Docker to use GitHub Container Registry
-func (c *Client) setupGHCR(token string) {
+func (c *Client) setupGHCR(token string) error {
 	username := c.getUsername(token)
 	if username == "" {
 		username = "token"
 	}
 
+	fmt.Printf(utils.Colorize("[AUTH]", utils.ColorBlue) + " Logging into GitHub Container Registry (ghcr.io)...\n")
+
 	cmd := exec.Command("docker", "login", "ghcr.io", "-u", username, "--password-stdin")
 	cmd.Stdin = strings.NewReader(token)
-	cmd.Run()
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		// Show error output
+		if len(output) > 0 {
+			fmt.Printf("Docker login error: %s\n", string(output))
+		}
+
+		// Try to provide helpful context
+		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow) + " Warning: Docker login to ghcr.io failed: %v\n", err)
+		fmt.Println("\n[INFO] Troubleshooting tips:")
+		fmt.Println("   1. Ensure Docker is running: docker ps")
+		fmt.Println("   2. Check Docker permissions: docker run hello-world")
+		fmt.Println("   3. Verify your GitHub token has 'read:packages' scope")
+		fmt.Println("   4. Try manual login: echo YOUR_TOKEN | docker login ghcr.io -u USERNAME --password-stdin")
+
+		return fmt.Errorf("docker login failed: %w", err)
+	}
+
+	fmt.Printf(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Successfully logged into ghcr.io as %s\n", username)
+	return nil
 }
 
 // DeviceCode represents the GitHub device code response

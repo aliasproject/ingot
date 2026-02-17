@@ -1,3 +1,4 @@
 .env
 devbox
 .DS_Store
+scripts/build

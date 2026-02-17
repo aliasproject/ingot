@@ -36,43 +36,43 @@ func NewInstaller(dockerClient *docker.Client, cfg *config.Config, svc *services
 
 // Install performs the Devbox installation
 func (i *Installer) Install() error {
-	fmt.Println("🚀 Installing Devbox Development Environment")
+	fmt.Println(utils.Colorize("[STARTING]", utils.ColorCyan) + " Installing Devbox Development Environment")
 	fmt.Println("=" + utils.PadString("", 48))
 	fmt.Println()
 
 	// Step 1: Create directories
-	fmt.Println("📁 Creating directories...")
+	fmt.Println(utils.Colorize("[DIRECTORY]", utils.ColorCyan) + " Creating directories...")
 	if err := i.createDirectories(); err != nil {
 		return fmt.Errorf("failed to create directories: %w", err)
 	}
 
 	// Step 2: Configure database
-	fmt.Println("\n💾 Database Configuration")
+	fmt.Println("\n" + utils.Colorize("[DATABASE]", utils.ColorPurple) + " Database Configuration")
 	if err := i.configureDatabase(); err != nil {
 		return fmt.Errorf("failed to configure database: %w", err)
 	}
 
 	// Step 3: Setup GitHub authentication
-	fmt.Println("\n🔑 GitHub Authentication")
+	fmt.Println("\n" + utils.Colorize("[AUTH]", utils.ColorBlue) + " GitHub Authentication")
 	if err := i.setupGitHubAuth(); err != nil {
 		// Non-fatal error
 		utils.PrintWarning("GitHub authentication skipped: " + err.Error())
 	}
 
 	// Step 4: Install binary
-	fmt.Println("\n📦 Installing binary...")
+	fmt.Println("\n" + utils.Colorize("[PACKAGE]", utils.ColorCyan) + " Installing binary...")
 	if err := i.installBinary(); err != nil {
 		return fmt.Errorf("failed to install binary: %w", err)
 	}
 
 	// Step 5: Start global services
-	fmt.Println("\n🌐 Starting global services...")
+	fmt.Println("\n" + utils.Colorize("[WEB]", utils.ColorBlue) + " Starting global services...")
 	if err := i.services.Start(); err != nil {
 		return fmt.Errorf("failed to start services: %w", err)
 	}
 
-	// Step 6: Setup DNS resolver (macOS only)
-	fmt.Println("\n🔗 Setting up DNS resolver...")
+	// Step 6: Setup DNS resolver
+	fmt.Println("\n" + utils.Colorize("[NETWORK]", utils.ColorCyan) + " Setting up DNS resolver...")
 	if err := utils.SetupTestDomainResolver(); err != nil {
 		utils.PrintWarning("Failed to setup DNS resolver: " + err.Error())
 	}
@@ -142,7 +142,7 @@ func (i *Installer) configureDatabase() error {
 		return err
 	}
 
-	fmt.Printf("  ✅ Configured %s %s as '%s' database\n", selected, dbVersion, dbType)
+	fmt.Printf("  " + utils.Colorize("[RUNNING]", utils.ColorGreen) + " Configured %s %s as '%s' database\n", selected, dbVersion, dbType)
 	return nil
 }
 
@@ -156,7 +156,7 @@ func (i *Installer) setupGitHubAuth() error {
 
 	// Try to get existing token
 	if err := i.github.EnsureAuthenticated(); err == nil {
-		fmt.Println("  ✅ Already authenticated")
+		fmt.Println("  [SUCCESS] Already authenticated")
 		return nil
 	}
 
@@ -205,7 +205,7 @@ func (i *Installer) installBinary() error {
 		os.Chmod(config.DevboxBinary, 0755)
 	}
 
-	fmt.Printf("  ✅ Installed to %s\n", config.DevboxBinary)
+	fmt.Printf("  " + utils.Colorize("[RUNNING]", utils.ColorGreen) + " Installed to %s\n", config.DevboxBinary)
 
 	// Check if in PATH
 	if !i.isInPath() {
@@ -247,11 +247,11 @@ func (i *Installer) showSuccessMessage() {
 	fmt.Println()
 
 	// Show service status
-	fmt.Println("🌐 Services Status:")
+	fmt.Println(utils.Colorize("[WEB]", utils.ColorBlue) + " Services Status:")
 	svcs, _ := i.services.Status()
 	for _, svc := range svcs {
 		if svc.Status == "running" {
-			fmt.Printf("  ✅ %s: running", svc.Name)
+			fmt.Printf("  " + utils.Colorize("[RUNNING]", utils.ColorGreen) + " %s: running", svc.Name)
 			if len(svc.Ports) > 0 {
 				fmt.Printf(" (ports: %s)", svc.Ports[0])
 			}
@@ -260,7 +260,7 @@ func (i *Installer) showSuccessMessage() {
 	}
 
 	fmt.Println()
-	fmt.Println("📖 For more information:")
+	fmt.Println(utils.Colorize("[DOCS]", utils.ColorCyan) + " For more information:")
 	fmt.Println("  devbox help         - Show all commands")
 	fmt.Println("  devbox status       - Show system status")
 	fmt.Println("  devbox network-help - Network configuration help")
@@ -268,8 +268,8 @@ func (i *Installer) showSuccessMessage() {
 
 	// Show network info
 	if hostIP, err := services.GetHostIP(); err == nil {
-		fmt.Printf("🔗 Network: %s:5354 (DNS)\n", hostIP)
-		fmt.Printf("📧 MailHog: http://%s:8025\n", hostIP)
+		fmt.Printf(utils.Colorize("[NETWORK]", utils.ColorCyan) + " Network: %s:5354 (DNS)\n", hostIP)
+		fmt.Printf(utils.Colorize("[MAIL]", utils.ColorBlue) + " MailHog: http://%s:8025\n", hostIP)
 	}
 }
 
@@ -296,7 +296,7 @@ func (i *Installer) Uninstall(removeConfig bool) error {
 
 	// No local configuration directory to remove since we use environment variables only
 	if removeConfig {
-		fmt.Println("💡 Configuration is stored in environment variables and project directories only")
+		fmt.Println(utils.Colorize("[INFO]", utils.ColorBlue) + " Configuration is stored in environment variables and project directories only")
 		fmt.Println("   To completely remove devbox configuration:")
 		fmt.Println("   - Unset GITHUB_TOKEN environment variable")
 		fmt.Println("   - Remove .devbox.json files from project directories")

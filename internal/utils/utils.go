@@ -125,38 +125,46 @@ func OpenURL(url string) error {
 	return cmd.Start()
 }
 
-// BoolStatus returns a check mark or X emoji based on the boolean value
+// BoolStatus returns a colored status indicator based on the boolean value
 func BoolStatus(ok bool) string {
 	if ok {
-		return "✅"
+		return Colorize("[OK]", ColorGreen)
 	}
-	return "❌"
+	return Colorize("[FAIL]", ColorRed)
 }
 
-// FormatStatus formats a status string with an appropriate emoji
+// FormatStatus formats a status string with appropriate color
 func FormatStatus(status string) string {
 	switch status {
 	case "running":
-		return "✅ running"
+		return Colorize("[RUNNING]", ColorGreen) + " running"
 	case "stopped", "exited":
-		return "🔴 stopped"
+		return Colorize("[STOPPED]", ColorRed) + " stopped"
 	case "starting":
-		return "🚀 starting"
+		return Colorize("[STARTING]", ColorCyan) + " starting"
 	case "stopping":
-		return "🛑 stopping"
+		return Colorize("[STOPPING]", ColorYellow) + " stopping"
 	case "not initialized", "not found":
-		return "❌ " + status
+		return Colorize("[ERROR]", ColorRed) + " " + status
 	default:
-		return "⚠️ " + status
+		return Colorize("[WARNING]", ColorYellow) + " " + status
 	}
 }
 
-// CleanupDNS removes DNS resolver configuration (macOS only)
+// CleanupDNS removes DNS resolver configuration
 func CleanupDNS() error {
-	if runtime.GOOS != "darwin" {
+	switch runtime.GOOS {
+	case "darwin":
+		return cleanupDNSMacOS()
+	case "linux":
+		return cleanupDNSLinux()
+	default:
 		return nil
 	}
+}
 
+// cleanupDNSMacOS removes DNS resolver configuration on macOS
+func cleanupDNSMacOS() error {
 	// Remove resolver file
 	if err := exec.Command("sudo", "rm", "-f", "/etc/resolver/test").Run(); err != nil {
 		// Ignore error if file doesn't exist
@@ -172,12 +180,51 @@ func CleanupDNS() error {
 	return nil
 }
 
-// SetupTestDomainResolver sets up DNS resolver for .test domains (macOS only)
-func SetupTestDomainResolver() error {
-	if runtime.GOOS != "darwin" {
-		return nil
+// cleanupDNSLinux removes DNS resolver configuration on Linux
+func cleanupDNSLinux() error {
+	// Remove systemd-resolved configuration if it exists
+	if CommandExists("resolvectl") || CommandExists("systemd-resolve") {
+		// Remove the DNS configuration drop-in file
+		exec.Command("sudo", "rm", "-f", "/etc/systemd/resolved.conf.d/devbox.conf").Run()
+
+		// Restart systemd-resolved
+		exec.Command("sudo", "systemctl", "restart", "systemd-resolved").Run()
 	}
 
+	// Remove dnsmasq configuration if it exists
+	if FileExists("/etc/dnsmasq.d/devbox.conf") {
+		exec.Command("sudo", "rm", "-f", "/etc/dnsmasq.d/devbox.conf").Run()
+		if CommandExists("systemctl") {
+			exec.Command("sudo", "systemctl", "restart", "dnsmasq").Run()
+		} else {
+			exec.Command("sudo", "service", "dnsmasq", "restart").Run()
+		}
+	}
+
+	// Flush DNS cache
+	if CommandExists("resolvectl") {
+		exec.Command("sudo", "resolvectl", "flush-caches").Run()
+	} else if CommandExists("systemd-resolve") {
+		exec.Command("sudo", "systemd-resolve", "--flush-caches").Run()
+	}
+
+	return nil
+}
+
+// SetupTestDomainResolver sets up DNS resolver for .test domains
+func SetupTestDomainResolver() error {
+	switch runtime.GOOS {
+	case "darwin":
+		return setupTestDomainResolverMacOS()
+	case "linux":
+		return setupTestDomainResolverLinux()
+	default:
+		return nil
+	}
+}
+
+// setupTestDomainResolverMacOS sets up DNS resolver for .test domains on macOS
+func setupTestDomainResolverMacOS() error {
 	resolverFile := "/etc/resolver/test"
 	content := "port 5354\nnameserver 127.0.0.1\n"
 
@@ -199,6 +246,95 @@ func SetupTestDomainResolver() error {
 	// Flush DNS cache
 	exec.Command("sudo", "dscacheutil", "-flushcache").Run()
 	exec.Command("sudo", "killall", "-HUP", "mDNSResponder").Run()
+
+	return nil
+}
+
+// setupTestDomainResolverLinux sets up DNS resolver for .test domains on Linux
+func setupTestDomainResolverLinux() error {
+	// Try systemd-resolved first (most modern Linux distributions)
+	if CommandExists("resolvectl") || CommandExists("systemd-resolve") {
+		return setupSystemdResolved()
+	}
+
+	// Try dnsmasq if available
+	if CommandExists("dnsmasq") || FileExists("/etc/dnsmasq.conf") {
+		return setupDnsmasq()
+	}
+
+	// If neither is available, provide helpful instructions
+	PrintWarning("Could not automatically configure DNS for .test domains")
+	fmt.Println("\nTo manually configure DNS for .test domains, add this to your DNS configuration:")
+	fmt.Println("  Domain: .test")
+	fmt.Println("  DNS Server: 127.0.0.1:5354")
+	fmt.Println("\nAlternatively, you can add entries to /etc/hosts for each project:")
+	fmt.Println("  127.0.0.1  myproject.test")
+
+	return nil
+}
+
+// setupSystemdResolved configures systemd-resolved for .test domains
+func setupSystemdResolved() error {
+	// Create resolved.conf.d directory if it doesn't exist
+	if err := exec.Command("sudo", "mkdir", "-p", "/etc/systemd/resolved.conf.d").Run(); err != nil {
+		return fmt.Errorf("failed to create resolved.conf.d directory: %w", err)
+	}
+
+	// Create configuration for .test domain
+	config := `[Resolve]
+DNS=127.0.0.1:5354
+Domains=~test
+`
+
+	// Write configuration file
+	cmd := exec.Command("sudo", "tee", "/etc/systemd/resolved.conf.d/devbox.conf")
+	cmd.Stdin = strings.NewReader(config)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to write resolved configuration: %w", err)
+	}
+
+	// Restart systemd-resolved
+	if err := exec.Command("sudo", "systemctl", "restart", "systemd-resolved").Run(); err != nil {
+		return fmt.Errorf("failed to restart systemd-resolved: %w", err)
+	}
+
+	// Flush DNS cache
+	if CommandExists("resolvectl") {
+		exec.Command("sudo", "resolvectl", "flush-caches").Run()
+	} else if CommandExists("systemd-resolve") {
+		exec.Command("sudo", "systemd-resolve", "--flush-caches").Run()
+	}
+
+	return nil
+}
+
+// setupDnsmasq configures dnsmasq for .test domains
+func setupDnsmasq() error {
+	// Create dnsmasq.d directory if it doesn't exist
+	if err := exec.Command("sudo", "mkdir", "-p", "/etc/dnsmasq.d").Run(); err != nil {
+		return fmt.Errorf("failed to create dnsmasq.d directory: %w", err)
+	}
+
+	// Create configuration for .test domain
+	config := "server=/test/127.0.0.1#5354\n"
+
+	// Write configuration file
+	cmd := exec.Command("sudo", "tee", "/etc/dnsmasq.d/devbox.conf")
+	cmd.Stdin = strings.NewReader(config)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to write dnsmasq configuration: %w", err)
+	}
+
+	// Restart dnsmasq
+	if CommandExists("systemctl") {
+		if err := exec.Command("sudo", "systemctl", "restart", "dnsmasq").Run(); err != nil {
+			return fmt.Errorf("failed to restart dnsmasq: %w", err)
+		}
+	} else {
+		if err := exec.Command("sudo", "service", "dnsmasq", "restart").Run(); err != nil {
+			return fmt.Errorf("failed to restart dnsmasq: %w", err)
+		}
+	}
 
 	return nil
 }
@@ -354,22 +490,32 @@ func Colorize(s string, color Color) string {
 
 // PrintSuccess prints a success message with green color
 func PrintSuccess(message string) {
-	fmt.Println(Colorize("✅ "+message, ColorGreen))
+	fmt.Println(Colorize("[SUCCESS]", ColorGreen) + " " + message)
 }
 
 // PrintError prints an error message with red color
 func PrintError(message string) {
-	fmt.Fprintln(os.Stderr, Colorize("❌ "+message, ColorRed))
+	fmt.Fprintln(os.Stderr, Colorize("[ERROR]", ColorRed)+" "+message)
 }
 
 // PrintWarning prints a warning message with yellow color
 func PrintWarning(message string) {
-	fmt.Println(Colorize("⚠️  "+message, ColorYellow))
+	fmt.Println(Colorize("[WARNING]", ColorYellow) + " " + message)
 }
 
 // PrintInfo prints an info message with blue color
 func PrintInfo(message string) {
-	fmt.Println(Colorize("ℹ️  "+message, ColorBlue))
+	fmt.Println(Colorize("[INFO]", ColorBlue) + " " + message)
+}
+
+// PrintStep prints a step message with cyan color
+func PrintStep(message string) {
+	fmt.Println(Colorize("[*]", ColorCyan) + " " + message)
+}
+
+// PrintStatus prints a status message with white color
+func PrintStatus(message string) {
+	fmt.Println(Colorize("[-]", ColorWhite) + " " + message)
 }
 
 // Spinner provides a simple loading spinner

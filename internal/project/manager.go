@@ -1,6 +1,7 @@
 package project
 
 import (
+	"github.com/aliasproject/devbox/internal/utils"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -149,7 +150,7 @@ func (m *Manager) Start(phpVersion string, serverRoot ...string) error {
 			existingVersion := info.Labels["devbox.project.php_version"]
 			if existingVersion != "" && existingVersion != desiredPHPVersion {
 				// PHP version mismatch - recreate container
-				fmt.Printf("🔄 PHP version changed from %s to %s, recreating container...\n", existingVersion, desiredPHPVersion)
+				fmt.Printf(utils.Colorize("[RESTARTING]", utils.ColorCyan) + " PHP version changed from %s to %s, recreating container...\n", existingVersion, desiredPHPVersion)
 				if err := m.docker.RemoveContainer(project.Container, true); err != nil {
 					return fmt.Errorf("failed to remove old container: %w", err)
 				}
@@ -174,7 +175,7 @@ func (m *Manager) Start(phpVersion string, serverRoot ...string) error {
 			cleanupErr := m.docker.RemoveContainer(project.Container, true)
 			if cleanupErr != nil {
 				// Log but don't fail on cleanup error
-				fmt.Printf("⚠️  Warning: Failed to cleanup container after creation failure: %v\n", cleanupErr)
+				fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow) + " Warning: Failed to cleanup container after creation failure: %v\n", cleanupErr)
 			}
 			return fmt.Errorf("failed to create container: %w", err)
 		}
@@ -218,11 +219,11 @@ func (m *Manager) Remove(force bool) error {
 			return fmt.Errorf("failed to remove container: %w", err)
 		}
 		// When force is true, log the error but continue with cleanup
-		fmt.Printf("⚠️  Warning: Failed to remove container normally: %v\n", err)
+		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow) + " Warning: Failed to remove container normally: %v\n", err)
 
 		// Try one more time with direct docker command
 		if forcedErr := m.docker.Run("rm", "-f", project.Container); forcedErr != nil {
-			fmt.Printf("⚠️  Warning: Forced removal also failed: %v\n", forcedErr)
+			fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow) + " Warning: Forced removal also failed: %v\n", forcedErr)
 		}
 	}
 
@@ -508,7 +509,7 @@ func (m *Manager) createContainer(project *Project) error {
 		// Best effort cleanup on failure - remove any partially created container
 		cleanupErr := m.docker.RemoveContainer(project.Container, true)
 		if cleanupErr != nil {
-			fmt.Printf("⚠️  Warning: Failed to cleanup container after run failure: %v\n", cleanupErr)
+			fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow) + " Warning: Failed to cleanup container after run failure: %v\n", cleanupErr)
 		}
 		return fmt.Errorf("failed to run container: %w", err)
 	}

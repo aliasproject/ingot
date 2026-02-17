@@ -127,6 +127,9 @@ func (h *Handler) Execute(args []string) error {
 	case "github-auth", "auth":
 		return h.handleGitHubAuth()
 
+	case "github-verify":
+		return h.handleGitHubVerify()
+
 	// Logs
 	case "logs":
 		return h.handleLogs(commandArgs)
@@ -148,7 +151,7 @@ func (h *Handler) handleDefaultCommand() error {
 		return h.showProjectStatus(project)
 	}
 
-	fmt.Println("💡 No devbox project found in this directory")
+	fmt.Println(utils.Colorize("[INFO]", utils.ColorBlue) + " No devbox project found in this directory")
 	fmt.Println("Run 'devbox init' to initialize a project or 'devbox help' for more information")
 	return nil
 }
@@ -161,27 +164,27 @@ func (h *Handler) handleGlobalCommand(args []string) error {
 
 	switch args[0] {
 	case "start":
-		fmt.Println("🚀 Starting global services...")
+		fmt.Println(utils.Colorize("[STARTING]", utils.ColorCyan) + " Starting global services...")
 		if err := h.services.Start(); err != nil {
 			return fmt.Errorf("failed to start services: %w", err)
 		}
-		fmt.Println("✅ Global services started successfully")
+		fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Global services started successfully")
 		return h.showServicesStatus()
 
 	case "stop":
-		fmt.Println("🛑 Stopping global services...")
+		fmt.Println(utils.Colorize("[STOPPING]", utils.ColorYellow) + " Stopping global services...")
 		if err := h.services.Stop(); err != nil {
 			return fmt.Errorf("failed to stop services: %w", err)
 		}
-		fmt.Println("✅ Global services stopped")
+		fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Global services stopped")
 		return nil
 
 	case "restart":
-		fmt.Println("🔄 Restarting global services...")
+		fmt.Println(utils.Colorize("[RESTARTING]", utils.ColorCyan) + " Restarting global services...")
 		if err := h.services.Restart(); err != nil {
 			return fmt.Errorf("failed to restart services: %w", err)
 		}
-		fmt.Println("✅ Global services restarted")
+		fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Global services restarted")
 		return h.showServicesStatus()
 
 	case "status":
@@ -249,7 +252,7 @@ func (h *Handler) handleCertCommand(args []string) error {
 			return fmt.Errorf("failed to remove SSL certificate: %w", err)
 		}
 
-		fmt.Printf("✅ SSL certificate removed. Project now accessible via HTTP at: http://%s.test\n", proj.Name)
+		fmt.Printf(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " SSL certificate removed. Project now accessible via HTTP at: http://%s.test\n", proj.Name)
 		return nil
 
 	default:
@@ -260,7 +263,7 @@ func (h *Handler) handleCertCommand(args []string) error {
 // handleInstall installs Devbox
 func (h *Handler) handleInstall() error {
 	if h.config.IsInstalled() {
-		fmt.Printf("✅ Devbox is already installed (v%s)\n", config.Version)
+		fmt.Printf(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Devbox is already installed (v%s)\n", config.Version)
 		return h.showStatus()
 	}
 
@@ -277,14 +280,14 @@ func (h *Handler) handleUpdate() error {
 		// Try to ensure GitHub authentication for update checks
 		fmt.Println("🔍 Checking for updates...")
 		if err := h.github.EnsureAuthenticated(); err != nil {
-			fmt.Printf("⚠️  Warning: No GitHub authentication available for private repo updates.\n")
+			fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow) + " Warning: No GitHub authentication available for private repo updates.\n")
 			fmt.Printf("   Run 'devbox github-auth' to authenticate for access to latest releases.\n")
 			fmt.Printf("   Falling back to public update manifest...\n\n")
 		} else {
 			// Authentication successful, set token
 			if token := h.config.GetGithubToken(); token != "" {
 				h.updater.SetGitHubToken(token)
-				fmt.Println("✅ GitHub authentication found, checking private repository...")
+				fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " GitHub authentication found, checking private repository...")
 			}
 		}
 	}
@@ -301,14 +304,14 @@ func (h *Handler) handleCheckUpdate() error {
 		// Try to ensure GitHub authentication for update checks
 		fmt.Println("🔍 Checking for updates...")
 		if err := h.github.EnsureAuthenticated(); err != nil {
-			fmt.Printf("⚠️  Warning: No GitHub authentication available for private repo updates.\n")
+			fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow) + " Warning: No GitHub authentication available for private repo updates.\n")
 			fmt.Printf("   Run 'devbox github-auth' to authenticate for access to latest releases.\n")
 			fmt.Printf("   Falling back to public update manifest...\n\n")
 		} else {
 			// Authentication successful, set token
 			if token := h.config.GetGithubToken(); token != "" {
 				h.updater.SetGitHubToken(token)
-				fmt.Println("✅ GitHub authentication found, checking private repository...")
+				fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " GitHub authentication found, checking private repository...")
 			}
 		}
 	}
@@ -320,13 +323,13 @@ func (h *Handler) handleCheckUpdate() error {
 	}
 
 	if !isNewer {
-		fmt.Println("✅ You are running the latest version")
+		fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " You are running the latest version")
 		return nil
 	}
 
 	fmt.Printf("New version available: v%s\n", release.Version)
 	if release.Critical {
-		fmt.Println("⚠️  This is a critical security update")
+		fmt.Println(utils.Colorize("[WARNING]", utils.ColorYellow) + " This is a critical security update")
 	}
 	if release.Notes != "" {
 		fmt.Printf("\nRelease notes:\n%s\n", release.Notes)
@@ -362,21 +365,22 @@ func (h *Handler) handleUninstall() error {
 	os.Remove(config.DevboxBinary)
 
 	// No local configuration directory to remove since we use environment variables only
-	fmt.Println("💡 Configuration is stored in environment variables and project directories only")
+	fmt.Println(utils.Colorize("[INFO]", utils.ColorBlue) + " Configuration is stored in environment variables and project directories only")
 
-	fmt.Println("✅ Devbox uninstalled")
+	fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Devbox uninstalled")
 	return nil
 }
 
 // handleInit initializes a new project
 func (h *Handler) handleInit(args []string) error {
 	// Init is now just an alias for start with PHP version selection
-	fmt.Println("ℹ️  'devbox init' is deprecated. Using 'devbox start' instead...")
+	fmt.Println(utils.Colorize("[INFO]", utils.ColorBlue) + " 'devbox init' is deprecated. Using 'devbox start' instead...")
 	return h.handleStart(args...)
 }
 
 // handleStart starts the current project
 func (h *Handler) handleStart(args ...string) error {
+	fmt.Println("Handle Start")
 	// Get project info early for cleanup purposes
 	proj, err := h.projects.GetCurrentProject()
 	if err != nil {
@@ -404,14 +408,14 @@ func (h *Handler) handleStart(args ...string) error {
 
 	// Setup cleanup function that will be called on any failure
 	cleanupOnFailure := func(reason string) {
-		fmt.Printf("🧹 Cleaning up after failure: %s\n", reason)
+		fmt.Printf(utils.Colorize("[CLEANUP]", utils.ColorCyan) + " Cleaning up after failure: %s\n", reason)
 		containerName := fmt.Sprintf("devbox_php_%s", proj.Name)
 
 		// Try to stop the container first
 		if stopErr := h.docker.Run("stop", containerName); stopErr != nil {
 			// Don't log if container doesn't exist
 			if !strings.Contains(stopErr.Error(), "No such container") {
-				fmt.Printf("⚠️  Warning: Failed to stop container: %v\n", stopErr)
+				fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow) + " Warning: Failed to stop container: %v\n", stopErr)
 			}
 		}
 
@@ -419,7 +423,7 @@ func (h *Handler) handleStart(args ...string) error {
 		if removeErr := h.docker.Run("rm", "-f", containerName); removeErr != nil {
 			// Don't log if container doesn't exist
 			if !strings.Contains(removeErr.Error(), "No such container") {
-				fmt.Printf("⚠️  Warning: Failed to remove container: %v\n", removeErr)
+				fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow) + " Warning: Failed to remove container: %v\n", removeErr)
 			}
 		}
 	}
@@ -431,10 +435,10 @@ func (h *Handler) handleStart(args ...string) error {
 
 	// Ensure GitHub authentication
 	if err := h.github.EnsureAuthenticated(); err != nil {
-		fmt.Printf("⚠️  Warning: GitHub authentication failed: %v\n", err)
+		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow) + " Warning: GitHub authentication failed: %v\n", err)
 	}
 
-	fmt.Printf("🚀 Starting project '%s' with PHP %s...\n", proj.Name, phpVersion)
+	fmt.Printf(utils.Colorize("[STARTING]", utils.ColorCyan) + " Starting project '%s' with PHP %s...\n", proj.Name, phpVersion)
 
 	if err := h.projects.Start(phpVersion, serverRoot); err != nil {
 		cleanupOnFailure("project start failed")
@@ -445,7 +449,7 @@ func (h *Handler) handleStart(args ...string) error {
 	if h.config.EnableSSL {
 		if err := h.ssl.SetupProjectSSL(proj.Name); err != nil {
 			// SSL setup failed - cleanup and return error
-			fmt.Printf("❌ Failed to setup SSL certificate: %v\n", err)
+			fmt.Printf(utils.Colorize("[ERROR]", utils.ColorRed) + " Failed to setup SSL certificate: %v\n", err)
 			cleanupOnFailure("SSL certificate setup failed")
 
 			return fmt.Errorf("project startup failed due to SSL certificate error. Please check:\n"+
@@ -465,8 +469,8 @@ func (h *Handler) handleStart(args ...string) error {
 
 	// Only show success message if we have valid project info
 	if project.Status == "running" && project.URL != "" {
-		fmt.Printf("✅ Project started successfully with PHP %s\n", phpVersion)
-		fmt.Printf("🌐 Access your project at: %s\n", project.URL)
+		fmt.Printf(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Project started successfully with PHP %s\n", phpVersion)
+		fmt.Printf(utils.Colorize("[WEB]", utils.ColorBlue) + " Access your project at: %s\n", project.URL)
 		return h.showProjectStatus(project)
 	}
 
@@ -482,13 +486,13 @@ func (h *Handler) handleStop() error {
 		return err
 	}
 
-	fmt.Printf("🛑 Stopping project '%s'...\n", project.Name)
+	fmt.Printf(utils.Colorize("[STOPPING]", utils.ColorYellow) + " Stopping project '%s'...\n", project.Name)
 
 	if err := h.projects.Stop(); err != nil {
 		return fmt.Errorf("failed to stop project: %w", err)
 	}
 
-	fmt.Println("✅ Project stopped")
+	fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Project stopped")
 	return nil
 }
 
@@ -521,12 +525,12 @@ func (h *Handler) handleRemove() error {
 	// Remove SSL certificates and vhost configuration
 	fmt.Println("🔒 Cleaning up SSL certificates...")
 	if err := h.ssl.RemoveProjectSSL(project.Name); err != nil {
-		fmt.Printf("⚠️  Warning: Failed to clean up SSL certificates: %v\n", err)
+		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow) + " Warning: Failed to clean up SSL certificates: %v\n", err)
 	}
 
-	fmt.Println("🌐 Removing vhost configuration...")
+	fmt.Println(utils.Colorize("[WEB]", utils.ColorBlue) + " Removing vhost configuration...")
 	if err := h.ssl.RemoveProjectVhost(project.Name); err != nil {
-		fmt.Printf("⚠️  Warning: Failed to remove vhost configuration: %v\n", err)
+		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow) + " Warning: Failed to remove vhost configuration: %v\n", err)
 	}
 
 	// Remove project
@@ -534,7 +538,7 @@ func (h *Handler) handleRemove() error {
 		return fmt.Errorf("failed to remove project: %w", err)
 	}
 
-	fmt.Println("✅ Project removed")
+	fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Project removed")
 	return nil
 }
 
@@ -557,9 +561,9 @@ func (h *Handler) handleList() error {
 
 	fmt.Printf("Found %d project(s):\n\n", len(projects))
 	for _, proj := range projects {
-		status := "🔴 stopped"
+		status := utils.Colorize("[STOPPED]", utils.ColorRed) + " stopped"
 		if proj.Status == "running" {
-			status = "✅ running"
+			status = utils.Colorize("[RUNNING]", utils.ColorGreen) + " running"
 		}
 
 		fmt.Printf("  %s (%s)\n", proj.Name, status)
@@ -596,17 +600,17 @@ func (h *Handler) handlePHPVersion(args []string) error {
 	}
 
 	if newVersion == proj.PHPVersion {
-		fmt.Printf("✅ Already using PHP %s\n", newVersion)
+		fmt.Printf(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Already using PHP %s\n", newVersion)
 		return nil
 	}
 
-	fmt.Printf("🔄 Changing PHP version to %s...\n", newVersion)
+	fmt.Printf(utils.Colorize("[RESTARTING]", utils.ColorCyan) + " Changing PHP version to %s...\n", newVersion)
 
 	if err := h.projects.ChangePHPVersion(newVersion); err != nil {
 		return fmt.Errorf("failed to change PHP version: %w", err)
 	}
 
-	fmt.Printf("✅ PHP version changed to %s\n", newVersion)
+	fmt.Printf(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " PHP version changed to %s\n", newVersion)
 	fmt.Println("Run 'devbox start' to start with the new version")
 	return nil
 }
@@ -637,26 +641,26 @@ func (h *Handler) handleServerRoot(args []string) error {
 	} else {
 		input := utils.GetInput("Enter new server root path: ")
 		if input == "" {
-			fmt.Println("❌ Server root cannot be empty")
+			fmt.Println(utils.Colorize("[ERROR]", utils.ColorRed) + " Server root cannot be empty")
 			return nil
 		}
 		newServerRoot = input
 	}
 
 	if newServerRoot == currentServerRoot {
-		fmt.Printf("✅ Already using server root: %s\n", newServerRoot)
+		fmt.Printf(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Already using server root: %s\n", newServerRoot)
 		return nil
 	}
 
-	fmt.Printf("🔄 Changing server root to %s...\n", newServerRoot)
+	fmt.Printf(utils.Colorize("[RESTARTING]", utils.ColorCyan) + " Changing server root to %s...\n", newServerRoot)
 
 	if err := h.projects.ChangeServerRoot(newServerRoot); err != nil {
 		return fmt.Errorf("failed to change server root: %w", err)
 	}
 
-	fmt.Printf("✅ Server root changed to %s\n", newServerRoot)
+	fmt.Printf(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Server root changed to %s\n", newServerRoot)
 	if proj.Status == "running" {
-		fmt.Println("🔄 Restarting container to apply changes...")
+		fmt.Println(utils.Colorize("[RESTARTING]", utils.ColorCyan) + " Restarting container to apply changes...")
 		if err := h.handleRestart(); err != nil {
 			return fmt.Errorf("failed to restart container: %w", err)
 		}
@@ -797,17 +801,54 @@ func (h *Handler) handleNetworkHelp() error {
 
 // handleDNSCleanup cleans up DNS configuration
 func (h *Handler) handleDNSCleanup() error {
-	fmt.Println("🧹 Cleaning up DNS configuration...")
+	fmt.Println(utils.Colorize("[CLEANUP]", utils.ColorCyan) + " Cleaning up DNS configuration...")
 	if err := utils.CleanupDNS(); err != nil {
 		return fmt.Errorf("failed to cleanup DNS: %w", err)
 	}
-	fmt.Println("✅ DNS configuration cleaned up")
+	fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " DNS configuration cleaned up")
 	return nil
 }
 
 // handleGitHubAuth handles GitHub authentication
 func (h *Handler) handleGitHubAuth() error {
 	return h.github.Authenticate()
+}
+
+// handleGitHubVerify verifies GitHub authentication and GHCR access
+func (h *Handler) handleGitHubVerify() error {
+	fmt.Println("🔍 Verifying GitHub Authentication")
+	fmt.Println(strings.Repeat("-", 50))
+
+	// Check if token exists
+	token := h.config.GetGithubToken()
+	if token == "" {
+		fmt.Println(utils.Colorize("[ERROR]", utils.ColorRed) + " No GitHub token found")
+		fmt.Println("\nRun 'devbox github-auth' to authenticate")
+		return fmt.Errorf("not authenticated")
+	}
+
+	fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " GitHub token found in configuration")
+
+	// Verify we can pull from ghcr.io
+	fmt.Println("\n[AUTH] Testing access to ghcr.io...")
+
+	// Try to pull a small test image
+	testImage := "ghcr.io/aliasproject/dns:latest"
+	fmt.Printf("Attempting to pull: %s\n", testImage)
+
+	if err := h.docker.PullImage(testImage, nil); err != nil {
+		fmt.Printf(utils.Colorize("[ERROR]", utils.ColorRed) + " Failed to pull image: %v\n", err)
+		fmt.Println("\n[INFO] Troubleshooting:")
+		fmt.Println("   1. Verify Docker login: docker login ghcr.io")
+		fmt.Println("   2. Check token permissions: needs 'read:packages' scope")
+		fmt.Println("   3. Try re-authenticating: devbox github-auth")
+		return fmt.Errorf("ghcr.io access failed")
+	}
+
+	fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Successfully pulled image from ghcr.io")
+	fmt.Println("\n[COMPLETE] GitHub authentication is working correctly!")
+
+	return nil
 }
 
 // handleDatabaseAdd adds a database service
@@ -833,7 +874,7 @@ func (h *Handler) handleDatabaseAdd() error {
 
 	version := utils.SelectOption(fmt.Sprintf("Select %s version", selected), versions)
 
-	fmt.Printf("🚀 Adding %s '%s' (version %s)...\n", selected, name, version)
+	fmt.Printf(utils.Colorize("[STARTING]", utils.ColorCyan) + " Adding %s '%s' (version %s)...\n", selected, name, version)
 
 	if err := h.services.AddDatabase(name, dbType, version); err != nil {
 		return fmt.Errorf("failed to add database: %w", err)
@@ -841,9 +882,9 @@ func (h *Handler) handleDatabaseAdd() error {
 
 	// Database port will be assigned automatically and shown by AddDatabase
 	if dbType == "mysql" {
-		fmt.Println("👤 User: root (no password)")
+		fmt.Println(utils.Colorize("[USER]", utils.ColorCyan) + " User: root (no password)")
 	} else {
-		fmt.Println("👤 User: devbox, Password: devbox, Database: devbox")
+		fmt.Println(utils.Colorize("[USER]", utils.ColorCyan) + " User: devbox, Password: devbox, Database: devbox")
 	}
 
 	return nil
@@ -886,13 +927,13 @@ func (h *Handler) handleDatabaseRemove() error {
 		return nil
 	}
 
-	fmt.Printf("🗑️  Removing '%s'...\n", selectedName)
+	fmt.Printf(utils.Colorize("[REMOVING]", utils.ColorYellow) + " Removing '%s'...\n", selectedName)
 
 	if err := h.services.RemoveDatabase(selectedName); err != nil {
 		return fmt.Errorf("failed to remove database: %w", err)
 	}
 
-	fmt.Printf("✅ Database '%s' removed\n", selectedName)
+	fmt.Printf(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Database '%s' removed\n", selectedName)
 	return nil
 }
 
@@ -911,9 +952,9 @@ func (h *Handler) handleDatabaseList() error {
 
 	fmt.Printf("Found %d database(s):\n\n", len(databases))
 	for _, db := range databases {
-		status := "🔴 stopped"
+		status := utils.Colorize("[STOPPED]", utils.ColorRed) + " stopped"
 		if db.Status == "running" {
-			status = "✅ running"
+			status = utils.Colorize("[RUNNING]", utils.ColorGreen) + " running"
 		}
 
 		// Determine database type from image
@@ -950,17 +991,17 @@ func (h *Handler) showStatus() error {
 	fmt.Println(strings.Repeat("=", 50))
 
 	// Installation status
-	fmt.Printf("\n📦 Installation:\n")
+	fmt.Printf("\n" + utils.Colorize("[PACKAGE]", utils.ColorCyan) + " Installation:\n")
 	fmt.Printf("  Binary: %s %s\n", config.DevboxBinary, utils.BoolStatus(h.config.IsInstalled()))
 	fmt.Printf("  Config: Environment variables %s\n", utils.BoolStatus(h.config.GetGithubToken() != ""))
 
 	// Global services status
-	fmt.Printf("\n🌐 Global Services:\n")
+	fmt.Printf("\n" + utils.Colorize("[WEB]", utils.ColorBlue) + " Global Services:\n")
 	svcs, _ := h.services.Status()
 	for _, svc := range svcs {
-		statusIcon := "🔴"
+		statusIcon := utils.Colorize("[STOPPED]", utils.ColorRed)
 		if svc.Status == "running" {
-			statusIcon = "✅"
+			statusIcon = utils.Colorize("[RUNNING]", utils.ColorGreen)
 		}
 		fmt.Printf("  %s %s: %s\n", statusIcon, svc.Name, svc.Status)
 	}
@@ -968,7 +1009,7 @@ func (h *Handler) showStatus() error {
 	// Current project status
 	project, err := h.projects.GetCurrentProject()
 	if err == nil && project.Status != "not initialized" {
-		fmt.Printf("\n📁 Current Project:\n")
+		fmt.Printf("\n" + utils.Colorize("[DIRECTORY]", utils.ColorCyan) + " Current Project:\n")
 		fmt.Printf("  Name: %s\n", project.Name)
 		fmt.Printf("  PHP: %s\n", project.PHPVersion)
 		fmt.Printf("  Status: %s\n", utils.FormatStatus(project.Status))
@@ -979,7 +1020,7 @@ func (h *Handler) showStatus() error {
 
 	// Network information
 	if hostIP, err := services.GetHostIP(); err == nil {
-		fmt.Printf("\n🔗 Network:\n")
+		fmt.Printf("\n" + utils.Colorize("[NETWORK]", utils.ColorCyan) + " Network:\n")
 		fmt.Printf("  Host IP: %s\n", hostIP)
 		fmt.Printf("  DNS Port: 5354\n")
 	}
@@ -1022,9 +1063,9 @@ func (h *Handler) showServicesStatus() error {
 	fmt.Println(strings.Repeat("-", 50))
 
 	for _, svc := range services {
-		statusIcon := "🔴"
+		statusIcon := utils.Colorize("[STOPPED]", utils.ColorRed)
 		if svc.Status == "running" {
-			statusIcon = "✅"
+			statusIcon = utils.Colorize("[RUNNING]", utils.ColorGreen)
 		}
 
 		fmt.Printf("%s %s\n", statusIcon, svc.Name)
@@ -1103,6 +1144,7 @@ EXAMPLES:
 
   Authentication:
     github-auth        Setup GitHub authentication
+    github-verify      Verify GitHub authentication and GHCR access
 
   Other:
     logs [container]   Show container logs
