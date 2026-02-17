@@ -7,13 +7,13 @@ import (
 
 const (
 	// Version is the current version of Devbox
-	Version = "0.9.8"
+	Version = "0.9.9"
 
 	// ClientID is the GitHub OAuth application client ID
 	ClientID = "178c6fc778ccc68e1d6a"
 
 	// DefaultPHPVersion is the default PHP version for new projects
-	DefaultPHPVersion = "0.9.8"
+	DefaultPHPVersion = "8.3"
 
 	// DevboxBinary is the installation path for the devbox binary
 	DevboxBinary = "/usr/local/bin/devbox"
