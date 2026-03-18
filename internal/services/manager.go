@@ -224,10 +224,9 @@ services:
     image: ghcr.io/aliasproject/dns:latest
     restart: unless-stopped
     ports:
-      - "0.0.0.0:5354:53/udp"
+      - "127.0.0.1:5354:53/udp"
     networks:
-      internal:
-        ipv4_address: %s
+      - internal
     environment:
       - COMMANDS=--address=/test/%s --server=1.1.1.1 --server=8.8.8.8 --log-facility=-
     dns:
@@ -259,7 +258,7 @@ services:
       - "8025:8025"
     networks:
       - internal
-`, networkConfig.DNSServer, hostIP)
+`, hostIP)
 
 	// Add databases
 	for name, dbConfig := range databases {
