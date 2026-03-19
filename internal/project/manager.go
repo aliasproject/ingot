@@ -524,7 +524,7 @@ func (m *Manager) getContainerName(projectName string) string {
 
 // ValidatePHPVersion checks if a PHP version is valid
 func ValidatePHPVersion(version string) bool {
-	validVersions := []string{"8.3", "8.2", "8.1", "8.0", "7.4"}
+	validVersions := []string{"8.5", "8.4", "8.3", "8.2", "8.1", "8.0", "7.4"}
 	for _, v := range validVersions {
 		if v == version {
 			return true
@@ -535,7 +535,7 @@ func ValidatePHPVersion(version string) bool {
 
 // GetAvailablePHPVersions returns available PHP versions
 func GetAvailablePHPVersions() []string {
-	return []string{"8.3", "8.2", "8.1", "8.0", "7.4"}
+	return []string{"8.5", "8.4", "8.3", "8.2", "8.1", "8.0", "7.4"}
 }
 
 // getRunningDatabases returns a list of currently running database services

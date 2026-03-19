@@ -1156,7 +1156,7 @@ QUICK START:
   4. Access at https://[project-name].test
 
 EXAMPLES:
-  devbox init 8.3           # Initialize with PHP 8.3
+  devbox init 8.4           # Initialize with PHP 8.4
   devbox start              # Start current project
   devbox global start       # Start global services
   devbox database add       # Add a database

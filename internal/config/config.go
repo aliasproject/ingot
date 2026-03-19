@@ -13,7 +13,7 @@ const (
 	ClientID = "178c6fc778ccc68e1d6a"
 
 	// DefaultPHPVersion is the default PHP version for new projects
-	DefaultPHPVersion = "8.3"
+	DefaultPHPVersion = "8.4"
 
 	// DevboxBinary is the installation path for the devbox binary
 	DevboxBinary = "/usr/local/bin/devbox"
