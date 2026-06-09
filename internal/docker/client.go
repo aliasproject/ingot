@@ -230,7 +230,9 @@ func (c *Client) InspectContainer(name string) (*ContainerInfo, error) {
 			FinishedAt time.Time `json:"FinishedAt"`
 		} `json:"State"`
 		NetworkSettings struct {
-			Networks map[string]interface{} `json:"Networks"`
+			Networks map[string]struct {
+				IPAddress string `json:"IPAddress"`
+			} `json:"Networks"`
 		} `json:"NetworkSettings"`
 		Created time.Time `json:"Created"`
 	}
@@ -267,6 +269,52 @@ func (c *Client) InspectContainer(name string) (*ContainerInfo, error) {
 	}
 
 	return info, nil
+}
+
+// GetContainerIP returns the IP address of a container on the specified network.
+// If networkName is empty, it returns the IP on the first network found.
+func (c *Client) GetContainerIP(containerName, networkName string) (string, error) {
+	output, err := c.RunWithOutput("inspect", containerName)
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "no such object") {
+			return "", ErrContainerNotFound
+		}
+		return "", err
+	}
+
+	var containers []struct {
+		NetworkSettings struct {
+			Networks map[string]struct {
+				IPAddress string `json:"IPAddress"`
+			} `json:"Networks"`
+		} `json:"NetworkSettings"`
+	}
+
+	if err := json.Unmarshal([]byte(output), &containers); err != nil {
+		return "", fmt.Errorf("failed to parse container info: %w", err)
+	}
+
+	if len(containers) == 0 {
+		return "", ErrContainerNotFound
+	}
+
+	networks := containers[0].NetworkSettings.Networks
+
+	if networkName != "" {
+		if net, ok := networks[networkName]; ok && net.IPAddress != "" {
+			return net.IPAddress, nil
+		}
+		return "", fmt.Errorf("container %q has no IP on network %q", containerName, networkName)
+	}
+
+	// Return the first available IP
+	for _, net := range networks {
+		if net.IPAddress != "" {
+			return net.IPAddress, nil
+		}
+	}
+
+	return "", fmt.Errorf("container %q has no IP address on any network", containerName)
 }
 
 // ContainerExists checks if a container exists
@@ -488,20 +536,45 @@ func (c *Client) PullImage(image string, callback func(string)) error {
 	return c.Run("pull", image)
 }
 
-// ExecCommand executes a command in a running container
-func (c *Client) ExecCommand(container string, interactive bool, command ...string) error {
+// ExecCommand executes a command in a running container.
+// user is an optional "uid:gid" string (e.g. "1000:1000"); pass "" to use the
+// container's default user (root for most images).
+func (c *Client) ExecCommand(container string, interactive bool, user string, command ...string) error {
 	args := []string{"exec"}
 
-	if interactive {
-		args = append(args, "-it")
-		args = append(args, container)
-		args = append(args, command...)
-		return c.RunInteractive(args...)
+	if user != "" {
+		args = append(args, "--user", user)
 	}
 
 	args = append(args, container)
 	args = append(args, command...)
-	return c.Run(args...)
+
+	if interactive {
+		// Use -it flags for full TTY support (shell sessions)
+		fullArgs := []string{"exec"}
+		if user != "" {
+			fullArgs = append(fullArgs, "--user", user)
+		}
+		fullArgs = append(fullArgs, "-it")
+		fullArgs = append(fullArgs, container)
+		fullArgs = append(fullArgs, command...)
+		return c.RunInteractive(fullArgs...)
+	}
+
+	// Non-interactive: no TTY, but still show output
+	if err := c.CheckAvailability(); err != nil {
+		return err
+	}
+
+	cmd := exec.Command(c.dockerPath, args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("docker exec failed: %w", err)
+	}
+
+	return nil
 }
 
 // CopyToContainer copies data to a container

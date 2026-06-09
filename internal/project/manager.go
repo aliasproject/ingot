@@ -1,9 +1,9 @@
 package project
 
 import (
-	"github.com/aliasproject/devbox/internal/utils"
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -11,6 +11,7 @@ import (
 
 	"github.com/aliasproject/devbox/internal/config"
 	"github.com/aliasproject/devbox/internal/docker"
+	"github.com/aliasproject/devbox/internal/utils"
 )
 
 // Manager handles project operations
@@ -364,7 +365,7 @@ func (m *Manager) Exec(command []string, interactive bool) error {
 		return fmt.Errorf("project container is not running")
 	}
 
-	err = m.docker.ExecCommand(project.Container, interactive, command...)
+	err = m.docker.ExecCommand(project.Container, interactive, hostUser(), command...)
 	if err != nil {
 		// Check for common error patterns and provide better messages
 		errStr := err.Error()
@@ -390,8 +391,11 @@ func (m *Manager) Exec(command []string, interactive bool) error {
 	return nil
 }
 
-// OpenShell opens an interactive shell in the project container
-func (m *Manager) OpenShell() error {
+// OpenShell opens an interactive shell in the project container.
+// userOverride specifies which user to run the shell as (e.g. "root", "1000:1000").
+// Pass "" to default to the host user so that file ownership stays consistent
+// with the mounted project files.
+func (m *Manager) OpenShell(userOverride string) error {
 	project, err := m.GetCurrentProject()
 	if err != nil {
 		return err
@@ -401,8 +405,15 @@ func (m *Manager) OpenShell() error {
 		return fmt.Errorf("project container is not running")
 	}
 
-	// Use sh which is POSIX-compliant and available in all containers
-	return m.docker.ExecCommand(project.Container, true, "sh")
+	// Use the caller-supplied user when provided; otherwise fall back to the
+	// host user so that files touched in the shell keep the same owner as
+	// the mounted project files.
+	u := userOverride
+	if u == "" {
+		u = hostUser()
+	}
+
+	return m.docker.ExecCommand(project.Container, true, u, "sh")
 }
 
 // GetStatus returns detailed status of the current project
@@ -479,6 +490,15 @@ func (m *Manager) createContainer(project *Project) error {
 		fmt.Printf("Warning: Failed to pull image: %v\n", err)
 	}
 
+	// Resolve the DNS container's live IP on the internal network rather than
+	// relying on a hardcoded address that may belong to a different container.
+	dnsServers := []string{"1.1.1.1", "8.8.8.8"} // fallback to public resolvers
+	if dnsIP, err := m.docker.GetContainerIP("devbox_dns", networkConfig.BridgeName); err == nil && dnsIP != "" {
+		dnsServers = []string{dnsIP, "1.1.1.1", "8.8.8.8"}
+	} else {
+		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Could not resolve devbox_dns IP (%v); falling back to public DNS. .test domains will not resolve.\n", err)
+	}
+
 	// Create container configuration
 	containerConfig := &docker.ContainerConfig{
 		Name:     project.Container,
@@ -500,7 +520,7 @@ func (m *Manager) createContainer(project *Project) error {
 			"devbox.project.php_version": project.PHPVersion,
 			"devbox.project.server_root": project.ServerRoot,
 		},
-		DNS: []string{networkConfig.DNSServer},
+		DNS: dnsServers,
 	}
 
 	// No additional configuration needed - everything is ephemeral or in Docker labels
@@ -515,6 +535,17 @@ func (m *Manager) createContainer(project *Project) error {
 	}
 
 	return nil
+}
+
+// hostUser returns the current host user as "uid:gid" so that docker exec
+// sessions run with the same ownership as the mounted project files.
+// Falls back to an empty string (container default / root) if detection fails.
+func hostUser() string {
+	u, err := user.Current()
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%s:%s", u.Uid, u.Gid)
 }
 
 // getContainerName returns the container name for a project

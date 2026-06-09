@@ -200,8 +200,6 @@ func (c *Config) IsInstalled() bool {
 // NetworkConfig holds network configuration
 type NetworkConfig struct {
 	BridgeName  string `json:"bridge_name"`
-	Subnet      string `json:"subnet"`
-	DNSServer   string `json:"dns_server"`
 	InternalNet string `json:"internal_net"`
 }
 
@@ -209,8 +207,6 @@ type NetworkConfig struct {
 func GetNetworkConfig() *NetworkConfig {
 	return &NetworkConfig{
 		BridgeName:  "devbox_internal",
-		Subnet:      "192.168.237.0/24",
-		DNSServer:   "192.168.237.4",
 		InternalNet: "devbox_internal",
 	}
 }

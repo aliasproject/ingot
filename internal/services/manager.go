@@ -215,7 +215,6 @@ func (m *Manager) waitForServices(timeout time.Duration) error {
 // generateComposeConfig generates docker-compose configuration
 func (m *Manager) generateComposeConfig(hostIP string) string {
 	databases := m.config.GetDatabases()
-	networkConfig := config.GetNetworkConfig()
 
 	compose := fmt.Sprintf(`name: devbox
 services:
@@ -224,11 +223,11 @@ services:
     image: ghcr.io/aliasproject/dns:latest
     restart: unless-stopped
     ports:
-      - "127.0.0.1:5354:53/udp"
+      - "5354:53/udp"
     networks:
       - internal
     environment:
-      - COMMANDS=--address=/test/%s --server=1.1.1.1 --server=8.8.8.8 --log-facility=-
+      - COMMANDS=--address=/test/%s --server=1.1.1.1 --server=8.8.8.8 --log-facility=- --interface=* --bind-dynamic
     dns:
       - 1.1.1.1
       - 8.8.8.8
@@ -315,15 +314,12 @@ volumes:
 	}
 
 	// Add networks
-	compose += fmt.Sprintf(`
+	compose += `
 
 networks:
   internal:
     driver: bridge
-    ipam:
-      config:
-        - subnet: %s
-`, networkConfig.Subnet)
+`
 
 	return compose
 }
