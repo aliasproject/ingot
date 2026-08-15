@@ -1,8 +1,8 @@
 package services
 
 import (
-	"github.com/aliasproject/devbox/internal/utils"
 	"fmt"
+	"github.com/aliasproject/devbox/internal/utils"
 	"net"
 	"strings"
 	"sync"
@@ -64,7 +64,7 @@ func (m *Manager) Start() error {
 	}
 
 	// Wait for services to be ready
-	if err := m.waitForServices(30 * time.Second); err != nil {
+	if err := m.waitForContainers(GlobalServices, 30*time.Second); err != nil {
 		return fmt.Errorf("services failed to start: %w", err)
 	}
 
@@ -189,13 +189,13 @@ func (m *Manager) EnsureRunning() error {
 	return nil
 }
 
-// waitForServices waits for services to be ready
-func (m *Manager) waitForServices(timeout time.Duration) error {
+// waitForContainers waits for the given containers to be running
+func (m *Manager) waitForContainers(containers []string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 
 	for time.Now().Before(deadline) {
 		allRunning := true
-		for _, container := range GlobalServices {
+		for _, container := range containers {
 			if !m.docker.IsContainerRunning(container) {
 				allRunning = false
 				break
@@ -210,6 +210,100 @@ func (m *Manager) waitForServices(timeout time.Duration) error {
 	}
 
 	return fmt.Errorf("timeout waiting for services")
+}
+
+// ListManagedContainers enumerates every global-service container (dns, nginx,
+// mail, and any database), identified by the "devbox_" name prefix while
+// excluding project containers ("devbox_php_*"). Discovery is done by name rather
+// than by label or in-process config because pause/resume run as separate CLI
+// invocations that don't share config.Config.Databases with each other.
+func (m *Manager) ListManagedContainers() ([]string, error) {
+	names, err := m.docker.ListContainers("")
+	if err != nil {
+		return nil, fmt.Errorf("failed to list containers: %w", err)
+	}
+
+	managed := make([]string, 0, len(names))
+	for _, name := range names {
+		if name == "" {
+			continue
+		}
+		if strings.HasPrefix(name, "devbox_") && !strings.HasPrefix(name, "devbox_php_") {
+			managed = append(managed, name)
+		}
+	}
+
+	return managed, nil
+}
+
+// ListRunningContainers returns the subset of ListManagedContainers that are
+// currently running.
+func (m *Manager) ListRunningContainers() ([]string, error) {
+	managed, err := m.ListManagedContainers()
+	if err != nil {
+		return nil, err
+	}
+
+	running := make([]string, 0, len(managed))
+	for _, name := range managed {
+		if m.docker.IsContainerRunning(name) {
+			running = append(running, name)
+		}
+	}
+
+	return running, nil
+}
+
+// Pause stops (without removing) every currently-running global-service
+// container. Unlike Stop, this does not go through docker compose down, so
+// containers restart quickly via Resume without recreation or re-pulling images.
+// It is best-effort: a failure to stop one container is logged as a warning and
+// does not prevent stopping the rest. It returns the container names that were
+// successfully stopped.
+func (m *Manager) Pause() ([]string, error) {
+	running, err := m.ListRunningContainers()
+	if err != nil {
+		return nil, err
+	}
+
+	stopped := make([]string, 0, len(running))
+	for _, name := range running {
+		if err := m.docker.StopContainer(name, 10); err != nil {
+			fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Failed to stop '%s': %v\n", name, err)
+			continue
+		}
+		stopped = append(stopped, name)
+	}
+
+	return stopped, nil
+}
+
+// Resume starts exactly the given global-service container names back up. This is
+// the fast path (no recreation). If any named container no longer exists at all
+// (e.g. removed out-of-band since pause), it falls back once to the full
+// compose-based Start(), since StartContainer alone can't create a container that
+// was never created.
+func (m *Manager) Resume(containerNames []string) error {
+	needsFullStart := false
+	for _, name := range containerNames {
+		if !m.docker.ContainerExists(name) {
+			needsFullStart = true
+			break
+		}
+	}
+
+	if needsFullStart {
+		return m.Start()
+	}
+
+	for _, name := range containerNames {
+		if err := m.docker.StartContainer(name); err != nil {
+			fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Failed to start '%s': %v\n", name, err)
+			continue
+		}
+	}
+
+	return m.waitForContainers(containerNames, 30*time.Second)
 }
 
 // generateComposeConfig generates docker-compose configuration
@@ -363,7 +457,7 @@ func (m *Manager) AddDatabase(name, dbType, version string) error {
 		displayName = "PostgreSQL"
 	}
 
-	fmt.Printf(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " %s '%s' (version %s) configured on port %s\n", displayName, name, version, port)
+	fmt.Printf(utils.Colorize("[SUCCESS]", utils.ColorGreen)+" %s '%s' (version %s) configured on port %s\n", displayName, name, version, port)
 	fmt.Println("Restarting global services to apply changes...")
 
 	// Release mutex before calling Restart to avoid deadlock

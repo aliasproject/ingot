@@ -74,7 +74,7 @@ func (c *Client) Authenticate() error {
 			fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Already authenticated")
 			username := c.getUsername(token)
 			if username != "" {
-				fmt.Printf(utils.Colorize("[USER]", utils.ColorCyan) + " Logged in as: %s\n", username)
+				fmt.Printf(utils.Colorize("[USER]", utils.ColorCyan)+" Logged in as: %s\n", username)
 			}
 			return nil
 		}
@@ -141,7 +141,7 @@ func (c *Client) authenticateWithToken() error {
 	}
 
 	username := c.getUsername(token)
-	fmt.Printf(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Authenticated successfully as %s\n", username)
+	fmt.Printf(utils.Colorize("[SUCCESS]", utils.ColorGreen)+" Authenticated successfully as %s\n", username)
 	return nil
 }
 
@@ -156,7 +156,7 @@ func (c *Client) authenticateWithOAuth() error {
 	}
 
 	fmt.Printf("\n[WEB] Visit: %s\n", deviceCode.VerificationURI)
-	fmt.Printf(utils.Colorize("[CODE]", utils.ColorWhite) + " Enter code: %s\n", deviceCode.UserCode)
+	fmt.Printf(utils.Colorize("[CODE]", utils.ColorWhite)+" Enter code: %s\n", deviceCode.UserCode)
 	fmt.Println("\nWaiting for authorization...")
 
 	// Open browser
@@ -181,7 +181,7 @@ func (c *Client) authenticateWithOAuth() error {
 	}
 
 	username := c.getUsername(token)
-	fmt.Printf(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Authenticated successfully as %s\n", username)
+	fmt.Printf(utils.Colorize("[SUCCESS]", utils.ColorGreen)+" Authenticated successfully as %s\n", username)
 	return nil
 }
 
@@ -226,7 +226,7 @@ func (c *Client) authenticateWithGitHubCLI() error {
 	}
 
 	username := c.getUsername(token)
-	fmt.Printf(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Authenticated successfully as %s\n", username)
+	fmt.Printf(utils.Colorize("[SUCCESS]", utils.ColorGreen)+" Authenticated successfully as %s\n", username)
 	return nil
 }
 
@@ -324,7 +324,7 @@ func (c *Client) setupGHCR(token string) error {
 		}
 
 		// Try to provide helpful context
-		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow) + " Warning: Docker login to ghcr.io failed: %v\n", err)
+		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Docker login to ghcr.io failed: %v\n", err)
 		fmt.Println("\n[INFO] Troubleshooting tips:")
 		fmt.Println("   1. Ensure Docker is running: docker ps")
 		fmt.Println("   2. Check Docker permissions: docker run hello-world")
@@ -334,7 +334,7 @@ func (c *Client) setupGHCR(token string) error {
 		return fmt.Errorf("docker login failed: %w", err)
 	}
 
-	fmt.Printf(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Successfully logged into ghcr.io as %s\n", username)
+	fmt.Printf(utils.Colorize("[SUCCESS]", utils.ColorGreen)+" Successfully logged into ghcr.io as %s\n", username)
 	return nil
 }
 

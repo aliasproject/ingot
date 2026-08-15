@@ -1,11 +1,11 @@
 package updater
 
 import (
-	"github.com/aliasproject/devbox/internal/utils"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/aliasproject/devbox/internal/utils"
 	"io"
 	"net/http"
 	"os"
@@ -346,7 +346,7 @@ func (u *Updater) replaceBinary(tmpPath, realPath string) error {
 	if err := copyFile(tmpPath, realPath); err != nil {
 		// If we have permission issues and this looks like a system install, try sudo
 		if os.IsPermission(err) && u.isSystemInstall(realPath) {
-			fmt.Printf(utils.Colorize("[AUTH]", utils.ColorBlue) + " Devbox is installed system-wide at %s\n", realPath)
+			fmt.Printf(utils.Colorize("[AUTH]", utils.ColorBlue)+" Devbox is installed system-wide at %s\n", realPath)
 			fmt.Printf("   Requesting administrator privileges to update...\n")
 
 			return u.updateWithSudo(tmpPath, realPath)
@@ -386,7 +386,7 @@ func (u *Updater) updateWithSudo(tmpPath, realPath string) error {
 	// Make sure the binary is executable
 	chmodCmd := exec.Command("sudo", "chmod", "755", realPath)
 	if err := chmodCmd.Run(); err != nil {
-		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow) + " Warning: Could not set executable permissions: %v\n", err)
+		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Could not set executable permissions: %v\n", err)
 	}
 
 	return nil

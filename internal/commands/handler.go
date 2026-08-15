@@ -101,6 +101,10 @@ func (h *Handler) Execute(args []string) error {
 		return h.handleStop()
 	case "restart":
 		return h.handleRestart()
+	case "pause":
+		return h.handlePause()
+	case "resume":
+		return h.handleResume()
 	case "remove", "rm":
 		return h.handleRemove()
 	case "status":
@@ -235,6 +239,9 @@ func (h *Handler) handleCertCommand(args []string) error {
 	case "debug":
 		return h.ssl.DebugCertificate()
 
+	case "repair":
+		return h.handleCertRepair()
+
 	case "generate":
 		if len(args) < 2 {
 			return fmt.Errorf("missing domain for certificate generation")
@@ -261,6 +268,43 @@ func (h *Handler) handleCertCommand(args []string) error {
 	default:
 		return fmt.Errorf("unknown cert command: %s", args[0])
 	}
+}
+
+// handleCertRepair regenerates the nginx vhost (and certificate, if missing) for
+// every known project - running or stopped - without starting any project
+// containers, then restarts nginx once to pick up the changes. Use this after a
+// vhost template change, or to recover nginx from a crash loop caused by a stale
+// vhost referencing a container that no longer exists.
+func (h *Handler) handleCertRepair() error {
+	projects, err := h.projects.List()
+	if err != nil {
+		return fmt.Errorf("failed to list projects: %w", err)
+	}
+
+	if len(projects) == 0 {
+		fmt.Println(utils.Colorize("[INFO]", utils.ColorBlue) + " No projects found")
+		return nil
+	}
+
+	names := make([]string, len(projects))
+	for i, p := range projects {
+		names[i] = p.Name
+	}
+
+	fmt.Printf(utils.Colorize("[RESTARTING]", utils.ColorCyan)+" Repairing SSL/vhost configuration for %d project(s)...\n", len(names))
+
+	repaired, repairErr := h.ssl.RepairVhosts(names)
+	if repairErr != nil {
+		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: %v\n", repairErr)
+	}
+
+	fmt.Println(utils.Colorize("[RESTARTING]", utils.ColorCyan) + " Restarting nginx to apply changes...")
+	if err := h.ssl.RestartNginx(); err != nil {
+		return fmt.Errorf("failed to restart nginx: %w", err)
+	}
+
+	fmt.Printf(utils.Colorize("[SUCCESS]", utils.ColorGreen)+" Repaired %d/%d vhost(s), nginx restarted\n", repaired, len(names))
+	return nil
 }
 
 // handleInstall installs Devbox
@@ -1121,6 +1165,10 @@ COMMANDS:
     php [version]      Change PHP version
     server-root [path] Change server root path
 
+  Machine Lifecycle:
+    pause              Stop every devbox container (projects + global services)
+    resume             Restart exactly what was paused
+
   Container Commands:
     exec <cmd>         Execute command in project container
     shell [--user=<u>] Open interactive shell in container
@@ -1142,6 +1190,7 @@ COMMANDS:
     cert verify        Verify certificate installation
     cert debug         Debug certificate issues
     cert remove        Remove SSL certificate (fallback to HTTP)
+    cert repair        Regenerate all vhosts (no container start) + restart nginx
 
   System:
     install            Install Devbox
@@ -1155,6 +1204,8 @@ EXAMPLES:
   devbox server-root public # Change server root to 'public' directory
   devbox check-update       # Check for available updates
   devbox update             # Update to latest version
+  devbox pause              # Stop everything, free up all CPU/RAM
+  devbox resume             # Bring back exactly what was paused
   devbox exec composer install  # Run composer install in container
   devbox exec npm run dev   # Run npm dev script in container
   devbox shell              # Open shell as your host user

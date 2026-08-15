@@ -1,8 +1,8 @@
 package ssl
 
 import (
-	"github.com/aliasproject/devbox/internal/utils"
 	"fmt"
+	"github.com/aliasproject/devbox/internal/utils"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -100,6 +100,54 @@ func (m *Manager) SetupProjectSSL(projectName string) error {
 	return nil
 }
 
+// RepairVhosts regenerates the certificate (if missing) and nginx vhost
+// configuration for each of the given project names, without starting or
+// otherwise touching their project containers, and without requiring nginx to
+// currently be running. Useful for applying a vhost template change to
+// already-configured projects, including ones that are deliberately stopped.
+// It does not reload/restart nginx itself - the caller does that once, after
+// every vhost has been rewritten. Returns the number of projects repaired
+// successfully; per-project failures are collected but do not stop the rest.
+func (m *Manager) RepairVhosts(projectNames []string) (int, error) {
+	if !m.caExistsInVolume() {
+		return 0, fmt.Errorf("CA certificate not found. Run 'devbox cert install' first")
+	}
+
+	var errs []string
+	repaired := 0
+
+	for _, name := range projectNames {
+		domain := name + ".test"
+
+		if !m.certificateExists(domain) {
+			if err := m.GenerateCertificate(domain); err != nil {
+				errs = append(errs, fmt.Sprintf("%s: failed to generate certificate: %v", name, err))
+				continue
+			}
+		}
+
+		if err := m.createNginxVhost(name, domain); err != nil {
+			errs = append(errs, fmt.Sprintf("%s: failed to write vhost: %v", name, err))
+			continue
+		}
+
+		repaired++
+	}
+
+	if len(errs) > 0 {
+		return repaired, fmt.Errorf("failed to repair %d project(s):\n  %s", len(errs), strings.Join(errs, "\n  "))
+	}
+
+	return repaired, nil
+}
+
+// RestartNginx restarts the nginx container so it picks up on-disk vhost
+// changes even if it's currently crash-looping (unlike reloadNginx, which
+// requires nginx to already be in a running state to accept `docker exec`).
+func (m *Manager) RestartNginx() error {
+	return m.docker.Run("restart", "devbox_nginx")
+}
+
 // RemoveProjectSSL removes SSL configuration for a project
 func (m *Manager) RemoveProjectSSL(projectName string) error {
 	domain := projectName + ".test"
@@ -108,12 +156,12 @@ func (m *Manager) RemoveProjectSSL(projectName string) error {
 	// This works regardless of nginx container state
 	if err := m.docker.Run("run", "--rm", "-v", "devbox_certs:/certs", "alpine:latest",
 		"sh", "-c", fmt.Sprintf("rm -f /certs/%s.crt /certs/%s.key", domain, domain)); err != nil {
-		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow) + " Warning: Failed to remove certificate files: %v\n", err)
+		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Failed to remove certificate files: %v\n", err)
 	}
 
 	// Update vhost to use HTTP instead of HTTPS
 	if err := m.updateVhostToHTTP(projectName); err != nil {
-		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow) + " Warning: Failed to update vhost to HTTP: %v\n", err)
+		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Failed to update vhost to HTTP: %v\n", err)
 	}
 
 	return nil
@@ -125,13 +173,13 @@ func (m *Manager) RemoveProjectVhost(projectName string) error {
 	// This works regardless of nginx container state
 	if err := m.docker.Run("run", "--rm", "-v", "devbox_vhosts:/vhosts", "alpine:latest",
 		"rm", "-f", fmt.Sprintf("/vhosts/%s.conf", projectName)); err != nil {
-		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow) + " Warning: Failed to remove vhost configuration: %v\n", err)
+		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Failed to remove vhost configuration: %v\n", err)
 	}
 
 	// Reload nginx to apply configuration changes if it's running
 	if m.docker.ContainerExists("devbox_nginx") && m.docker.IsContainerRunning("devbox_nginx") {
 		if err := m.reloadNginx(); err != nil {
-			fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow) + " Warning: Failed to reload nginx: %v\n", err)
+			fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Failed to reload nginx: %v\n", err)
 		}
 	}
 
@@ -152,13 +200,15 @@ func (m *Manager) updateVhostToHTTP(projectName string) error {
     }
 
     location ~ \.php$ {
-        proxy_pass http://%s:80;
+        resolver 127.0.0.11 valid=10s;
+        set $upstream devbox_php_%s;
+        proxy_pass http://$upstream:80;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
     }
-}`, projectName, projectName, fmt.Sprintf("devbox_php_%s", projectName))
+}`, projectName, projectName, projectName)
 
 	// Write HTTP vhost configuration to volume
 	if err := m.docker.Run("run", "--rm", "-v", "devbox_vhosts:/vhosts", "alpine:latest",
@@ -169,7 +219,7 @@ func (m *Manager) updateVhostToHTTP(projectName string) error {
 	// Reload nginx to apply configuration changes if it's running
 	if m.docker.ContainerExists("devbox_nginx") && m.docker.IsContainerRunning("devbox_nginx") {
 		if err := m.reloadNginx(); err != nil {
-			fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow) + " Warning: Failed to reload nginx: %v\n", err)
+			fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Failed to reload nginx: %v\n", err)
 		}
 	}
 
@@ -377,7 +427,9 @@ server {
 
     # Proxy configuration
     location / {
-        proxy_pass http://devbox_php_%s:80;
+        resolver 127.0.0.11 valid=10s;
+        set $upstream devbox_php_%s;
+        proxy_pass http://$upstream:80;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -402,11 +454,10 @@ server {
     }
 }`, domain, domain, domain, domain, projectName)
 
-	// Write vhost configuration to nginx container
-	return m.docker.CopyToContainer("devbox_nginx",
-		"/etc/nginx/conf.d/"+projectName+".conf",
-		[]byte(vhostConfig),
-	)
+	// Write directly to the devbox_vhosts volume rather than docker exec-ing into
+	// the nginx container, so vhosts can be written/repaired even when nginx isn't
+	// currently running (e.g. it's down because a stale vhost is crash-looping it).
+	return m.docker.WriteFileToVolume("devbox_vhosts", projectName+".conf", []byte(vhostConfig))
 }
 
 func (m *Manager) reloadNginx() error {
@@ -443,9 +494,9 @@ func (m *Manager) installCertLinux(caPath string) error {
 
 	// Check if 'trust' is available
 	_, err := exec.LookPath("trust")
-    if err == nil {
-        return exec.Command("sudo", "trust", "anchor", caPath).Run()
-    }
+	if err == nil {
+		return exec.Command("sudo", "trust", "anchor", caPath).Run()
+	}
 
 	// Copy to system certificate store
 	destPath := "/usr/local/share/ca-certificates/devbox-ca.crt"

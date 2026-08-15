@@ -142,7 +142,7 @@ func (i *Installer) configureDatabase() error {
 		return err
 	}
 
-	fmt.Printf("  " + utils.Colorize("[RUNNING]", utils.ColorGreen) + " Configured %s %s as '%s' database\n", selected, dbVersion, dbType)
+	fmt.Printf("  "+utils.Colorize("[RUNNING]", utils.ColorGreen)+" Configured %s %s as '%s' database\n", selected, dbVersion, dbType)
 	return nil
 }
 
@@ -205,7 +205,7 @@ func (i *Installer) installBinary() error {
 		os.Chmod(config.DevboxBinary, 0755)
 	}
 
-	fmt.Printf("  " + utils.Colorize("[RUNNING]", utils.ColorGreen) + " Installed to %s\n", config.DevboxBinary)
+	fmt.Printf("  "+utils.Colorize("[RUNNING]", utils.ColorGreen)+" Installed to %s\n", config.DevboxBinary)
 
 	// Check if in PATH
 	if !i.isInPath() {
@@ -251,7 +251,7 @@ func (i *Installer) showSuccessMessage() {
 	svcs, _ := i.services.Status()
 	for _, svc := range svcs {
 		if svc.Status == "running" {
-			fmt.Printf("  " + utils.Colorize("[RUNNING]", utils.ColorGreen) + " %s: running", svc.Name)
+			fmt.Printf("  "+utils.Colorize("[RUNNING]", utils.ColorGreen)+" %s: running", svc.Name)
 			if len(svc.Ports) > 0 {
 				fmt.Printf(" (ports: %s)", svc.Ports[0])
 			}
@@ -268,8 +268,8 @@ func (i *Installer) showSuccessMessage() {
 
 	// Show network info
 	if hostIP, err := services.GetHostIP(); err == nil {
-		fmt.Printf(utils.Colorize("[NETWORK]", utils.ColorCyan) + " Network: %s:5354 (DNS)\n", hostIP)
-		fmt.Printf(utils.Colorize("[MAIL]", utils.ColorBlue) + " MailHog: http://%s:8025\n", hostIP)
+		fmt.Printf(utils.Colorize("[NETWORK]", utils.ColorCyan)+" Network: %s:5354 (DNS)\n", hostIP)
+		fmt.Printf(utils.Colorize("[MAIL]", utils.ColorBlue)+" MailHog: http://%s:8025\n", hostIP)
 	}
 }
 

@@ -589,8 +589,45 @@ func (c *Client) CopyToContainer(container, destination string, data []byte) err
 	return nil
 }
 
+// WriteFileToVolume writes data to a file inside a named Docker volume, using a
+// throwaway container. The volume is created automatically by the mount if it
+// doesn't already exist.
+func (c *Client) WriteFileToVolume(volumeName, filePath string, data []byte) error {
+	cmd := exec.Command(c.dockerPath, "run", "--rm", "-i",
+		"-v", volumeName+":/state",
+		"alpine:latest",
+		"sh", "-c", "cat > /state/"+filePath,
+	)
+	cmd.Stdin = bytes.NewReader(data)
+
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to write file to volume: %w\nOutput: %s", err, string(output))
+	}
+
+	return nil
+}
+
+// ReadFileFromVolume reads a file from inside a named Docker volume, using a
+// throwaway container. Returns ErrFileNotFound if the file (or volume) doesn't exist.
+func (c *Client) ReadFileFromVolume(volumeName, filePath string) (string, error) {
+	output, err := c.RunWithOutput("run", "--rm",
+		"-v", volumeName+":/state",
+		"alpine:latest",
+		"cat", "/state/"+filePath,
+	)
+	if err != nil {
+		if strings.Contains(err.Error(), "No such file or directory") {
+			return "", ErrFileNotFound
+		}
+		return "", err
+	}
+
+	return output, nil
+}
+
 // Errors
 var (
 	ErrContainerNotFound = fmt.Errorf("container not found")
 	ErrDockerNotRunning  = fmt.Errorf("docker daemon is not running")
+	ErrFileNotFound      = fmt.Errorf("file not found")
 )
