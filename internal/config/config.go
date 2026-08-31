@@ -7,7 +7,7 @@ import (
 
 const (
 	// Version is the current version of Alios CLI
-	Version = "0.9.9"
+	Version = "1.0.0"
 
 	// ClientID is the GitHub OAuth application client ID
 	ClientID = "178c6fc778ccc68e1d6a"

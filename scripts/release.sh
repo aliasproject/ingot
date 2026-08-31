@@ -26,9 +26,12 @@ NOTES="${2:-Bug fixes and improvements}"
 
 echo -e "${GREEN}Building Alios v${VERSION}${NC}"
 
-# Update version in code
+# Update version in code. Anchored to a line starting with "Version" (after
+# leading whitespace) specifically so it doesn't also match DefaultPHPVersion
+# = "..." a few lines down - a previous unanchored pattern here did exactly
+# that, silently overwriting the default PHP version with the release number.
 echo "Updating version..."
-sed -i.bak "s/Version = \".*\"/Version = \"${VERSION}\"/" ../internal/config/config.go
+sed -i.bak -E "s/^([[:space:]]*)Version = \".*\"/\1Version = \"${VERSION}\"/" ../internal/config/config.go
 rm ../internal/config/config.go.bak
 
 # Build directory
