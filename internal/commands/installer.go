@@ -6,15 +6,15 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"github.com/aliasproject/devbox/internal/config"
-	"github.com/aliasproject/devbox/internal/docker"
-	"github.com/aliasproject/devbox/internal/github"
-	"github.com/aliasproject/devbox/internal/services"
-	"github.com/aliasproject/devbox/internal/ssl"
-	"github.com/aliasproject/devbox/internal/utils"
+	"github.com/aliasproject/alios-cli/internal/config"
+	"github.com/aliasproject/alios-cli/internal/docker"
+	"github.com/aliasproject/alios-cli/internal/github"
+	"github.com/aliasproject/alios-cli/internal/services"
+	"github.com/aliasproject/alios-cli/internal/ssl"
+	"github.com/aliasproject/alios-cli/internal/utils"
 )
 
-// Installer handles the Devbox installation process
+// Installer handles the Alios installation process
 type Installer struct {
 	docker   *docker.Client
 	config   *config.Config
@@ -34,9 +34,16 @@ func NewInstaller(dockerClient *docker.Client, cfg *config.Config, svc *services
 	}
 }
 
-// Install performs the Devbox installation
+// Install performs the Alios installation. Safe to call more than once: every
+// step it runs skips work that's already done (or is a harmless no-op to
+// repeat), so if a previous attempt failed partway through, calling this
+// again resumes from wherever it left off instead of starting over.
 func (i *Installer) Install() error {
-	fmt.Println(utils.Colorize("[STARTING]", utils.ColorCyan) + " Installing Devbox Development Environment")
+	verb := "Installing"
+	if i.config.IsInstalled() {
+		verb = "Resuming setup for"
+	}
+	fmt.Println(utils.Colorize("[STARTING]", utils.ColorCyan) + " " + verb + " Alios Development Environment")
 	fmt.Println("=" + utils.PadString("", 48))
 	fmt.Println()
 
@@ -148,23 +155,25 @@ func (i *Installer) configureDatabase() error {
 
 // setupGitHubAuth handles GitHub authentication setup
 func (i *Installer) setupGitHubAuth() error {
+	// Check for an existing, working token before asking anything - on a
+	// resumed install (or a re-run of `alios install`) this is almost always
+	// already done, and re-prompting for something already finished is
+	// exactly the friction resuming is supposed to avoid.
+	if err := i.github.EnsureAuthenticated(); err == nil {
+		fmt.Println("  [SUCCESS] Already authenticated")
+		return nil
+	}
+
 	fmt.Println("GitHub authentication enables access to private container images")
 
 	if !utils.PromptYesNo("Setup GitHub authentication now?") {
 		return fmt.Errorf("skipped by user")
 	}
 
-	// Try to get existing token
-	if err := i.github.EnsureAuthenticated(); err == nil {
-		fmt.Println("  [SUCCESS] Already authenticated")
-		return nil
-	}
-
-	// Perform authentication
 	return i.github.Authenticate()
 }
 
-// installBinary installs the devbox binary
+// installBinary installs the alios binary
 func (i *Installer) installBinary() error {
 	// Get current executable path
 	currentBinary, err := os.Executable()
@@ -179,17 +188,17 @@ func (i *Installer) installBinary() error {
 	}
 
 	// Check if already installed at target location
-	if currentBinary == config.DevboxBinary {
-		fmt.Println("  Already installed at " + config.DevboxBinary)
+	if currentBinary == config.AliosBinary {
+		fmt.Println("  Already installed at " + config.AliosBinary)
 		return nil
 	}
 
 	// Try to copy directly
-	if err := utils.CopyFile(currentBinary, config.DevboxBinary); err != nil {
+	if err := utils.CopyFile(currentBinary, config.AliosBinary); err != nil {
 		// If copy fails, try with sudo
 		fmt.Println("  Administrator privileges required")
 
-		cmd := exec.Command("sudo", "cp", currentBinary, config.DevboxBinary)
+		cmd := exec.Command("sudo", "cp", currentBinary, config.AliosBinary)
 		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -199,13 +208,13 @@ func (i *Installer) installBinary() error {
 		}
 
 		// Set permissions
-		exec.Command("sudo", "chmod", "755", config.DevboxBinary).Run()
+		exec.Command("sudo", "chmod", "755", config.AliosBinary).Run()
 	} else {
 		// Set permissions
-		os.Chmod(config.DevboxBinary, 0755)
+		os.Chmod(config.AliosBinary, 0755)
 	}
 
-	fmt.Printf("  "+utils.Colorize("[RUNNING]", utils.ColorGreen)+" Installed to %s\n", config.DevboxBinary)
+	fmt.Printf("  "+utils.Colorize("[RUNNING]", utils.ColorGreen)+" Installed to %s\n", config.AliosBinary)
 
 	// Check if in PATH
 	if !i.isInPath() {
@@ -227,7 +236,7 @@ func (i *Installer) isInPath() bool {
 func (i *Installer) showSuccessMessage() {
 	fmt.Println()
 	fmt.Println("=" + utils.PadString("", 60))
-	utils.PrintSuccess("Devbox installed successfully!")
+	utils.PrintSuccess("Alios installed successfully!")
 	fmt.Println("=" + utils.PadString("", 60))
 	fmt.Println()
 
@@ -237,10 +246,10 @@ func (i *Installer) showSuccessMessage() {
 	fmt.Println("     cd /path/to/your/project")
 	fmt.Println()
 	fmt.Println("  2. Initialize a new project:")
-	fmt.Println("     devbox init")
+	fmt.Println("     alios init")
 	fmt.Println()
 	fmt.Println("  3. Start the project:")
-	fmt.Println("     devbox start")
+	fmt.Println("     alios start")
 	fmt.Println()
 	fmt.Println("  4. Access your project:")
 	fmt.Printf("     https://[project-name].test\n")
@@ -261,9 +270,9 @@ func (i *Installer) showSuccessMessage() {
 
 	fmt.Println()
 	fmt.Println(utils.Colorize("[DOCS]", utils.ColorCyan) + " For more information:")
-	fmt.Println("  devbox help         - Show all commands")
-	fmt.Println("  devbox status       - Show system status")
-	fmt.Println("  devbox network-help - Network configuration help")
+	fmt.Println("  alios help         - Show all commands")
+	fmt.Println("  alios status       - Show system status")
+	fmt.Println("  alios network-help - Network configuration help")
 	fmt.Println()
 
 	// Show network info
@@ -273,9 +282,9 @@ func (i *Installer) showSuccessMessage() {
 	}
 }
 
-// Uninstall performs the Devbox uninstallation
+// Uninstall performs the Alios uninstallation
 func (i *Installer) Uninstall(removeConfig bool) error {
-	fmt.Println("🗑 Uninstalling Devbox...")
+	fmt.Println("🗑 Uninstalling Alios...")
 
 	// Stop all services
 	fmt.Println("Stopping services...")
@@ -286,22 +295,21 @@ func (i *Installer) Uninstall(removeConfig bool) error {
 	utils.CleanupDNS()
 
 	// Remove binary
-	if utils.FileExists(config.DevboxBinary) {
-		fmt.Printf("Removing binary from %s...\n", config.DevboxBinary)
-		if err := os.Remove(config.DevboxBinary); err != nil {
+	if utils.FileExists(config.AliosBinary) {
+		fmt.Printf("Removing binary from %s...\n", config.AliosBinary)
+		if err := os.Remove(config.AliosBinary); err != nil {
 			// Try with sudo
-			exec.Command("sudo", "rm", "-f", config.DevboxBinary).Run()
+			exec.Command("sudo", "rm", "-f", config.AliosBinary).Run()
 		}
 	}
 
 	// No local configuration directory to remove since we use environment variables only
 	if removeConfig {
 		fmt.Println(utils.Colorize("[INFO]", utils.ColorBlue) + " Configuration is stored in environment variables and project directories only")
-		fmt.Println("   To completely remove devbox configuration:")
+		fmt.Println("   To completely remove alios configuration:")
 		fmt.Println("   - Unset GITHUB_TOKEN environment variable")
-		fmt.Println("   - Remove .devbox.json files from project directories")
 	}
 
-	utils.PrintSuccess("Devbox uninstalled")
+	utils.PrintSuccess("Alios uninstalled")
 	return nil
 }

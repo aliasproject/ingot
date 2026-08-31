@@ -1,11 +1,11 @@
 #!/bin/bash
 
-# Minimal release script for Devbox
+# Minimal release script for Alios CLI
 set -e
 
 # Configuration
 VERSION="${1:-}"
-BUCKET="devbox-updates"
+BUCKET="alios-cli-updates"
 BUCKET_URL="https://${BUCKET}.s3.amazonaws.com"
 
 # Colors
@@ -24,7 +24,7 @@ fi
 
 NOTES="${2:-Bug fixes and improvements}"
 
-echo -e "${GREEN}Building Devbox v${VERSION}${NC}"
+echo -e "${GREEN}Building Alios v${VERSION}${NC}"
 
 # Update version in code
 echo "Updating version..."
@@ -42,7 +42,7 @@ echo -e "${YELLOW}Building binaries...${NC}"
 build_binary() {
     local GOOS=$1
     local GOARCH=$2
-    local OUTPUT="devbox-${GOOS}-${GOARCH}"
+    local OUTPUT="alios-${GOOS}-${GOARCH}"
 
     if [ "$GOOS" = "windows" ]; then
         OUTPUT="${OUTPUT}.exe"
@@ -51,7 +51,7 @@ build_binary() {
     echo "  → ${GOOS}/${GOARCH}"
 
     GOOS=$GOOS GOARCH=$GOARCH go build \
-        -ldflags="-s -w -X github.com/aliasproject/devbox/internal/config.Version=${VERSION}" \
+        -ldflags="-s -w -X github.com/aliasproject/alios-cli/internal/config.Version=${VERSION}" \
         -o "$BUILD_DIR/$OUTPUT" \
         ../cmd/main.go
 

@@ -536,6 +536,25 @@ func (c *Client) PullImage(image string, callback func(string)) error {
 	return c.Run("pull", image)
 }
 
+// BuildConfig holds configuration for building a Docker image from a Dockerfile
+type BuildConfig struct {
+	Tag            string            // image tag to build, e.g. "local/myproject:latest"
+	DockerfilePath string            // path to the Dockerfile
+	Context        string            // build context directory
+	BuildArgs      map[string]string // values for ARGs the Dockerfile declares with no default
+}
+
+// BuildImage builds a Docker image from a Dockerfile, for projects that choose
+// a custom build instead of a prebuilt image (see project.Manager.createContainer).
+func (c *Client) BuildImage(cfg *BuildConfig) error {
+	args := []string{"build", "-f", cfg.DockerfilePath, "-t", cfg.Tag}
+	for key, value := range cfg.BuildArgs {
+		args = append(args, "--build-arg", fmt.Sprintf("%s=%s", key, value))
+	}
+	args = append(args, cfg.Context)
+	return c.Run(args...)
+}
+
 // ExecCommand executes a command in a running container.
 // user is an optional "uid:gid" string (e.g. "1000:1000"); pass "" to use the
 // container's default user (root for most images).

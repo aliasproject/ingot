@@ -2,14 +2,14 @@ package services
 
 import (
 	"fmt"
-	"github.com/aliasproject/devbox/internal/utils"
+	"github.com/aliasproject/alios-cli/internal/utils"
 	"net"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/aliasproject/devbox/internal/config"
-	"github.com/aliasproject/devbox/internal/docker"
+	"github.com/aliasproject/alios-cli/internal/config"
+	"github.com/aliasproject/alios-cli/internal/docker"
 )
 
 // Manager handles global services operations
@@ -39,9 +39,9 @@ type Service struct {
 
 // GlobalServices defines the core global services
 var GlobalServices = []string{
-	"devbox_dns",
-	"devbox_nginx",
-	"devbox_mail",
+	"alios_dns",
+	"alios_caddy",
+	"alios_mail",
 }
 
 // Start starts all global services
@@ -53,6 +53,16 @@ func (m *Manager) Start() error {
 	hostIP, err := GetHostIP()
 	if err != nil {
 		hostIP = "127.0.0.1"
+	}
+
+	// Write the base Caddyfile into the vhosts volume before the container ever
+	// starts. The published caddy image's own baked-in Caddyfile only serves a
+	// landing page and has no knowledge of per-project vhosts; mounting alios_vhosts
+	// at /etc/caddy replaces that entirely, so this file must exist in the volume
+	// (even empty of any project) or Caddy has nothing to run. Rewritten on every
+	// start so it can't drift from what this binary expects.
+	if err := m.docker.WriteFileToVolume("alios_vhosts", "Caddyfile", []byte("import /etc/caddy/*.caddyfile\n")); err != nil {
+		return fmt.Errorf("failed to write base Caddyfile: %w", err)
 	}
 
 	// Generate compose configuration
@@ -77,7 +87,7 @@ func (m *Manager) Stop() error {
 	defer m.mu.Unlock()
 
 	// Generate minimal compose config for stopping
-	composeContent := `name: devbox
+	composeContent := `name: alios
 services: {}`
 
 	if err := m.docker.Compose(composeContent, "down"); err != nil {
@@ -109,7 +119,7 @@ func (m *Manager) Status() ([]*Service, error) {
 	// Check core services
 	for _, containerName := range GlobalServices {
 		service := &Service{
-			Name:      strings.TrimPrefix(containerName, "devbox_"),
+			Name:      strings.TrimPrefix(containerName, "alios_"),
 			Container: containerName,
 			Status:    "not found",
 		}
@@ -140,7 +150,7 @@ func (m *Manager) Status() ([]*Service, error) {
 	databases := m.config.GetDatabases()
 	for name := range databases {
 		displayName := name
-		dbContainer := "devbox_" + name
+		dbContainer := "alios_" + name
 		service := &Service{
 			Name:      displayName,
 			Container: dbContainer,
@@ -212,9 +222,9 @@ func (m *Manager) waitForContainers(containers []string, timeout time.Duration) 
 	return fmt.Errorf("timeout waiting for services")
 }
 
-// ListManagedContainers enumerates every global-service container (dns, nginx,
-// mail, and any database), identified by the "devbox_" name prefix while
-// excluding project containers ("devbox_php_*"). Discovery is done by name rather
+// ListManagedContainers enumerates every global-service container (dns, caddy,
+// mail, and any database), identified by the "alios_" name prefix while
+// excluding project containers ("alios_php_*"). Discovery is done by name rather
 // than by label or in-process config because pause/resume run as separate CLI
 // invocations that don't share config.Config.Databases with each other.
 func (m *Manager) ListManagedContainers() ([]string, error) {
@@ -228,7 +238,7 @@ func (m *Manager) ListManagedContainers() ([]string, error) {
 		if name == "" {
 			continue
 		}
-		if strings.HasPrefix(name, "devbox_") && !strings.HasPrefix(name, "devbox_php_") {
+		if strings.HasPrefix(name, "alios_") && !strings.HasPrefix(name, "alios_php_") {
 			managed = append(managed, name)
 		}
 	}
@@ -310,10 +320,10 @@ func (m *Manager) Resume(containerNames []string) error {
 func (m *Manager) generateComposeConfig(hostIP string) string {
 	databases := m.config.GetDatabases()
 
-	compose := fmt.Sprintf(`name: devbox
+	compose := fmt.Sprintf(`name: alios
 services:
   dns:
-    container_name: devbox_dns
+    container_name: alios_dns
     image: ghcr.io/aliasproject/dns:latest
     restart: unless-stopped
     ports:
@@ -326,13 +336,13 @@ services:
       - 1.1.1.1
       - 8.8.8.8
 
-  nginx:
-    container_name: devbox_nginx
-    image: ghcr.io/aliasproject/nginx:latest
+  caddy:
+    container_name: alios_caddy
+    image: ghcr.io/aliasproject/caddy:2.10-alpine
     restart: unless-stopped
     volumes:
-      - certs:/etc/nginx/ssl
-      - vhosts:/etc/nginx/conf.d
+      - certs:/etc/caddy/ssl
+      - vhosts:/etc/caddy
     ports:
       - "80:80"
       - "443:443"
@@ -342,7 +352,7 @@ services:
       - dns
 
   mail:
-    container_name: devbox_mail
+    container_name: alios_mail
     image: mailhog/mailhog:latest
     platform: linux/amd64
     restart: on-failure
@@ -358,7 +368,7 @@ services:
 		if dbConfig.Type == "mysql" {
 			compose += fmt.Sprintf(`
   %s:
-    container_name: devbox_%s
+    container_name: alios_%s
     image: mysql:%s
     platform: linux/amd64
     restart: unless-stopped
@@ -375,13 +385,13 @@ services:
 		} else if dbConfig.Type == "postgresql" {
 			compose += fmt.Sprintf(`
   %s:
-    container_name: devbox_%s
+    container_name: alios_%s
     image: postgres:%s
     restart: unless-stopped
     environment:
-      - POSTGRES_USER=devbox
-      - POSTGRES_PASSWORD=devbox
-      - POSTGRES_DB=devbox
+      - POSTGRES_USER=alios
+      - POSTGRES_PASSWORD=alios
+      - POSTGRES_DB=alios
     ports:
       - "%s:5432"
     networks:
@@ -396,15 +406,15 @@ services:
 	compose += `
 volumes:
   certs:
-    name: devbox_certs
+    name: alios_certs
   vhosts:
-    name: devbox_vhosts`
+    name: alios_vhosts`
 
 	// Add volumes for each database
 	for name, dbConfig := range databases {
 		compose += fmt.Sprintf(`
   %s-%s:
-    name: devbox_%s-%s`, name, dbConfig.Version, name, dbConfig.Version)
+    name: alios_%s-%s`, name, dbConfig.Version, name, dbConfig.Version)
 	}
 
 	// Add networks
@@ -445,7 +455,7 @@ func (m *Manager) AddDatabase(name, dbType, version string) error {
 	}
 
 	// Create volume
-	volumeName := fmt.Sprintf("devbox_%s-%s", name, version)
+	volumeName := fmt.Sprintf("alios_%s-%s", name, version)
 	if err := m.docker.CreateVolume(volumeName); err != nil {
 		m.mu.Unlock()
 		return fmt.Errorf("failed to create volume: %w", err)
@@ -531,7 +541,7 @@ func (m *Manager) GetDatabases() ([]*Service, error) {
 	databases := m.config.GetDatabases()
 
 	for name, dbConfig := range databases {
-		container := "devbox_" + name
+		container := "alios_" + name
 
 		service := &Service{
 			Name:      name,
