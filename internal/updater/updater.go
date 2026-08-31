@@ -335,16 +335,31 @@ func (u *Updater) performUpdate(binary *Binary) error {
 	return nil
 }
 
-// replaceBinary handles replacing the binary with proper permission handling
+// replaceBinary handles replacing the binary with proper permission handling.
+// realPath is very often the binary currently executing this very code (a
+// self-update), and Linux refuses to open a running executable for in-place
+// writing (ETXTBSY) regardless of permissions or privilege level - even
+// root hits it. rename() never has that problem: it only swaps a directory
+// entry, so it works even while the old inode is still executing. Every path
+// here is built around that: write to a new file, then rename it over the
+// target, never open the target itself for writing.
 func (u *Updater) replaceBinary(tmpPath, realPath string) error {
-	// First, try direct replacement
+	// Same-filesystem rename directly - the common case when tmpPath was
+	// staged into realPath's own directory (see performUpdate).
 	if err := os.Rename(tmpPath, realPath); err == nil {
 		return nil
 	}
 
-	// If rename failed, try copy
-	if err := copyFile(tmpPath, realPath); err != nil {
-		// If we have permission issues and this looks like a system install, try sudo
+	// Different filesystem (or tmpPath wasn't staged there). Copy into a
+	// new, not-yet-existing file in the target's own directory - this never
+	// opens realPath, so it can't hit ETXTBSY, and it surfaces a real
+	// permission error if we can't write there at all - then rename that
+	// over realPath, which is guaranteed same-filesystem and therefore safe
+	// even though realPath may still be executing.
+	stagedPath := filepath.Join(filepath.Dir(realPath), ".alios-update-staged")
+	defer os.Remove(stagedPath) // no-op once the rename below succeeds
+
+	if err := copyFile(tmpPath, stagedPath); err != nil {
 		if os.IsPermission(err) && u.isSystemInstall(realPath) {
 			fmt.Printf(utils.Colorize("[AUTH]", utils.ColorBlue)+" Alios is installed system-wide at %s\n", realPath)
 			fmt.Printf("   Requesting administrator privileges to update...\n")
@@ -352,6 +367,10 @@ func (u *Updater) replaceBinary(tmpPath, realPath string) error {
 			return u.updateWithSudo(tmpPath, realPath)
 		}
 		return fmt.Errorf("permission denied updating binary at %s", realPath)
+	}
+
+	if err := os.Rename(stagedPath, realPath); err != nil {
+		return fmt.Errorf("failed to finalize update: %w", err)
 	}
 
 	return nil
@@ -368,14 +387,21 @@ func (u *Updater) isSystemInstall(path string) bool {
 	return false
 }
 
-// updateWithSudo updates the binary using elevated permissions
+// updateWithSudo updates the binary using elevated permissions. Stages into
+// a new file in realPath's own directory first, then renames it over the
+// target, for the same reason replaceBinary does: `sudo cp` writing
+// realPath in place would hit ETXTBSY on a running binary just as surely as
+// an unprivileged copy would - sudo grants permission, not an exemption
+// from that kernel restriction - so root has to sidestep it too, not just
+// power through it.
 func (u *Updater) updateWithSudo(tmpPath, realPath string) error {
 	if runtime.GOOS == "windows" {
 		return u.updateWithWindowsElevation(tmpPath, realPath)
 	}
 
-	// Use sudo to copy the file (Unix/Linux/macOS)
-	cmd := exec.Command("sudo", "cp", tmpPath, realPath)
+	stagedPath := filepath.Join(filepath.Dir(realPath), ".alios-update-staged")
+
+	cmd := exec.Command("sudo", "cp", tmpPath, stagedPath)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
@@ -384,9 +410,14 @@ func (u *Updater) updateWithSudo(tmpPath, realPath string) error {
 	}
 
 	// Make sure the binary is executable
-	chmodCmd := exec.Command("sudo", "chmod", "755", realPath)
+	chmodCmd := exec.Command("sudo", "chmod", "755", stagedPath)
 	if err := chmodCmd.Run(); err != nil {
 		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Could not set executable permissions: %v\n", err)
+	}
+
+	if err := exec.Command("sudo", "mv", stagedPath, realPath).Run(); err != nil {
+		exec.Command("sudo", "rm", "-f", stagedPath).Run()
+		return fmt.Errorf("sudo rename failed: %w", err)
 	}
 
 	return nil
