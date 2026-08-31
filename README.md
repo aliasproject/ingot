@@ -26,11 +26,18 @@ labels.
 
 ## Installation
 
+Download the binary for your platform from the
+[latest release](https://github.com/aliasproject/alios-cli/releases/latest),
+e.g. for Linux/amd64:
+
 ```bash
-curl -L -o alios https://github.com/aliasproject/alios-cli/releases/latest/download/alios
+curl -L -o alios https://github.com/aliasproject/alios-cli/releases/latest/download/alios-linux-amd64
 chmod +x alios
 ./alios
 ```
+
+Other platforms: swap `alios-linux-amd64` for `alios-linux-arm64`,
+`alios-darwin-amd64`, `alios-darwin-arm64`, or `alios-windows-amd64.exe`.
 
 On first run, `alios` installs itself to `/usr/local/bin/alios` and walks
 you through database configuration and GitHub authentication (needed to pull
