@@ -40,7 +40,7 @@ type Service struct {
 // GlobalServices defines the core global services
 var GlobalServices = []string{
 	"alios_dns",
-	"alios_caddy",
+	"alios-reverse-proxy", // matches the name production uses for the same role
 	"alios_mail",
 }
 
@@ -118,8 +118,12 @@ func (m *Manager) Status() ([]*Service, error) {
 
 	// Check core services
 	for _, containerName := range GlobalServices {
+		displayName := strings.TrimPrefix(containerName, "alios_")
+		if displayName == "alios-reverse-proxy" {
+			displayName = "caddy"
+		}
 		service := &Service{
-			Name:      strings.TrimPrefix(containerName, "alios_"),
+			Name:      displayName,
 			Container: containerName,
 			Status:    "not found",
 		}
@@ -222,15 +226,26 @@ func (m *Manager) waitForContainers(containers []string, timeout time.Duration) 
 	return fmt.Errorf("timeout waiting for services")
 }
 
-// ListManagedContainers enumerates every global-service container (dns, caddy,
-// mail, and any database), identified by the "alios_" name prefix while
-// excluding project containers ("alios_php_*"). Discovery is done by name rather
-// than by label or in-process config because pause/resume run as separate CLI
-// invocations that don't share config.Config.Databases with each other.
+// ListManagedContainers enumerates every global-service container (dns,
+// the reverse proxy, mail, and any database): GlobalServices members by
+// exact name, everything else (databases) by the "alios_" name prefix,
+// excluding project containers ("alios_php_*"). Discovery is done by name
+// rather than by label or in-process config because pause/resume run as
+// separate CLI invocations that don't share config.Config.Databases with
+// each other.
 func (m *Manager) ListManagedContainers() ([]string, error) {
 	names, err := m.docker.ListContainers("")
 	if err != nil {
 		return nil, fmt.Errorf("failed to list containers: %w", err)
+	}
+
+	// The reverse proxy uses production's own name (alios-reverse-proxy),
+	// not the alios_ prefix everything else here follows, so it wouldn't
+	// match the prefix check below on its own - check GlobalServices
+	// membership explicitly first so it's still tracked for pause/resume.
+	globalServiceNames := make(map[string]bool, len(GlobalServices))
+	for _, n := range GlobalServices {
+		globalServiceNames[n] = true
 	}
 
 	managed := make([]string, 0, len(names))
@@ -238,7 +253,7 @@ func (m *Manager) ListManagedContainers() ([]string, error) {
 		if name == "" {
 			continue
 		}
-		if strings.HasPrefix(name, "alios_") && !strings.HasPrefix(name, "alios_php_") {
+		if globalServiceNames[name] || (strings.HasPrefix(name, "alios_") && !strings.HasPrefix(name, "alios_php_")) {
 			managed = append(managed, name)
 		}
 	}
@@ -337,7 +352,7 @@ services:
       - 8.8.8.8
 
   caddy:
-    container_name: alios_caddy
+    container_name: alios-reverse-proxy
     image: ghcr.io/aliasproject/caddy:2.10-alpine
     restart: unless-stopped
     volumes:

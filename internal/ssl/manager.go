@@ -63,12 +63,12 @@ func (m *Manager) SetupProjectSSL(projectName string) error {
 	}
 
 	// Check if Caddy is running
-	if !m.docker.ContainerExists("alios_caddy") {
+	if !m.docker.ContainerExists("alios-reverse-proxy") {
 		return fmt.Errorf("Caddy container not found. Run 'alios global start' first")
 	}
 
 	// Check Caddy container is actually running
-	info, err := m.docker.InspectContainer("alios_caddy")
+	info, err := m.docker.InspectContainer("alios-reverse-proxy")
 	if err != nil {
 		return fmt.Errorf("failed to inspect Caddy container: %w", err)
 	}
@@ -151,7 +151,7 @@ func (m *Manager) RepairVhosts(projectNames []string) (int, error) {
 // changes even if it's currently crash-looping (unlike reloadCaddy, which
 // requires Caddy to already be in a running state to accept `docker exec`).
 func (m *Manager) RestartCaddy() error {
-	return m.docker.Run("restart", "alios_caddy")
+	return m.docker.Run("restart", "alios-reverse-proxy")
 }
 
 // RemoveProjectSSL removes SSL configuration for a project
@@ -187,7 +187,7 @@ func (m *Manager) RemoveProjectVhost(projectName string) error {
 	}
 
 	// Reload Caddy to apply configuration changes if it's running
-	if m.docker.ContainerExists("alios_caddy") && m.docker.IsContainerRunning("alios_caddy") {
+	if m.docker.ContainerExists("alios-reverse-proxy") && m.docker.IsContainerRunning("alios-reverse-proxy") {
 		if err := m.reloadCaddy(); err != nil {
 			fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Failed to reload Caddy: %v\n", err)
 		}
@@ -220,7 +220,7 @@ func (m *Manager) updateVhostToHTTP(projectName string) error {
 	}
 
 	// Reload Caddy to apply configuration changes if it's running
-	if m.docker.ContainerExists("alios_caddy") && m.docker.IsContainerRunning("alios_caddy") {
+	if m.docker.ContainerExists("alios-reverse-proxy") && m.docker.IsContainerRunning("alios-reverse-proxy") {
 		if err := m.reloadCaddy(); err != nil {
 			fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Failed to reload Caddy: %v\n", err)
 		}
@@ -356,11 +356,11 @@ func (m *Manager) DebugCertificate() error {
 
 	// Check Caddy container
 	fmt.Println("\nCaddy Container:")
-	if m.docker.IsContainerRunning("alios_caddy") {
+	if m.docker.IsContainerRunning("alios-reverse-proxy") {
 		fmt.Println("  [SUCCESS] Running")
 
 		// List certificates in Caddy
-		output, err := m.docker.RunWithOutput("exec", "alios_caddy", "ls", "-la", "/etc/caddy/ssl/")
+		output, err := m.docker.RunWithOutput("exec", "alios-reverse-proxy", "ls", "-la", "/etc/caddy/ssl/")
 		if err == nil {
 			fmt.Println("  Certificates:")
 			lines := strings.Split(output, "\n")
@@ -469,7 +469,7 @@ func (m *Manager) createCaddyVhost(projectName, domain string) error {
 }
 
 func (m *Manager) reloadCaddy() error {
-	return m.docker.Run("exec", "alios_caddy", "caddy", "reload", "--config", "/etc/caddy/Caddyfile")
+	return m.docker.Run("exec", "alios-reverse-proxy", "caddy", "reload", "--config", "/etc/caddy/Caddyfile")
 }
 
 func (m *Manager) installCertMacOS(caPath string) error {
