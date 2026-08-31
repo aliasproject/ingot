@@ -185,15 +185,15 @@ func cleanupDNSLinux() error {
 	// Remove systemd-resolved configuration if it exists
 	if CommandExists("resolvectl") || CommandExists("systemd-resolve") {
 		// Remove the DNS configuration drop-in file
-		exec.Command("sudo", "rm", "-f", "/etc/systemd/resolved.conf.d/devbox.conf").Run()
+		exec.Command("sudo", "rm", "-f", "/etc/systemd/resolved.conf.d/alios.conf").Run()
 
 		// Restart systemd-resolved
 		exec.Command("sudo", "systemctl", "restart", "systemd-resolved").Run()
 	}
 
 	// Remove dnsmasq configuration if it exists
-	if FileExists("/etc/dnsmasq.d/devbox.conf") {
-		exec.Command("sudo", "rm", "-f", "/etc/dnsmasq.d/devbox.conf").Run()
+	if FileExists("/etc/dnsmasq.d/alios.conf") {
+		exec.Command("sudo", "rm", "-f", "/etc/dnsmasq.d/alios.conf").Run()
 		if CommandExists("systemctl") {
 			exec.Command("sudo", "systemctl", "restart", "dnsmasq").Run()
 		} else {
@@ -287,7 +287,7 @@ Domains=~test
 `
 
 	// Write configuration file
-	cmd := exec.Command("sudo", "tee", "/etc/systemd/resolved.conf.d/devbox.conf")
+	cmd := exec.Command("sudo", "tee", "/etc/systemd/resolved.conf.d/alios.conf")
 	cmd.Stdin = strings.NewReader(config)
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to write resolved configuration: %w", err)
@@ -319,7 +319,7 @@ func setupDnsmasq() error {
 	config := "server=/test/127.0.0.1#5354\n"
 
 	// Write configuration file
-	cmd := exec.Command("sudo", "tee", "/etc/dnsmasq.d/devbox.conf")
+	cmd := exec.Command("sudo", "tee", "/etc/dnsmasq.d/alios.conf")
 	cmd.Stdin = strings.NewReader(config)
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to write dnsmasq configuration: %w", err)

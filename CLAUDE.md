@@ -4,12 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Devbox is a single-binary Go CLI that manages a local Docker-based PHP development environment: per-project PHP (FrankenPHP) containers, global shared services (DNS, Nginx reverse proxy, MailHog), optional MySQL/PostgreSQL databases, and locally-trusted SSL certificates for `*.test` domains. It has no server component — every command shells out to the `docker` CLI on the user's machine.
+Alios CLI (`alios`) is a single-binary Go CLI that manages a local Docker-based PHP development environment: per-project PHP (FrankenPHP) containers, global shared services (DNS, Caddy reverse proxy, MailHog), optional MySQL/PostgreSQL databases, and locally-trusted SSL certificates for `*.test` domains. It has no server component — every command shells out to the `docker` CLI on the user's machine.
+
+Alios CLI is the local-dev counterpart to Alios, a separate production server-management platform (Laravel app + Go microservices) that provisions servers and deploys Docker apps. Where practical, this CLI mirrors production's conventions (image selection vocabulary, Caddy as the reverse proxy) so a project's local dev environment structurally resembles what it runs as in production — but the two are independent codebases; this repo has no dependency on the production platform.
 
 ## Build & run
 
 ```bash
-go build -o devbox ./cmd            # build the binary
+go build -o alios ./cmd             # build the binary
 go run ./cmd <command>               # run without building, e.g. go run ./cmd status
 go vet ./...                         # static checks
 ```
@@ -20,23 +22,23 @@ Releases are cut with `scripts/release.sh <version> [notes]`, which patches `int
 
 ## Architecture
 
-**Entry point**: `cmd/main.go` builds a `config.Config` (singleton, env-var driven) and a `docker.Client`, then hands off to `commands.Handler`, which is the dispatch table for every CLI subcommand (`internal/commands/handler.go`). First run (no binary at `/usr/local/bin/devbox`) triggers `commands.Installer` (`internal/commands/installer.go`) instead of normal command dispatch.
+**Entry point**: `cmd/main.go` builds a `config.Config` (singleton, env-var driven) and a `docker.Client`, then hands off to `commands.Handler`, which is the dispatch table for every CLI subcommand (`internal/commands/handler.go`). First run (no binary at `/usr/local/bin/alios`) triggers `commands.Installer` (`internal/commands/installer.go`) instead of normal command dispatch.
 
 **No persisted config files.** This is deliberate, not incomplete: `config.Config.Save()` is a no-op. All state lives in one of two places:
-- Environment variables (`GITHUB_TOKEN`, `DEVBOX_*`) for user settings — see `internal/config/config.go`.
-- Docker container labels (`devbox.project.name`, `devbox.project.php_version`, `devbox.project.server_root`) for per-project state — projects are *discovered* by inspecting containers, not read from disk. `project.Manager.GetCurrentProject()` derives project identity from the current working directory name plus the `devbox_php_<name>` container's labels/state; there is no separate "project database."
+- Environment variables (`GITHUB_TOKEN`, `ALIOS_*`) for user settings — see `internal/config/config.go`.
+- Docker container labels (`alios.project.name`, `alios.project.php_version`, `alios.project.server_root`, `alios.project.image_type`, `alios.project.framework`, etc.) for per-project state — projects are *discovered* by inspecting containers, not read from disk. `project.Manager.GetCurrentProject()` derives project identity from the current working directory name plus the `alios_php_<name>` container's labels/state; there is no separate "project database."
 
 **`internal/docker/client.go`** is the only layer that shells out to the `docker` binary (`exec.Command`). Every other package goes through `*docker.Client` rather than calling `os/exec` directly for container operations.
 
 **Two tiers of containers**, both Docker-labeled so they're discoverable without local state:
-- *Project containers* (`internal/project/manager.go`): one `devbox_php_<project>` container per project directory, created directly via `docker.Client.RunContainer` (not compose). Changing PHP version or server root means destroying and recreating the container, not reconfiguring it in place.
-- *Global services* (`internal/services/manager.go`): `devbox_dns`, `devbox_nginx`, `devbox_mail`, plus any configured databases, all managed as one Docker Compose project (`name: devbox`) whose YAML is generated inline in Go (`generateComposeConfig`) rather than read from a file. Adding/removing a database rewrites and re-applies the whole compose config, which restarts the group.
+- *Project containers* (`internal/project/manager.go`): one `alios_php_<project>` container per project directory, created directly via `docker.Client.RunContainer` (not compose) — or, for a project with `image_type=custom` and a build-from-Dockerfile choice, via `docker.Client.BuildImage` first. Changing PHP version, image choice, or server root means destroying and recreating the container, not reconfiguring it in place.
+- *Global services* (`internal/services/manager.go`): `alios_dns`, `alios_caddy`, `alios_mail`, plus any configured databases, all managed as one Docker Compose project (`name: alios`) whose YAML is generated inline in Go (`generateComposeConfig`) rather than read from a file. Adding/removing a database rewrites and re-applies the whole compose config, which restarts the group.
 
-**Images come from a private GHCR registry** (`ghcr.io/aliasproject/{php,dns,nginx,openssl}`), so most flows depend on GitHub auth being set up first (`internal/github/client.go` — supports PAT, OAuth device flow, or delegating to `gh auth token`, then does the `docker login ghcr.io` for image pulls).
+**Images come from a private GHCR registry** (`ghcr.io/aliasproject/{php,dns,caddy,openssl}`), so most flows depend on GitHub auth being set up first (`internal/github/client.go` — supports PAT, OAuth device flow, or delegating to `gh auth token`, then does the `docker login ghcr.io` for image pulls). The `php` image comes in several variant tags per PHP version (`-frankenphp-dev`, `-frankenphp-wordpress-dev`, ...), selected in `project.Manager.createContainer` based on the project's detected/chosen `framework` and `image_type` labels.
 
-**SSL** (`internal/ssl/manager.go`): a CA cert and per-domain certs are generated by running the `ghcr.io/aliasproject/openssl` image against the `devbox_certs` volume (not via a Go TLS library). Nginx vhost configs are written directly into the `devbox_nginx` container/`devbox_vhosts` volume as generated server blocks and applied with `nginx -s reload` — there's no templating engine, just Go `fmt.Sprintf` strings.
+**SSL** (`internal/ssl/manager.go`): a CA cert and per-domain certs are generated by running the `ghcr.io/aliasproject/openssl` image against the `alios_certs` volume (not via a Go TLS library) — self-signed, not Let's Encrypt, since `.test` domains are IANA-reserved and never publicly resolvable so ACME has no path to succeed. Per-project Caddy vhost files (`<project>.caddyfile`) are written directly into the `alios_vhosts` volume, which is mounted at `/etc/caddy` in the `alios_caddy` container alongside a base `Caddyfile` (written by `services.Manager.Start`) that does `import /etc/caddy/*.caddyfile` — adding or removing a project is just adding/removing one file plus `caddy reload`, no full-file rewrite. There's no templating engine, just Go `fmt.Sprintf` strings.
 
-**Networking**: all devbox containers share one Docker bridge network (`devbox_internal`, see `config.GetNetworkConfig()`). The `devbox_dns` container resolves `*.test` to the host so `https://<project>.test` reaches Nginx, which reverse-proxies to `devbox_php_<project>` by container name. Project containers get `devbox_dns`'s live container IP injected as their DNS server (resolved at container-creation time, not hardcoded) so they can resolve other `.test` domains from inside.
+**Networking**: all alios containers share one Docker bridge network (`alios_internal`, see `config.GetNetworkConfig()`). The `alios_dns` container resolves `*.test` to the host so `https://<project>.test` reaches Caddy, which reverse-proxies to `alios_php_<project>` by container name (Caddy resolves Docker container names on the shared network natively — no explicit resolver directive needed). Project containers get `alios_dns`'s live container IP injected as their DNS server (resolved at container-creation time, not hardcoded) so they can resolve other `.test` domains from inside.
 
 **Self-update** (`internal/updater/updater.go`): checks GitHub Releases (private repo, needs `GITHUB_TOKEN`) first, then falls back to a public S3/R2-hosted `manifest.json`. Replaces the running binary atomically, escalating to `sudo`/Windows UAC if the install path isn't writable.
 

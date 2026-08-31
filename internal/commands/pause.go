@@ -3,16 +3,16 @@ package commands
 import (
 	"fmt"
 
-	"github.com/aliasproject/devbox/internal/state"
-	"github.com/aliasproject/devbox/internal/utils"
+	"github.com/aliasproject/alios-cli/internal/state"
+	"github.com/aliasproject/alios-cli/internal/utils"
 )
 
-// handlePause stops every devbox-managed container on the machine - all project
+// handlePause stops every alios-managed container on the machine - all project
 // containers across all project directories, plus the shared global services
-// (dns, nginx, mail, databases) - and remembers exactly what was running so that
+// (dns, caddy, mail, databases) - and remembers exactly what was running so that
 // handleResume can bring back only that set.
 func (h *Handler) handlePause() error {
-	fmt.Println(utils.Colorize("[STOPPING]", utils.ColorYellow) + " Pausing devbox...")
+	fmt.Println(utils.Colorize("[STOPPING]", utils.ColorYellow) + " Pausing alios...")
 
 	stoppedProjects, err := h.projects.StopAll()
 	if err != nil {
@@ -32,19 +32,19 @@ func (h *Handler) handlePause() error {
 	store := state.NewStore(h.docker)
 	if err := store.SavePauseState(stoppedProjects, stoppedServices); err != nil {
 		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Failed to save pause state: %v\n", err)
-		fmt.Println("   'devbox resume' won't know what to bring back. Run 'devbox global start' and start each project manually.")
+		fmt.Println("   'alios resume' won't know what to bring back. Run 'alios global start' and start each project manually.")
 	}
 
-	fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Devbox paused")
+	fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Alios paused")
 	fmt.Printf("  %d project container(s) stopped\n", len(stoppedProjects))
 	fmt.Printf("  %d global service container(s) stopped\n", len(stoppedServices))
-	fmt.Println("\nRun 'devbox resume' when you're ready to start working again")
+	fmt.Println("\nRun 'alios resume' when you're ready to start working again")
 
 	return nil
 }
 
 // handleResume restores exactly the containers that were running at the last
-// devbox pause.
+// alios pause.
 func (h *Handler) handleResume() error {
 	store := state.NewStore(h.docker)
 	ps, err := store.LoadPauseState()
@@ -53,11 +53,11 @@ func (h *Handler) handleResume() error {
 	}
 
 	if ps == nil || (len(ps.Projects) == 0 && len(ps.Services) == 0) {
-		fmt.Println(utils.Colorize("[INFO]", utils.ColorBlue) + " No paused devbox session found")
+		fmt.Println(utils.Colorize("[INFO]", utils.ColorBlue) + " No paused alios session found")
 		return nil
 	}
 
-	fmt.Println(utils.Colorize("[STARTING]", utils.ColorCyan) + " Resuming devbox...")
+	fmt.Println(utils.Colorize("[STARTING]", utils.ColorCyan) + " Resuming alios...")
 
 	if err := h.services.Resume(ps.Services); err != nil {
 		return fmt.Errorf("failed to resume global services: %w", err)
@@ -72,7 +72,7 @@ func (h *Handler) handleResume() error {
 		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Failed to clear pause state: %v\n", err)
 	}
 
-	fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Devbox resumed")
+	fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Alios resumed")
 	fmt.Printf("  %d global service container(s) started\n", len(ps.Services))
 	fmt.Printf("  %d project container(s) started\n", len(startedProjects))
 

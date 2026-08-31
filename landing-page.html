@@ -3,7 +3,7 @@
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>Devbox - Development Environment Manager</title>
+        <title>Alios CLI - Local Development for Alios</title>
         <style>
             * {
                 margin: 0;
@@ -239,6 +239,7 @@
                 justify-content: center;
                 position: relative;
                 overflow: hidden;
+                font-family: "Monaco", "Menlo", "Courier New", monospace;
             }
 
             .add-task-btn {
@@ -553,7 +554,7 @@
     <body>
         <header class="header">
             <nav class="nav container">
-                <div class="logo">Devbox</div>
+                <div class="logo">Alios CLI</div>
                 <ul class="nav-links">
                     <li><a href="#features">Features</a></li>
                     <li><a href="#how">How it Works</a></li>
@@ -567,20 +568,21 @@
         <section class="hero">
             <div class="container">
                 <h1 class="hero-title">
-                    Simplify Development.<br />Prepare for Tomorrow.
+                    Develop Locally.<br />Deploy to Alios.
                 </h1>
                 <p class="hero-subtitle">
-                    Devbox is the development environment manager that helps you
-                    follow through without the overwhelm. Built for real
-                    projects, real teams, and the moments you need to just focus
-                    on coding.
+                    Alios CLI is the local development companion to Alios, the
+                    cloud infrastructure and application management platform.
+                    Spin up Docker-based PHP environments that mirror what
+                    you'll actually run in production - same image choices,
+                    same Caddy reverse proxy, zero config files.
                 </p>
 
                 <div class="hero-features">
                     <div class="hero-feature">Docker Management</div>
                     <div class="hero-feature">SSL Certificates</div>
-                    <div class="hero-feature">Multi-Version Support</div>
-                    <div class="hero-feature">Auto Configuration</div>
+                    <div class="hero-feature">Production Parity</div>
+                    <div class="hero-feature">Zero Config Files</div>
                 </div>
 
                 <div class="cta-section">
@@ -591,7 +593,8 @@
                 </div>
 
                 <p class="hero-note">
-                    Free to start • 3 containers per day included
+                    Free and open source • Works with any Docker-based PHP
+                    project
                 </p>
             </div>
         </section>
@@ -599,7 +602,7 @@
         <section class="how-it-works" id="how">
             <div class="container">
                 <h2 class="section-title">
-                    How This Development Manager
+                    How Alios CLI
                     <span class="highlight">Works</span>
                 </h2>
 
@@ -608,13 +611,14 @@
                         <div class="step-item">
                             <div class="step-number">1</div>
                             <div class="step-content">
-                                <h3>Install Effortlessly</h3>
+                                <h3>Install in One Command</h3>
                                 <p>
-                                    Quickly install containers for today or
-                                    tomorrow. The manager automatically
-                                    organizes them with smart categorization and
-                                    protects tomorrow's environments from
-                                    premature completion.
+                                    Download the binary and run it. Alios CLI
+                                    installs itself to
+                                    <code>/usr/local/bin</code>, sets up
+                                    GitHub authentication, and starts the
+                                    shared DNS, Caddy, and MailHog services -
+                                    no separate setup steps.
                                 </p>
                             </div>
                         </div>
@@ -622,13 +626,13 @@
                         <div class="step-item">
                             <div class="step-number">2</div>
                             <div class="step-content">
-                                <h3>Automatic Synchronization</h3>
+                                <h3>Start Any Project</h3>
                                 <p>
-                                    Containers update seamlessly when you return
-                                    to development. Background migration handles
-                                    daily rollover at midnight, moving
-                                    tomorrow's environments to today
-                                    automatically.
+                                    <code>cd</code> into a project and run
+                                    <code>alios start</code>. It detects your
+                                    PHP version, an existing Dockerfile, or a
+                                    WordPress install automatically - asked
+                                    once, remembered forever.
                                 </p>
                             </div>
                         </div>
@@ -636,9 +640,18 @@
 
                     <div class="phone-mockup">
                         <div class="phone-screen">
-                            <div class="add-task-btn">+</div>
+                            <div class="add-task-btn">$</div>
                             <p style="color: white; font-weight: 600">
-                                Add Environment
+                                alios start
+                            </p>
+                            <p
+                                style="
+                                    color: #10b981;
+                                    font-size: 0.85rem;
+                                    margin-top: 0.75rem;
+                                "
+                            >
+                                ✓ https://myproject.test
                             </p>
                         </div>
                     </div>
@@ -647,13 +660,14 @@
                         <div class="step-item">
                             <div class="step-number">3</div>
                             <div class="step-content">
-                                <h3>Intelligent Notifications</h3>
+                                <h3>HTTPS Out of the Box</h3>
                                 <p>
-                                    Receive context-aware reminders,
-                                    motivational messages, and
-                                    environment-specific notifications timed
-                                    perfectly to keep you engaged without
-                                    overwhelming you.
+                                    A locally-trusted CA and per-project
+                                    certificates are generated automatically,
+                                    and Caddy routes
+                                    <code>*.test</code> domains straight to
+                                    your container - no manual vhost files, no
+                                    hand-edited hosts file.
                                 </p>
                             </div>
                         </div>
@@ -661,12 +675,13 @@
                         <div class="step-item">
                             <div class="step-number">4</div>
                             <div class="step-content">
-                                <h3>Celebrate Completion</h3>
+                                <h3>Ship With Confidence</h3>
                                 <p>
-                                    Mark environments complete with satisfying
-                                    haptic feedback and confetti celebrations.
-                                    Undo within 30 seconds if needed, or swipe
-                                    to delete.
+                                    The same prebuilt-image or
+                                    custom-Dockerfile choice you make locally
+                                    is the choice Alios makes in production -
+                                    what runs on your machine is what runs
+                                    live.
                                 </p>
                             </div>
                         </div>
@@ -678,25 +693,27 @@
         <section class="different-section">
             <div class="container">
                 <h2 class="section-title">
-                    What Makes Devbox <span class="highlight">Different</span>
+                    What Makes Alios CLI <span class="highlight">Different</span>
                 </h2>
 
                 <div class="different-grid">
                     <div class="different-card">
                         <div class="different-icon">✨</div>
-                        <h3>Simple by Design</h3>
+                        <h3>No Config Files</h3>
                         <p>
-                            Just Today and Tomorrow. No calendars, no clutter,
-                            no setup.
+                            Every setting lives in an environment variable or
+                            a Docker label. Nothing to hand-edit, nothing to
+                            drift out of sync.
                         </p>
                     </div>
 
                     <div class="different-card">
                         <div class="different-icon">🔄</div>
-                        <h3>Reminds You Automatically</h3>
+                        <h3>Matches Production</h3>
                         <p>
-                            Random notifications help you remember without
-                            needing to check the app.
+                            The same Caddy proxy and image-selection model
+                            Alios runs in production, available from your
+                            first <code>alios start</code>.
                         </p>
                     </div>
 
@@ -715,31 +732,33 @@
         <section class="audience-section">
             <div class="container">
                 <h2 class="section-title">
-                    A Development Environment Designed for How
-                    <span class="highlight">People Actually Think</span>
+                    Built for Teams Shipping to
+                    <span class="highlight">Alios</span>
                 </h2>
 
                 <div class="audience-grid">
                     <div class="audience-card">
-                        <h3>🧠 For Those with ADHD</h3>
+                        <h3>🐘 For PHP &amp; WordPress Developers</h3>
                         <p>
-                            Smart reminders that work with your natural
-                            development flow.
+                            FrankenPHP-based containers with automatic
+                            WordPress detection and hardening built in.
                         </p>
                     </div>
 
                     <div class="audience-card">
-                        <h3>⚡ For the Overwhelmed</h3>
+                        <h3>🚀 For Teams Deploying to Alios</h3>
                         <p>
-                            No backlog, no complexity. Just today and tomorrow's
-                            environments.
+                            Local environments that mirror the exact image and
+                            reverse-proxy choices your projects run with in
+                            production.
                         </p>
                     </div>
 
                     <div class="audience-card">
-                        <h3>🎯 For the Minimalist</h3>
+                        <h3>🎯 For Anyone Tired of "Works on My Machine"</h3>
                         <p>
-                            Clean, focused interface that gets out of your way.
+                            One binary, one command, the same environment
+                            every time - for every teammate.
                         </p>
                     </div>
                 </div>
@@ -754,48 +773,54 @@
                         <div class="feature-icon">🐳</div>
                         <h3>Docker Integration</h3>
                         <p>
-                            Seamlessly manage Docker containers with PHP, MySQL,
-                            Nginx, and more. One command to rule them all.
+                            Seamlessly manage Docker containers for PHP,
+                            MySQL/PostgreSQL, and Caddy. One binary, no
+                            compose files to hand-write.
                         </p>
                     </div>
                     <div class="feature-card">
                         <div class="feature-icon">🔒</div>
                         <h3>SSL Certificates</h3>
                         <p>
-                            Automatic SSL certificate generation and management.
-                            HTTPS development environments out of the box.
+                            Automatic SSL certificate generation via a
+                            locally-trusted CA. HTTPS development environments
+                            out of the box for every
+                            <code>.test</code> domain.
+                        </p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">🚀</div>
+                        <h3>Production Parity</h3>
+                        <p>
+                            The same prebuilt-image-vs-custom-Dockerfile
+                            choice Alios makes in production, available
+                            locally from your first start.
                         </p>
                     </div>
                     <div class="feature-card">
                         <div class="feature-icon">⚡</div>
                         <h3>Multi-Version Support</h3>
                         <p>
-                            Switch between PHP 8.0, 8.1, 8.2 and MySQL 5.7, 8.0
-                            versions effortlessly for different projects.
+                            Switch between PHP 7.4 through 8.5 and
+                            MySQL/PostgreSQL versions effortlessly for
+                            different projects.
                         </p>
                     </div>
                     <div class="feature-card">
                         <div class="feature-icon">🔧</div>
                         <h3>Auto Configuration</h3>
                         <p>
-                            Smart project detection and automatic virtual host
-                            generation. Your projects just work.
+                            Smart project detection - PHP version, Dockerfile,
+                            WordPress - and automatic Caddy vhost generation.
+                            Your projects just work.
                         </p>
                     </div>
                     <div class="feature-card">
                         <div class="feature-icon">📧</div>
                         <h3>Email Testing</h3>
                         <p>
-                            Built-in Mailhog for email testing. Never worry
+                            Built-in MailHog for email testing. Never worry
                             about sending test emails to real users again.
-                        </p>
-                    </div>
-                    <div class="feature-card">
-                        <div class="feature-icon">🔄</div>
-                        <h3>Auto Updates</h3>
-                        <p>
-                            Keep your development environment up to date with
-                            automatic updates and version management.
                         </p>
                     </div>
                 </div>
@@ -810,18 +835,22 @@
                 <div class="code-block">
                     <pre>
 # Install and set up your entire development environment
-$ devbox install
+$ ./alios
 
-# Start all containers
-$ devbox up
+# Start a project
+$ alios start
 
 # Check status
-$ devbox status
+$ alios status
 
-# Execute commands in containers
-$ devbox logs php
-$ devbox restart
-$ devbox down</pre
+# Work with the running container
+$ alios logs
+$ alios exec composer install
+$ alios shell
+
+# Stop or restart
+$ alios stop
+$ alios restart</pre
                     >
                 </div>
             </div>
@@ -841,12 +870,14 @@ $ devbox down</pre
                         <h3>Support</h3>
                         <a href="#help">Help Center</a>
                         <a href="#community">Community</a>
-                        <a href="#github">GitHub Issues</a>
+                        <a href="https://github.com/aliasproject/alios-cli/issues"
+                            >GitHub Issues</a
+                        >
                         <a href="#contact">Contact Us</a>
                     </div>
                     <div class="footer-section">
                         <h3>Company</h3>
-                        <a href="#about">About</a>
+                        <a href="#about">About Alios</a>
                         <a href="#blog">Blog</a>
                         <a href="#careers">Careers</a>
                         <a href="#privacy">Privacy Policy</a>
@@ -855,14 +886,16 @@ $ devbox down</pre
                         <h3>Connect</h3>
                         <a href="#twitter">Twitter</a>
                         <a href="#linkedin">LinkedIn</a>
-                        <a href="#github">GitHub</a>
+                        <a href="https://github.com/aliasproject/alios-cli"
+                            >GitHub</a
+                        >
                         <a href="#discord">Discord</a>
                     </div>
                 </div>
                 <div class="footer-bottom">
                     <p>
-                        &copy; 2024 Devbox. All rights reserved. Made with ❤️
-                        for developers.
+                        &copy; 2026 Alios CLI. All rights reserved. Made with
+                        ❤️ for developers.
                     </p>
                 </div>
             </div>

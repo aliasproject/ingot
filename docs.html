@@ -3,7 +3,7 @@
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>Devbox Documentation</title>
+        <title>Alios CLI Documentation</title>
         <style>
             * {
                 margin: 0;
@@ -474,7 +474,7 @@
     <body>
         <header class="header">
             <nav class="nav container">
-                <a href="landing-page.html" class="logo">Devbox</a>
+                <a href="landing-page.html" class="logo">Alios CLI</a>
                 <ul class="nav-links">
                     <li><a href="landing-page.html">Home</a></li>
                     <li><a href="#getting-started">Getting Started</a></li>
@@ -498,9 +498,10 @@
                     <h3>Commands</h3>
                     <ul>
                         <li><a href="#basic-commands">Basic Commands</a></li>
-                        <li><a href="#docker-commands">Docker Commands</a></li>
-                        <li><a href="#status-commands">Status Commands</a></li>
-                        <li><a href="#update-commands">Update Commands</a></li>
+                        <li><a href="#project-commands">Project Commands</a></li>
+                        <li><a href="#global-services">Global Services</a></li>
+                        <li><a href="#pause-resume">Pause &amp; Resume</a></li>
+                        <li><a href="#database-commands">Database Commands</a></li>
                     </ul>
 
                     <h3>Configuration</h3>
@@ -508,50 +509,53 @@
                         <li>
                             <a href="#environment-setup">Environment Setup</a>
                         </li>
-                        <li><a href="#php-versions">PHP Versions</a></li>
-                        <li><a href="#mysql-versions">MySQL Versions</a></li>
+                        <li><a href="#supported-versions">Supported Versions</a></li>
                         <li><a href="#ssl-setup">SSL Setup</a></li>
                     </ul>
 
                     <h3>Advanced</h3>
                     <ul>
-                        <li>
-                            <a href="#custom-configs">Custom Configurations</a>
-                        </li>
+                        <li><a href="#image-selection">Image Selection</a></li>
+                        <li><a href="#wordpress">WordPress Projects</a></li>
+                        <li><a href="#github-auth">GitHub Authentication</a></li>
                         <li><a href="#troubleshooting">Troubleshooting</a></li>
-                        <li>
-                            <a href="#github-auth">GitHub Authentication</a>
-                        </li>
                     </ul>
                 </aside>
 
                 <main class="content">
                     <section id="overview">
-                        <h1>Devbox Documentation</h1>
+                        <h1>Alios CLI Documentation</h1>
                         <p>
-                            Welcome to Devbox, the ultimate development
-                            environment manager that simplifies your
-                            Docker-based development workflow. Devbox automates
-                            the setup and management of your development
-                            containers, SSL certificates, and project
-                            configurations.
+                            Alios CLI (<code class="inline-code">alios</code>) is
+                            the local development environment manager for
+                            <strong>Alios</strong>, the cloud infrastructure and
+                            application management platform. It automates the
+                            setup of per-project Docker containers, SSL
+                            certificates, and a reverse proxy so your local PHP
+                            projects run the same way they will once deployed to
+                            Alios.
                         </p>
 
                         <div class="alert info">
-                            <strong>What is Devbox?</strong> Devbox is a
-                            command-line tool that creates and manages a
-                            complete development environment using Docker
-                            containers. It handles PHP, MySQL, Nginx, DNS, and
-                            email testing services automatically.
+                            <strong>What is Alios CLI?</strong> Alios CLI is a
+                            command-line tool that creates and manages a complete
+                            local development environment using Docker
+                            containers - PHP (FrankenPHP), a Caddy reverse proxy,
+                            DNS for <code class="inline-code">.test</code>
+                            domains, MySQL/PostgreSQL, and MailHog for email
+                            testing. It has no server component and no local
+                            config files: every command shells out to Docker on
+                            your machine, and all state lives in environment
+                            variables or Docker container labels.
                         </div>
                     </section>
 
                     <section id="installation">
                         <h2>Installation</h2>
                         <p>
-                            Getting started with Devbox is simple. Follow these
-                            steps to install and configure your development
-                            environment.
+                            Getting started with Alios CLI is simple. Follow
+                            these steps to install and configure your
+                            development environment.
                         </p>
 
                         <h3>Prerequisites</h3>
@@ -571,21 +575,21 @@
                         <div class="code-block">
                             <pre>
 # Download the latest release
-curl -L -o devbox https://github.com/aliasproject/devbox/releases/latest/download/devbox
+curl -L -o alios https://github.com/aliasproject/alios-cli/releases/latest/download/alios
 
 # Make it executable
-chmod +x devbox
+chmod +x alios
 
 # Run the installer
-./devbox</pre
+./alios</pre
                             >
                         </div>
 
                         <div class="alert warning">
-                            <strong>Note:</strong> On first run, Devbox will
+                            <strong>Note:</strong> On first run, Alios CLI will
                             automatically install itself to
                             <code class="inline-code"
-                                >/usr/local/bin/devbox</code
+                                >/usr/local/bin/alios</code
                             >
                             and may prompt for your password.
                         </div>
@@ -594,55 +598,56 @@ chmod +x devbox
                     <section id="quick-start">
                         <h2>Quick Start</h2>
                         <p>
-                            Get up and running with Devbox in under 5 minutes.
+                            Get up and running with Alios CLI in under 5
+                            minutes.
                         </p>
 
                         <h3>Step 1: Initial Setup</h3>
                         <div class="code-block">
                             <pre>
-# Run devbox for the first time
-devbox
+# Run alios for the first time
+./alios
 
 # This will:
 # - Install the binary to /usr/local/bin
-# - Create ~/.devbox configuration directory
-# - Prompt for project directory selection
-# - Ask for PHP and MySQL versions
+# - Optionally configure a database service
 # - Set up GitHub authentication
-# - Create Docker Compose configuration
-# - Start all containers</pre
+# - Start the global services (DNS, Caddy, MailHog)</pre
                             >
                         </div>
 
                         <h3>Step 2: Verify Installation</h3>
                         <div class="code-block">
                             <pre>
-# Check installation status
-devbox status
-
-# View running containers
-devbox ps</pre
+# Check installation and service status
+alios status</pre
                             >
                         </div>
 
-                        <h3>Step 3: Access Your Projects</h3>
+                        <h3>Step 3: Start a Project</h3>
                         <p>
-                            Navigate to any project within your configured
-                            project directory and run Devbox commands:
+                            Navigate into any project directory and run:
                         </p>
                         <div class="code-block">
                             <pre>
-# From any project subdirectory
-cd /path/to/your/projects/myproject
-devbox up
-devbox logs nginx</pre
+cd /path/to/your/project
+alios start</pre
                             >
                         </div>
+                        <p>
+                            On the first <code class="inline-code"
+                                >alios start</code
+                            > for a project, you'll be asked for a PHP version
+                            and server root - and, if a
+                            <code class="inline-code">Dockerfile</code> is
+                            present, how you'd like the image built (see
+                            <a href="#image-selection">Image Selection</a>).
+                            None of this is asked again on later starts.
+                        </p>
 
                         <div class="alert success">
-                            <strong>Success!</strong> Your development
-                            environment is now ready. Projects will be
-                            automatically available at
+                            <strong>Success!</strong> Your project is now
+                            available at
                             <code class="inline-code"
                                 >https://myproject.test</code
                             >
@@ -663,12 +668,12 @@ devbox logs nginx</pre
                                 <tbody>
                                     <tr>
                                         <td>Operating System</td>
-                                        <td>macOS 10.14+ or Linux</td>
+                                        <td>macOS or Linux</td>
                                         <td>Windows support via WSL2</td>
                                     </tr>
                                     <tr>
                                         <td>Docker</td>
-                                        <td>Docker Desktop 4.0+</td>
+                                        <td>Docker Desktop or Docker Engine</td>
                                         <td>
                                             Must be running before installation
                                         </td>
@@ -696,7 +701,7 @@ devbox logs nginx</pre
                     <section id="basic-commands">
                         <h2>Basic Commands</h2>
                         <p>
-                            Learn the essential Devbox commands for daily
+                            Learn the essential Alios CLI commands for daily
                             development.
                         </p>
 
@@ -704,204 +709,311 @@ devbox logs nginx</pre
                         <div class="code-block">
                             <pre>
 # Show version
-devbox --version
-devbox -v
+alios --version
+alios -v
 
 # Show help
-devbox --help
-devbox help</pre
+alios --help
+alios help</pre
                             >
                         </div>
 
                         <h3>Installation Management</h3>
                         <div class="code-block">
                             <pre>
-# Show installation status
-devbox install
-
-# Update to latest version
-devbox update
-
 # Show complete system status
-devbox status</pre
+alios status
+
+# Check for and install updates
+alios check-update
+alios update
+alios update --force</pre
                             >
                         </div>
                     </section>
 
-                    <section id="docker-commands">
-                        <h2>Docker Commands</h2>
+                    <section id="project-commands">
+                        <h2>Project Commands</h2>
                         <p>
-                            Devbox provides seamless Docker Compose integration
-                            with simplified commands.
+                            Commands you run from inside a project directory -
+                            each acts on the one project container for the
+                            current working directory.
                         </p>
 
-                        <h3>Container Management</h3>
+                        <h3>Lifecycle</h3>
                         <div class="code-block">
                             <pre>
-# Start all containers
-devbox up
-
-# Stop all containers
-devbox down
-
-# Restart containers
-devbox restart
-
-# Show container status
-devbox ps
-
-# Pull latest images
-devbox pull</pre
+alios start              # Start (or create) the project container
+alios start 8.2          # Start with a specific PHP version
+alios stop                # Stop the project container
+alios restart              # Restart the project container
+alios remove               # Remove the project container (alios rm)
+alios status                # Show detailed status for this project
+alios list                  # List every Alios-managed project (alios ls)</pre
                             >
                         </div>
 
-                        <h3>Container Logs</h3>
+                        <h3>Changing Configuration</h3>
                         <div class="code-block">
                             <pre>
-# View all logs
-devbox logs
-
-# View specific service logs
-devbox logs php
-devbox logs nginx
-devbox logs mysql
-devbox logs mail</pre
+alios php 8.2              # Change PHP version (recreates the container)
+alios server-root public   # Change the server root directory</pre
                             >
                         </div>
 
-                        <h3>Execute Commands in Containers</h3>
+                        <h3>Logs, Exec, and Shell</h3>
                         <div class="code-block">
                             <pre>
-# Execute commands in PHP container
-devbox exec php composer install
-devbox exec php php artisan migrate
+alios logs
 
-# Interactive shell
-devbox exec php bash</pre
+alios exec composer install
+alios exec npm run dev
+
+alios shell                # Open a shell as your host user
+alios shell --user=root    # Open a shell as root</pre
                             >
                         </div>
+                    </section>
+
+                    <section id="global-services">
+                        <h2>Global Services</h2>
+                        <p>
+                            DNS, Caddy (the reverse proxy), MailHog, and any
+                            configured databases are shared across every
+                            project and managed as one group.
+                        </p>
+                        <div class="code-block">
+                            <pre>
+alios global start
+alios global stop
+alios global restart
+alios global status</pre
+                            >
+                        </div>
+                    </section>
+
+                    <section id="pause-resume">
+                        <h2>Pause &amp; Resume</h2>
+                        <p>
+                            Stop every project and global-service container at
+                            once to free up CPU and RAM, then bring back
+                            exactly what was running - no need to remember
+                            which projects you had started.
+                        </p>
+                        <div class="code-block">
+                            <pre>
+alios pause    # Stop everything, remembering what was running
+alios resume   # Restore exactly that set</pre
+                            >
+                        </div>
+                    </section>
+
+                    <section id="database-commands">
+                        <h2>Database Commands</h2>
+                        <div class="code-block">
+                            <pre>
+alios database add
+alios database remove
+alios database list</pre
+                            >
+                        </div>
+                        <p>
+                            MySQL databases are created with an empty root
+                            password. PostgreSQL databases are created with
+                            user <code class="inline-code">alios</code>,
+                            password <code class="inline-code">alios</code>,
+                            and database <code class="inline-code">alios</code>.
+                        </p>
                     </section>
 
                     <section id="environment-setup">
                         <h2>Environment Setup</h2>
                         <p>
-                            Configure your development environment with
-                            different PHP and MySQL versions.
+                            Alios CLI has no local config file - every setting
+                            is either an environment variable or a Docker
+                            container label. Set the variables below however
+                            you normally manage your shell environment.
                         </p>
-
-                        <h3>Supported Versions</h3>
-                        <h4>PHP Versions</h4>
-                        <ul>
-                            <li>PHP 8.2 (default)</li>
-                            <li>PHP 8.1</li>
-                            <li>PHP 8.0</li>
-                        </ul>
-
-                        <h4>MySQL Versions</h4>
-                        <ul>
-                            <li>MySQL 8.0 (default)</li>
-                            <li>MySQL 5.7</li>
-                        </ul>
 
                         <h3>Environment Variables</h3>
-                        <p>
-                            Devbox stores configuration in
-                            <code class="inline-code">~/.devbox/env_vars</code>:
-                        </p>
                         <div class="code-block">
                             <pre>
-# Project root directory
-DEVBOX_PROJECT_ROOT=/path/to/your/projects
-
-# PHP version
-PHP_VERSION=8.2
-
-# MySQL version
-MYSQL_SERVER=8.0</pre
+GITHUB_TOKEN                  # GitHub token for pulling private images
+ALIOS_DEFAULT_PHP_VERSION     # Default PHP version for new projects
+ALIOS_HOST_IP                 # Override auto-detected host IP
+ALIOS_DNS_PORT                # DNS listener port (default: 53)
+ALIOS_ENABLE_SSL              # Enable/disable SSL setup (default: true)
+ALIOS_ENABLE_DNS              # Enable/disable DNS setup (default: true)
+ALIOS_AUTO_START_GLOBAL       # Auto-start global services (default: true)</pre
                             >
                         </div>
+                    </section>
+
+                    <section id="supported-versions">
+                        <h2>Supported Versions</h2>
+                        <h4>PHP Versions</h4>
+                        <ul>
+                            <li>PHP 8.5</li>
+                            <li>PHP 8.4 (default)</li>
+                            <li>PHP 8.3</li>
+                            <li>PHP 8.2</li>
+                            <li>PHP 8.1</li>
+                            <li>PHP 8.0</li>
+                            <li>PHP 7.4</li>
+                        </ul>
+
+                        <h4>Database Versions</h4>
+                        <ul>
+                            <li>MySQL 8.0, 5.7</li>
+                            <li>PostgreSQL 16, 15, 14, 13</li>
+                        </ul>
                     </section>
 
                     <section id="ssl-setup">
                         <h2>SSL Setup</h2>
                         <p>
-                            Devbox automatically generates SSL certificates for
-                            your local development domains.
+                            Alios CLI automatically generates a CA certificate
+                            and per-project certificates for your local
+                            <code class="inline-code">.test</code> domains.
                         </p>
 
-                        <h3>Automatic Certificate Generation</h3>
-                        <p>
-                            When you start Devbox, the Watchman service
-                            automatically:
-                        </p>
-                        <ul>
-                            <li>Scans your project directory</li>
-                            <li>Generates SSL certificates for each project</li>
-                            <li>Creates virtual hosts for Nginx</li>
-                            <li>
-                                Sets up
-                                <code class="inline-code">.test</code> domain
-                                routing
-                            </li>
-                        </ul>
-
-                        <h3>Trusting Certificates</h3>
                         <div class="alert info">
-                            <strong>Important:</strong> You'll need to trust the
-                            Certificate Authority in your browser to avoid SSL
-                            warnings. Devbox will guide you through this process
-                            during installation.
+                            <strong>Why self-signed?</strong>
+                            <code class="inline-code">.test</code> is an
+                            IANA-reserved TLD that is never publicly
+                            resolvable, so a real certificate authority like
+                            Let's Encrypt has no way to verify domain
+                            ownership for it. Alios CLI generates its own CA
+                            and trusts it locally instead.
                         </div>
 
-                        <h3>Certificate Locations</h3>
+                        <h3>How It Works</h3>
+                        <p>
+                            The CA certificate and every project's
+                            certificate/key are generated by a dedicated
+                            openssl image and stored in the
+                            <code class="inline-code">alios_certs</code> Docker
+                            volume - not on your host filesystem. Each
+                            project's Caddy vhost configuration is written to
+                            the <code class="inline-code">alios_vhosts</code>
+                            volume and reloaded automatically, so certificates
+                            and routing survive the Caddy container being
+                            recreated.
+                        </p>
+
+                        <h3>Trusting the CA Certificate</h3>
                         <div class="code-block">
                             <pre>
-# CA Certificate
-~/.devbox/certs/AliasProjectCASelfSigned.pem
-
-# Project-specific certificates
-~/.devbox/certs/projectname.test.crt
-~/.devbox/certs/projectname.test.key</pre
+alios cert install    # Install the CA into your system trust store
+alios cert verify     # Check whether it's installed
+alios cert debug      # Detailed certificate/Caddy diagnostics
+alios cert repair     # Regenerate vhosts and restart Caddy</pre
                             >
                         </div>
+                        <div class="alert warning">
+                            <strong>Important:</strong> You'll need to trust
+                            the CA certificate to avoid browser SSL warnings -
+                            <code class="inline-code">alios cert install</code>
+                            handles this for you.
+                        </div>
+                    </section>
+
+                    <section id="image-selection">
+                        <h2>Image Selection</h2>
+                        <p>
+                            When you start a project for the first time, Alios
+                            CLI checks the project root for a
+                            <code class="inline-code">Dockerfile</code>. This
+                            mirrors the same prebuilt-vs-custom choice
+                            production Alios makes when deploying a site, so
+                            your local environment can match whatever you'll
+                            actually run.
+                        </p>
+                        <ul>
+                            <li>
+                                <strong>No Dockerfile found</strong> - Alios CLI
+                                uses its prebuilt PHP image for the selected
+                                version.
+                            </li>
+                            <li>
+                                <strong>Dockerfile found</strong> - you're asked
+                                whether to build from it, use the prebuilt
+                                image anyway, or pull a different image
+                                entirely.
+                            </li>
+                        </ul>
+                        <p>
+                            This choice is made once, at first start, and
+                            stored on the project container's labels - it
+                            isn't asked again on later starts.
+                        </p>
+                    </section>
+
+                    <section id="wordpress">
+                        <h2>WordPress Projects</h2>
+                        <p>
+                            If <code class="inline-code">wp-config.php</code>
+                            or <code class="inline-code">wp-load.php</code> is
+                            found in the project root (covering both stock
+                            WordPress and Bedrock-style layouts), Alios CLI
+                            automatically selects a WordPress-optimized PHP
+                            image instead of prompting you:
+                        </p>
+                        <ul>
+                            <li>
+                                Extra extensions WordPress needs (mysqli, gd,
+                                exif, redis, igbinary, imagick, soap)
+                            </li>
+                            <li>
+                                The same production hardening (blocked
+                                execution paths, denied file extensions) used
+                                on Alios
+                            </li>
+                            <li>
+                                Live-reload opcache settings and dev tooling
+                                (git, npm) for local iteration
+                            </li>
+                        </ul>
                     </section>
 
                     <section id="github-auth">
                         <h2>GitHub Authentication</h2>
                         <p>
-                            Devbox requires GitHub authentication to pull
+                            Alios CLI requires GitHub authentication to pull
                             container images from GitHub Container Registry.
                         </p>
 
                         <h3>OAuth Device Flow</h3>
                         <p>
-                            During installation, Devbox will guide you through
-                            GitHub OAuth authentication:
+                            During installation, Alios CLI will guide you
+                            through GitHub OAuth authentication:
                         </p>
                         <ol>
-                            <li>Devbox requests a device code from GitHub</li>
+                            <li>Alios CLI requests a device code from GitHub</li>
                             <li>
                                 You visit the provided URL and enter the user
                                 code
                             </li>
                             <li>Authorize the application in your browser</li>
                             <li>
-                                Devbox receives the access token automatically
+                                Alios CLI receives the access token
+                                automatically
                             </li>
                         </ol>
 
-                        <h3>Manual Token Setup</h3>
+                        <h3>Personal Access Token or gh CLI</h3>
                         <p>
-                            If you prefer, you can provide a GitHub token
-                            manually:
+                            If you prefer, provide a GitHub Personal Access
+                            Token directly, or let Alios CLI delegate to an
+                            existing <code class="inline-code">gh</code> CLI
+                            login:
                         </p>
                         <div class="code-block">
                             <pre>
 # Create a Personal Access Token at:
 # https://github.com/settings/tokens
 
-# Run devbox and select manual token entry
-devbox</pre
+alios github-auth</pre
                             >
                         </div>
 
@@ -924,8 +1036,8 @@ Error: Docker is not installed or not running</pre
                             >
                         </div>
                         <p>
-                            <strong>Solution:</strong> Ensure Docker Desktop is
-                            installed and running before using Devbox.
+                            <strong>Solution:</strong> Ensure Docker is
+                            installed and running before using Alios CLI.
                         </p>
 
                         <h3>Permission Denied</h3>
@@ -935,9 +1047,10 @@ Error: Permission denied installing to /usr/local/bin</pre
                             >
                         </div>
                         <p>
-                            <strong>Solution:</strong> Devbox will automatically
-                            use <code class="inline-code">sudo</code> when
-                            needed. Enter your password when prompted.
+                            <strong>Solution:</strong> Alios CLI will
+                            automatically use <code class="inline-code"
+                                >sudo</code
+                            > when needed. Enter your password when prompted.
                         </p>
 
                         <h3>Container Pull Failures</h3>
@@ -947,58 +1060,59 @@ Error: Permission denied installing to /usr/local/bin</pre
                         <p>
                             <strong>Solution:</strong> Check your GitHub
                             authentication with
-                            <code class="inline-code">devbox status</code> and
-                            re-authenticate if needed.
+                            <code class="inline-code">alios status</code> and
+                            re-authenticate with
+                            <code class="inline-code">alios github-auth</code>
+                            if needed.
                         </p>
 
                         <h3>Project Not Found</h3>
                         <div class="code-block">
                             <pre>
-Error: You must be inside a project directory</pre
+[INFO] No alios project found in this directory</pre
                             >
                         </div>
                         <p>
-                            <strong>Solution:</strong> Navigate to a directory
-                            within your configured project root directory.
+                            <strong>Solution:</strong> Run
+                            <code class="inline-code">alios init</code>
+                            (or <code class="inline-code">alios start</code>,
+                            which does the same thing) from inside your
+                            project's directory.
                         </p>
 
                         <h3>SSL Certificate Issues</h3>
                         <p>If you're seeing SSL warnings in your browser:</p>
                         <ol>
                             <li>
-                                Check if Watchman is healthy:
-                                <code class="inline-code">devbox status</code>
+                                Check that Caddy is running:
+                                <code class="inline-code">alios global status</code>
                             </li>
                             <li>
-                                Verify certificate exists:
-                                <code class="inline-code"
-                                    >ls ~/.devbox/certs/</code
-                                >
+                                Verify the CA certificate is installed:
+                                <code class="inline-code">alios cert verify</code>
                             </li>
                             <li>
-                                Trust the CA certificate in your browser/system
-                            </li>
-                            <li>
-                                Restart containers:
-                                <code class="inline-code">devbox restart</code>
+                                Regenerate vhosts and restart Caddy:
+                                <code class="inline-code">alios cert repair</code>
                             </li>
                         </ol>
 
                         <h3>Reset Installation</h3>
-                        <p>To completely reset your Devbox installation:</p>
+                        <p>To completely reset your Alios CLI installation:</p>
                         <div class="code-block">
                             <pre>
-# Stop all containers
-devbox down
+# Stop everything
+alios global stop
 
-# Remove configuration
-rm -rf ~/.devbox
+# Remove all Alios CLI state (certs, vhosts, pause state, network)
+docker volume rm alios_certs alios_vhosts alios_state
+docker network rm alios_internal
 
-# Remove binary
-sudo rm /usr/local/bin/devbox
+# Remove the binary
+sudo rm /usr/local/bin/alios
 
 # Reinstall
-./devbox</pre
+./alios</pre
                             >
                         </div>
                     </section>
@@ -1009,8 +1123,8 @@ sudo rm /usr/local/bin/devbox
         <footer class="footer">
             <div class="container">
                 <p>
-                    &copy; 2024 Devbox. All rights reserved.
-                    <a href="https://github.com/aliasproject/devbox"
+                    &copy; 2026 Alios CLI. All rights reserved.
+                    <a href="https://github.com/aliasproject/alios-cli"
                         >View on GitHub</a
                     >
                 </p>

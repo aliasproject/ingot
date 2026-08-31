@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/aliasproject/devbox/internal/config"
-	"github.com/aliasproject/devbox/internal/docker"
-	"github.com/aliasproject/devbox/internal/utils"
+	"github.com/aliasproject/alios-cli/internal/config"
+	"github.com/aliasproject/alios-cli/internal/docker"
+	"github.com/aliasproject/alios-cli/internal/utils"
 )
 
 // Manager handles project operations
@@ -29,7 +29,7 @@ func NewManager(dockerClient *docker.Client) *Manager {
 	}
 }
 
-// Project represents a Devbox project
+// Project represents a Alios project
 type Project struct {
 	Name       string
 	Path       string
@@ -40,6 +40,35 @@ type Project struct {
 	URL        string
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
+
+	// Image selection - mirrors production Alios's container_config vocabulary
+	// (image_type/custom_image_source/etc, see app/Actions/Site/CreateApplication.php
+	// in the Alios platform repo), expressed as container labels instead of a
+	// database row since this CLI has no persisted config of its own.
+	ImageType      string            // "prebuilt" (default) or "custom"
+	ImageSource    string            // "pull" or "build", only meaningful when ImageType == "custom"
+	ImageURL       string            // only meaningful when ImageSource == "pull"
+	DockerfilePath string            // only meaningful when ImageSource == "build"; default "Dockerfile"
+	BuildContext   string            // only meaningful when ImageSource == "build"; default "."
+	BuildArgs      map[string]string // only meaningful when ImageSource == "build"; values for the Dockerfile's no-default ARGs
+	Framework      string            // "" or "wordpress"; detected from the project directory
+}
+
+// ImageChoice carries a project's first-init image and framework selection
+// through Start into createContainer. Every field is optional: an empty field
+// leaves whatever is already stored on the project (read from its container
+// labels, or the defaults GetCurrentProject applies for a brand-new project)
+// untouched. Callers only need to populate this when proj.Status ==
+// "not initialized" - handleStart's prompts run once, the same way the
+// PHP-version and server-root prompts already do.
+type ImageChoice struct {
+	ImageType      string
+	ImageSource    string
+	ImageURL       string
+	DockerfilePath string
+	BuildContext   string
+	BuildArgs      map[string]string
+	Framework      string
 }
 
 // GetCurrentProject returns the current project based on working directory
@@ -57,26 +86,46 @@ func (m *Manager) GetCurrentProject() (*Project, error) {
 	if err != nil {
 		if err == docker.ErrContainerNotFound {
 			return &Project{
-				Name:       name,
-				Path:       cwd,
-				ServerRoot: "public", // default for new projects
-				Status:     "not initialized",
-				Container:  container,
+				Name:           name,
+				Path:           cwd,
+				ServerRoot:     "public", // default for new projects
+				Status:         "not initialized",
+				Container:      container,
+				ImageType:      "prebuilt",
+				DockerfilePath: "Dockerfile",
+				BuildContext:   ".",
 			}, nil
 		}
 		return nil, err
 	}
 
 	// Get configuration from Docker labels
-	phpVersion := info.Labels["devbox.project.php_version"]
+	phpVersion := info.Labels["alios.project.php_version"]
 	if phpVersion == "" {
 		phpVersion = config.DefaultPHPVersion
 	}
 
-	serverRoot := info.Labels["devbox.project.server_root"]
+	serverRoot := info.Labels["alios.project.server_root"]
 	if serverRoot == "" {
 		serverRoot = "public" // default
 	}
+
+	imageType := info.Labels["alios.project.image_type"]
+	if imageType == "" {
+		imageType = "prebuilt"
+	}
+
+	dockerfilePath := info.Labels["alios.project.dockerfile_path"]
+	if dockerfilePath == "" {
+		dockerfilePath = "Dockerfile"
+	}
+
+	buildContext := info.Labels["alios.project.build_context"]
+	if buildContext == "" {
+		buildContext = "."
+	}
+
+	buildArgs := parseBuildArgs(info.Labels["alios.project.build_args"])
 
 	status := "stopped"
 	if info.State == "running" {
@@ -84,16 +133,53 @@ func (m *Manager) GetCurrentProject() (*Project, error) {
 	}
 
 	return &Project{
-		Name:       name,
-		Path:       cwd,
-		PHPVersion: phpVersion,
-		ServerRoot: serverRoot,
-		Status:     status,
-		Container:  container,
-		URL:        fmt.Sprintf("https://%s.test", name),
-		CreatedAt:  info.CreatedAt,
-		UpdatedAt:  info.StartedAt,
+		Name:           name,
+		Path:           cwd,
+		PHPVersion:     phpVersion,
+		ServerRoot:     serverRoot,
+		Status:         status,
+		Container:      container,
+		URL:            fmt.Sprintf("https://%s.test", name),
+		CreatedAt:      info.CreatedAt,
+		UpdatedAt:      info.StartedAt,
+		ImageType:      imageType,
+		ImageSource:    info.Labels["alios.project.image_source"],
+		ImageURL:       info.Labels["alios.project.image_url"],
+		DockerfilePath: dockerfilePath,
+		BuildContext:   buildContext,
+		BuildArgs:      buildArgs,
+		Framework:      info.Labels["alios.project.framework"],
 	}, nil
+}
+
+// serializeBuildArgs/parseBuildArgs round-trip build-arg values through a
+// single Docker label as comma-separated KEY=VALUE pairs, the same way every
+// other piece of project state here lives in labels instead of a config
+// file. Values containing a comma aren't supported by this simple encoding.
+func serializeBuildArgs(args map[string]string) string {
+	if len(args) == 0 {
+		return ""
+	}
+	pairs := make([]string, 0, len(args))
+	for key, value := range args {
+		pairs = append(pairs, key+"="+value)
+	}
+	return strings.Join(pairs, ",")
+}
+
+func parseBuildArgs(encoded string) map[string]string {
+	if encoded == "" {
+		return nil
+	}
+	args := make(map[string]string)
+	for _, pair := range strings.Split(encoded, ",") {
+		key, value, found := strings.Cut(pair, "=")
+		if !found {
+			continue
+		}
+		args[key] = value
+	}
+	return args
 }
 
 // Initialize creates a new project in the current directory
@@ -112,8 +198,10 @@ func (m *Manager) Initialize(phpVersion string) error {
 	return nil
 }
 
-// Start starts the project container with optional PHP version
-func (m *Manager) Start(phpVersion string, serverRoot ...string) error {
+// Start starts the project container with optional PHP version, server root,
+// and (first-init only) image/framework choice. See ImageChoice's doc comment
+// - pass ImageChoice{} when the project is already initialized.
+func (m *Manager) Start(phpVersion string, imageChoice ImageChoice, serverRoot ...string) error {
 	project, err := m.GetCurrentProject()
 	if err != nil {
 		return err
@@ -143,21 +231,60 @@ func (m *Manager) Start(phpVersion string, serverRoot ...string) error {
 		}
 	}
 
+	// Apply any first-init image/framework choice on top of what's already
+	// stored (or defaulted) on the project. Empty fields leave the existing
+	// value alone, so this is a no-op for an already-initialized project.
+	if imageChoice.ImageType != "" {
+		project.ImageType = imageChoice.ImageType
+	}
+	if imageChoice.ImageSource != "" {
+		project.ImageSource = imageChoice.ImageSource
+	}
+	if imageChoice.ImageURL != "" {
+		project.ImageURL = imageChoice.ImageURL
+	}
+	if imageChoice.DockerfilePath != "" {
+		project.DockerfilePath = imageChoice.DockerfilePath
+	}
+	if imageChoice.BuildContext != "" {
+		project.BuildContext = imageChoice.BuildContext
+	}
+	if len(imageChoice.BuildArgs) > 0 {
+		project.BuildArgs = imageChoice.BuildArgs
+	}
+	if imageChoice.Framework != "" {
+		project.Framework = imageChoice.Framework
+	}
+
 	// Check if container exists
 	if m.docker.ContainerExists(project.Container) {
-		// Check if existing container has correct PHP version
+		// Check if the existing container's PHP version or injected .env
+		// content is still current. Recreating on an .env change mirrors
+		// production: RunAndSwapContainer always recreates the container on
+		// any config change too, never patches env vars into a running one
+		// (Docker has no way to do that regardless).
 		info, err := m.docker.InspectContainer(project.Container)
 		if err == nil {
-			existingVersion := info.Labels["devbox.project.php_version"]
-			if existingVersion != "" && existingVersion != desiredPHPVersion {
-				// PHP version mismatch - recreate container
-				fmt.Printf(utils.Colorize("[RESTARTING]", utils.ColorCyan)+" PHP version changed from %s to %s, recreating container...\n", existingVersion, desiredPHPVersion)
+			existingVersion := info.Labels["alios.project.php_version"]
+			versionChanged := existingVersion != "" && existingVersion != desiredPHPVersion
+
+			existingEnvHash := info.Labels["alios.project.env_hash"]
+			envChanged := existingEnvHash != EnvFileHash(project.Path)
+
+			if versionChanged || envChanged {
+				reason := "PHP version changed"
+				if envChanged && !versionChanged {
+					reason = ".env changed"
+				} else if envChanged && versionChanged {
+					reason = "PHP version and .env changed"
+				}
+				fmt.Printf(utils.Colorize("[RESTARTING]", utils.ColorCyan)+" %s, recreating container...\n", reason)
 				if err := m.docker.RemoveContainer(project.Container, true); err != nil {
 					return fmt.Errorf("failed to remove old container: %w", err)
 				}
 				project.PHPVersion = desiredPHPVersion
 				if err := m.createContainer(project); err != nil {
-					return fmt.Errorf("failed to create container with new PHP version: %w", err)
+					return fmt.Errorf("failed to recreate container: %w", err)
 				}
 				return nil
 			}
@@ -262,6 +389,46 @@ func (m *Manager) ChangePHPVersion(newVersion string) error {
 	return nil
 }
 
+// ChangeImage switches the current project to a different image mode
+// (prebuilt, build from its Dockerfile, or pull a specific image),
+// destroying and recreating its container the same way ChangePHPVersion
+// does. Unlike the ImageChoice merge Start() does during first-init (which
+// only overrides fields the caller explicitly set, leaving the rest as
+// already stored), this replaces the image configuration wholesale - the
+// caller is responsible for building a complete target state, including
+// zeroing fields that don't apply to the new mode (e.g. a Dockerfile path
+// left over from a previous custom build shouldn't linger once switched
+// back to prebuilt). The project's domain/SSL/vhost are untouched: the
+// container name doesn't change, only the image backing it.
+func (m *Manager) ChangeImage(choice ImageChoice) error {
+	project, err := m.GetCurrentProject()
+	if err != nil {
+		return err
+	}
+
+	if project.Status == "not initialized" {
+		return fmt.Errorf("project not initialized")
+	}
+
+	project.ImageType = choice.ImageType
+	project.ImageSource = choice.ImageSource
+	project.ImageURL = choice.ImageURL
+	project.DockerfilePath = choice.DockerfilePath
+	project.BuildContext = choice.BuildContext
+	project.BuildArgs = choice.BuildArgs
+	project.Framework = choice.Framework
+
+	if err := m.docker.RemoveContainer(project.Container, true); err != nil {
+		return fmt.Errorf("failed to remove old container: %w", err)
+	}
+
+	if err := m.createContainer(project); err != nil {
+		return fmt.Errorf("failed to create new container: %w", err)
+	}
+
+	return nil
+}
+
 // ChangeServerRoot changes the server root for the current project
 func (m *Manager) ChangeServerRoot(newServerRoot string) error {
 	project, err := m.GetCurrentProject()
@@ -301,9 +468,9 @@ func (m *Manager) ChangeServerRoot(newServerRoot string) error {
 	return nil
 }
 
-// List returns all Devbox projects
+// List returns all Alios projects
 func (m *Manager) List() ([]*Project, error) {
-	containers, err := m.docker.ListContainers("label=devbox.project.name")
+	containers, err := m.docker.ListContainers("label=alios.project.name")
 	if err != nil {
 		return nil, fmt.Errorf("failed to list containers: %w", err)
 	}
@@ -320,12 +487,12 @@ func (m *Manager) List() ([]*Project, error) {
 			continue
 		}
 
-		name := info.Labels["devbox.project.name"]
+		name := info.Labels["alios.project.name"]
 		if name == "" {
-			name = strings.TrimPrefix(containerName, "devbox_php_")
+			name = strings.TrimPrefix(containerName, "alios_php_")
 		}
 
-		phpVersion := info.Labels["devbox.project.php_version"]
+		phpVersion := info.Labels["alios.project.php_version"]
 		if phpVersion == "" {
 			phpVersion = config.DefaultPHPVersion
 		}
@@ -337,7 +504,7 @@ func (m *Manager) List() ([]*Project, error) {
 
 		projects = append(projects, &Project{
 			Name:       name,
-			Path:       info.Labels["devbox.project.path"],
+			Path:       info.Labels["alios.project.path"],
 			PHPVersion: phpVersion,
 			Status:     status,
 			Container:  containerName,
@@ -350,7 +517,7 @@ func (m *Manager) List() ([]*Project, error) {
 	return projects, nil
 }
 
-// ListRunning returns all Devbox project containers that are currently running,
+// ListRunning returns all Alios project containers that are currently running,
 // system-wide (not just the one for the current working directory).
 func (m *Manager) ListRunning() ([]*Project, error) {
 	projects, err := m.List()
@@ -431,7 +598,7 @@ func (m *Manager) Exec(command []string, interactive bool) error {
 			if len(command) > 0 {
 				cmdName = command[0]
 			}
-			return fmt.Errorf("command '%s' not found in container. Try 'devbox shell' to explore available commands", cmdName)
+			return fmt.Errorf("command '%s' not found in container. Try 'alios shell' to explore available commands", cmdName)
 		}
 		if strings.Contains(errStr, "OCI runtime exec failed") {
 			// Extract just the useful part of the error
@@ -540,21 +707,82 @@ func (m *Manager) createContainer(project *Project) error {
 		return fmt.Errorf("failed to create network: %w", err)
 	}
 
-	// Pull the image first
-	image := fmt.Sprintf("ghcr.io/aliasproject/php:%s-frankenphp-dev", project.PHPVersion)
-	if err := m.docker.PullImage(image, nil); err != nil {
-		// Continue even if pull fails - image might exist locally
-		fmt.Printf("Warning: Failed to pull image: %v\n", err)
+	// Resolve which image to run. Mirrors production Alios's image_type/
+	// custom_image_source decision tree (ResolvePrebuiltImage.php,
+	// CreateApplication.php) - see the Project/ImageChoice doc comments.
+	var image string
+	switch project.ImageType {
+	case "custom":
+		switch project.ImageSource {
+		case "pull":
+			image = project.ImageURL
+			if err := m.docker.PullImage(image, nil); err != nil {
+				// Continue even if pull fails - image might exist locally
+				fmt.Printf("Warning: Failed to pull image: %v\n", err)
+			}
+		case "build":
+			// Local build tag, mirroring production's local/{site}:latest
+			// convention. No PullImage call at all: the Dockerfile itself
+			// encodes whatever the image needs, same as production skipping
+			// registry auth entirely for a local build.
+			image = fmt.Sprintf("local/%s:latest", project.Name)
+			if err := m.docker.BuildImage(&docker.BuildConfig{
+				Tag:            image,
+				DockerfilePath: filepath.Join(project.Path, project.DockerfilePath),
+				Context:        filepath.Join(project.Path, project.BuildContext),
+				BuildArgs:      project.BuildArgs,
+			}); err != nil {
+				return fmt.Errorf("failed to build image: %w", err)
+			}
+		default:
+			return fmt.Errorf("project has image_type=custom but no image_source set")
+		}
+	default: // "prebuilt"
+		tag := fmt.Sprintf("%s-frankenphp-dev", project.PHPVersion)
+		if project.Framework == "wordpress" {
+			tag = fmt.Sprintf("%s-frankenphp-wordpress-dev", project.PHPVersion)
+		}
+		image = fmt.Sprintf("ghcr.io/aliasproject/php:%s", tag)
+		if err := m.docker.PullImage(image, nil); err != nil {
+			// Continue even if pull fails - image might exist locally
+			fmt.Printf("Warning: Failed to pull image: %v\n", err)
+		}
 	}
 
 	// Resolve the DNS container's live IP on the internal network rather than
 	// relying on a hardcoded address that may belong to a different container.
 	dnsServers := []string{"1.1.1.1", "8.8.8.8"} // fallback to public resolvers
-	if dnsIP, err := m.docker.GetContainerIP("devbox_dns", networkConfig.BridgeName); err == nil && dnsIP != "" {
+	if dnsIP, err := m.docker.GetContainerIP("alios_dns", networkConfig.BridgeName); err == nil && dnsIP != "" {
 		dnsServers = []string{dnsIP, "1.1.1.1", "8.8.8.8"}
 	} else {
-		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Could not resolve devbox_dns IP (%v); falling back to public DNS. .test domains will not resolve.\n", err)
+		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Could not resolve alios_dns IP (%v); falling back to public DNS. .test domains will not resolve.\n", err)
 	}
+
+	// Load the project's own .env, if it has one, and inject it the same way
+	// production supplies a site's config: plain KEY=VALUE env vars on the
+	// container (see RunDockerContainer's buildEnvironmentVariables in the
+	// Alios platform repo), just sourced from the local file instead of a
+	// database-backed setting. Set after copying in .env so these always win
+	// regardless of what .env contains - mirrors production setting
+	// SERVER_ROOT last, specifically so a stray env var can never silently
+	// override it. PORT matters beyond the prebuilt image's own defaults: a
+	// custom Dockerfile's baked Caddyfile can reference {$PORT} with no
+	// fallback of its own (production always supplies it - see
+	// buildDockerCommand's `-e PORT=...` - so its own Caddyfiles are never
+	// written to expect a default), and an empty substitution there is a
+	// hard Caddyfile parse failure, not a graceful fallback.
+	envVars, err := LoadEnvFile(project.Path)
+	if err != nil {
+		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Failed to read .env: %v\n", err)
+		envVars = nil
+	}
+	if envVars == nil {
+		envVars = make(map[string]string)
+	}
+	envVars["SERVER_NAME"] = ":80"
+	envVars["SERVER_ROOT"] = project.ServerRoot
+	envVars["HTTPS"] = "on"
+	envVars["PORT"] = "80"
 
 	// Create container configuration
 	containerConfig := &docker.ContainerConfig{
@@ -566,16 +794,20 @@ func (m *Manager) createContainer(project *Project) error {
 		Volumes: []string{
 			fmt.Sprintf("%s:/app", project.Path),
 		},
-		Environment: map[string]string{
-			"SERVER_NAME": ":80",
-			"SERVER_ROOT": project.ServerRoot,
-			"HTTPS":       "on",
-		},
+		Environment: envVars,
 		Labels: map[string]string{
-			"devbox.project.name":        project.Name,
-			"devbox.project.path":        project.Path,
-			"devbox.project.php_version": project.PHPVersion,
-			"devbox.project.server_root": project.ServerRoot,
+			"alios.project.name":            project.Name,
+			"alios.project.path":            project.Path,
+			"alios.project.php_version":     project.PHPVersion,
+			"alios.project.server_root":     project.ServerRoot,
+			"alios.project.image_type":      project.ImageType,
+			"alios.project.image_source":    project.ImageSource,
+			"alios.project.image_url":       project.ImageURL,
+			"alios.project.dockerfile_path": project.DockerfilePath,
+			"alios.project.build_context":   project.BuildContext,
+			"alios.project.build_args":      serializeBuildArgs(project.BuildArgs),
+			"alios.project.framework":       project.Framework,
+			"alios.project.env_hash":        EnvFileHash(project.Path),
 		},
 		DNS: dnsServers,
 	}
@@ -607,7 +839,7 @@ func hostUser() string {
 
 // getContainerName returns the container name for a project
 func (m *Manager) getContainerName(projectName string) string {
-	return fmt.Sprintf("devbox_php_%s", projectName)
+	return fmt.Sprintf("alios_php_%s", projectName)
 }
 
 // ValidatePHPVersion checks if a PHP version is valid
@@ -628,16 +860,16 @@ func GetAvailablePHPVersions() []string {
 
 // getRunningDatabases returns a list of currently running database services
 func (m *Manager) getRunningDatabases() ([]string, error) {
-	containers, err := m.docker.ListContainers("label=devbox.service.type=database")
+	containers, err := m.docker.ListContainers("label=alios.service.type=database")
 	if err != nil {
 		return nil, err
 	}
 
 	var databases []string
 	for _, container := range containers {
-		// Extract database name from container name (devbox_mysql -> mysql)
-		if strings.HasPrefix(container, "devbox_") && !strings.Contains(container, "_nginx") && !strings.Contains(container, "_mailhog") {
-			dbName := strings.TrimPrefix(container, "devbox_")
+		// Extract database name from container name (alios_mysql -> mysql)
+		if strings.HasPrefix(container, "alios_") && !strings.Contains(container, "_caddy") && !strings.Contains(container, "_mailhog") {
+			dbName := strings.TrimPrefix(container, "alios_")
 			databases = append(databases, dbName)
 		}
 	}

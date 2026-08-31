@@ -6,7 +6,7 @@ import (
 )
 
 const (
-	// Version is the current version of Devbox
+	// Version is the current version of Alios CLI
 	Version = "0.9.9"
 
 	// ClientID is the GitHub OAuth application client ID
@@ -15,8 +15,8 @@ const (
 	// DefaultPHPVersion is the default PHP version for new projects
 	DefaultPHPVersion = "8.4"
 
-	// DevboxBinary is the installation path for the devbox binary
-	DevboxBinary = "/usr/local/bin/devbox"
+	// AliosBinary is the installation path for the alios binary
+	AliosBinary = "/usr/local/bin/alios"
 )
 
 // Config holds the application configuration
@@ -70,7 +70,7 @@ func (c *Config) initialize() {
 	c.Databases = make(map[string]DatabaseConfig)
 
 	// Network detection - use default or environment variable
-	if hostIP := os.Getenv("DEVBOX_HOST_IP"); hostIP != "" {
+	if hostIP := os.Getenv("ALIOS_HOST_IP"); hostIP != "" {
 		c.HostIP = hostIP
 	} else {
 		c.HostIP = "127.0.0.1" // default
@@ -142,30 +142,30 @@ func (c *Config) RemoveDatabase(name string) error {
 // loadFromEnvironment loads configuration from environment variables
 func (c *Config) loadFromEnvironment() {
 	// Default PHP version
-	if version := os.Getenv("DEVBOX_DEFAULT_PHP_VERSION"); version != "" {
+	if version := os.Getenv("ALIOS_DEFAULT_PHP_VERSION"); version != "" {
 		c.DefaultPHPVersion = version
 	}
 
 	// Network settings
-	if hostIP := os.Getenv("DEVBOX_HOST_IP"); hostIP != "" {
+	if hostIP := os.Getenv("ALIOS_HOST_IP"); hostIP != "" {
 		c.HostIP = hostIP
 	}
 
-	if dnsPort := os.Getenv("DEVBOX_DNS_PORT"); dnsPort != "" {
+	if dnsPort := os.Getenv("ALIOS_DNS_PORT"); dnsPort != "" {
 		c.DNSPort = dnsPort
 	}
 
 	// Feature flags
-	if enableSSL := os.Getenv("DEVBOX_ENABLE_SSL"); enableSSL != "" {
+	if enableSSL := os.Getenv("ALIOS_ENABLE_SSL"); enableSSL != "" {
 		c.EnableSSL = enableSSL == "true" || enableSSL == "1"
 	}
 
-	if enableDNS := os.Getenv("DEVBOX_ENABLE_DNS"); enableDNS != "" {
+	if enableDNS := os.Getenv("ALIOS_ENABLE_DNS"); enableDNS != "" {
 		c.EnableDNS = enableDNS == "true" || enableDNS == "1"
 	}
 
 	// Auto start global services
-	if autoStart := os.Getenv("DEVBOX_AUTO_START_GLOBAL"); autoStart != "" {
+	if autoStart := os.Getenv("ALIOS_AUTO_START_GLOBAL"); autoStart != "" {
 		c.AutoStartGlobal = autoStart == "true" || autoStart == "1"
 	}
 }
@@ -186,9 +186,9 @@ func (c *Config) GetDatabases() map[string]DatabaseConfig {
 	return databases
 }
 
-// IsInstalled checks if Devbox is installed
+// IsInstalled checks if Alios is installed
 func (c *Config) IsInstalled() bool {
-	_, err := os.Stat(DevboxBinary)
+	_, err := os.Stat(AliosBinary)
 	return err == nil
 }
 
@@ -206,7 +206,7 @@ type NetworkConfig struct {
 // GetNetworkConfig returns the default network configuration
 func GetNetworkConfig() *NetworkConfig {
 	return &NetworkConfig{
-		BridgeName:  "devbox_internal",
-		InternalNet: "devbox_internal",
+		BridgeName:  "alios_internal",
+		InternalNet: "alios_internal",
 	}
 }

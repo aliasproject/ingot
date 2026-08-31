@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/aliasproject/devbox/internal/commands"
-	"github.com/aliasproject/devbox/internal/config"
-	"github.com/aliasproject/devbox/internal/docker"
-	"github.com/aliasproject/devbox/internal/utils"
+	"github.com/aliasproject/alios-cli/internal/commands"
+	"github.com/aliasproject/alios-cli/internal/config"
+	"github.com/aliasproject/alios-cli/internal/docker"
+	"github.com/aliasproject/alios-cli/internal/utils"
 )
 
 func main() {
@@ -42,14 +42,15 @@ func main() {
 
 	// Check for first-time installation
 	if !cfg.IsInstalled() {
-		fmt.Println(utils.Colorize("[DEVBOX]", utils.ColorCyan) + " Welcome to Devbox! Installing for first-time use...")
+		fmt.Println(utils.Colorize("[ALIOS]", utils.ColorCyan) + " Welcome to Alios! Installing for first-time use...")
 		installer := commands.NewInstaller(dockerClient, cfg, handler.GetServices(), handler.GetSSL(), handler.GetGitHub())
 		if err := installer.Install(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error during installation: %v\n", err)
+			fmt.Fprintln(os.Stderr, "Run 'alios install' to retry - it resumes from wherever this left off.")
 			os.Exit(1)
 		}
-		fmt.Println("\n" + utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Installation complete! You can now use Devbox.")
-		fmt.Println("\nRun 'devbox help' to see available commands.")
+		fmt.Println("\n" + utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Installation complete! You can now use Alios.")
+		fmt.Println("\nRun 'alios help' to see available commands.")
 		return
 	}
 
