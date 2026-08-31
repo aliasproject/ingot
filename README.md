@@ -26,12 +26,14 @@ labels.
 
 ## Installation
 
-Download the binary for your platform from the
-[latest release](https://github.com/aliasproject/alios-cli/releases/latest),
-e.g. for Linux/amd64:
+This is a private repository, so a plain `curl` against the release page
+won't work (GitHub returns a 404 body without authentication, and `curl`
+saves that silently as if it succeeded unless you pass `-f`). Use the
+[GitHub CLI](https://cli.github.com/) instead, which handles the
+authentication for you - e.g. for Linux/amd64:
 
 ```bash
-curl -L -o alios https://github.com/aliasproject/alios-cli/releases/latest/download/alios-linux-amd64
+gh release download --repo aliasproject/alios-cli -p alios-linux-amd64 -O alios
 chmod +x alios
 ./alios
 ```
