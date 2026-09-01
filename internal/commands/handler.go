@@ -324,17 +324,22 @@ func (h *Handler) handleInstall() error {
 }
 
 // isFullySetUp reports whether installation actually finished - the binary
-// is in place, global services are running, and the CA certificate exists -
-// rather than just checking config.IsInstalled(), which only means the
-// binary got copied (step 4 of Install's ~8 steps). A failure anywhere after
-// that point (e.g. a registry pull denied while starting global services)
-// left IsInstalled() true with setup still incomplete, and handleInstall
-// used to treat that as "done" and refuse to do anything further. Every step
+// is in place, global services are running, the CA certificate exists, and
+// that CA is trusted on this host - rather than just checking
+// config.IsInstalled(), which only means the binary got copied (step 4 of
+// Install's ~8 steps). A failure anywhere after that point (e.g. a registry
+// pull denied while starting global services, or the user declining the CA
+// trust prompt) left IsInstalled() true with setup still incomplete, and
+// handleInstall used to treat that as "done" and refuse to do anything
+// further - notably, CAExists() alone can't tell a generated-and-trusted CA
+// apart from one that's generated but still untrusted, so a declined/
+// interrupted trust step used to be silently masked forever. Every step
 // Install runs is itself safe to repeat (compose up, the CA-exists check,
-// the binary copy are all idempotent), so falling through to installer.Install()
-// here resumes from wherever a previous attempt stopped instead of starting over.
+// the binary copy, the trust-install prompt are all idempotent), so falling
+// through to installer.Install() here resumes from wherever a previous
+// attempt stopped instead of starting over.
 func (h *Handler) isFullySetUp() bool {
-	return h.config.IsInstalled() && h.services.IsRunning() && h.ssl.CAExists()
+	return h.config.IsInstalled() && h.services.IsRunning() && h.ssl.CAExists() && h.ssl.IsCertificateInstalled()
 }
 
 // ensureUpdaterAuthenticated makes sure the updater has a GitHub token before
@@ -556,6 +561,17 @@ func (h *Handler) handleStart(args ...string) error {
 				"  2. CA certificate exists (alios cert verify)\n"+
 				"  3. Try running: alios global restart\n"+
 				"Error details: %w", err)
+		}
+
+		// The certificate just generated is only valid in the browser if the
+		// CA that signed it is trusted on this host - that's a separate,
+		// one-time step (`alios cert install`) that can be skipped or
+		// interrupted independently of SSL setup succeeding here. Surface it
+		// now rather than let the user discover it as a silent "Not Secure"
+		// warning in Chrome.
+		if !h.ssl.IsCertificateInstalled() {
+			fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow) + " The CA certificate isn't trusted on this machine yet - your browser will show this site as untrusted.\n")
+			fmt.Println("   Run 'alios cert install' to trust it, then restart your browser.")
 		}
 	}
 

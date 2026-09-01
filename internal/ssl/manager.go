@@ -304,13 +304,27 @@ func (m *Manager) InstallCertificate() error {
 
 // VerifyCertificate checks if the CA certificate is installed
 func (m *Manager) VerifyCertificate() error {
-	installed := m.isCertificateInstalled()
+	installed := m.IsCertificateInstalled()
 
 	if installed {
 		fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " CA certificate is installed in the system")
 	} else {
 		fmt.Println(utils.Colorize("[ERROR]", utils.ColorRed) + " CA certificate is not installed")
 		fmt.Println("Run 'alios cert install' to install it")
+	}
+
+	// System trust (checked above) doesn't imply Chrome/Firefox trust it too
+	// on Linux - they read their own NSS databases instead, which some
+	// distros never populate from the system store (see
+	// installCertIntoNSSDatabases). Report it separately so that gap is
+	// visible here instead of only as an unexplained browser warning.
+	if runtime.GOOS == "linux" {
+		if m.isCertificateInstalledInChromeNSSDB() {
+			fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " CA certificate is trusted by Chrome/Chromium (NSS)")
+		} else {
+			fmt.Println(utils.Colorize("[ERROR]", utils.ColorRed) + " CA certificate is not trusted by Chrome/Chromium (NSS) - it may still show as untrusted in the browser even though the system trusts it")
+			fmt.Println("Run 'alios cert install' to fix it")
+		}
 	}
 
 	// Check if CA certificate exists in Docker volume
@@ -339,7 +353,7 @@ func (m *Manager) DebugCertificate() error {
 
 	// Check system installation
 	fmt.Printf("\nSystem Installation: ")
-	if m.isCertificateInstalled() {
+	if m.IsCertificateInstalled() {
 		fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Installed")
 		m.showSystemCertificateInfo()
 	} else {
@@ -496,6 +510,18 @@ func (m *Manager) installCertMacOS(caPath string) error {
 	return nil
 }
 
+// installCertLinux trusts the CA two separate ways: the system-wide anchor
+// store (openssl/curl/GnuTLS-based tools honor this) and, directly, any NSS
+// certificate databases on the machine. These are NOT the same trust store:
+// Chrome/Chromium and Firefox on Linux verify server certificates against
+// NSS's own databases (~/.pki/nssdb for Chrome, a profile's cert9.db for
+// Firefox), not the system anchor store. Some distros (Fedora/RHEL via
+// update-ca-trust) run an extraction hook that propagates the system store
+// into NSS automatically; Arch's ca-certificates-utils does not - trust
+// anchor succeeds there and every openssl-based tool trusts the result, but
+// Chrome still shows it as untrusted. mkcert works around exactly this by
+// importing into NSS directly instead of relying on the system store, so we
+// do the same rather than assume the two are in sync.
 func (m *Manager) installCertLinux(caPath string) error {
 	fmt.Println("Installing certificate on Linux...")
 	fmt.Println(caPath)
@@ -503,27 +529,95 @@ func (m *Manager) installCertLinux(caPath string) error {
 	// Check if 'trust' is available
 	_, err := exec.LookPath("trust")
 	if err == nil {
-		return exec.Command("sudo", "trust", "anchor", caPath).Run()
+		if err := exec.Command("sudo", "trust", "anchor", caPath).Run(); err != nil {
+			return err
+		}
+	} else {
+		// Copy to system certificate store
+		destPath := "/usr/local/share/ca-certificates/alios-ca.crt"
+
+		cmd := exec.Command("sudo", "cp", caPath, destPath)
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("failed to copy certificate: %w", err)
+		}
+
+		// Update certificate store
+		cmd = exec.Command("sudo", "update-ca-certificates")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("failed to update certificates: %w", err)
+		}
 	}
 
-	// Copy to system certificate store
-	destPath := "/usr/local/share/ca-certificates/alios-ca.crt"
-
-	cmd := exec.Command("sudo", "cp", caPath, destPath)
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to copy certificate: %w", err)
-	}
-
-	// Update certificate store
-	cmd = exec.Command("sudo", "update-ca-certificates")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to update certificates: %w", err)
-	}
+	m.installCertIntoNSSDatabases(caPath)
 
 	return nil
+}
+
+// installCertIntoNSSDatabases imports the CA into Chrome's default NSS
+// database and every Firefox profile that has one, so those browsers trust
+// it independently of the system-wide anchor store. Best-effort: this runs
+// after the system store install already succeeded, so a missing certutil
+// or an individual import failure is reported but doesn't fail
+// InstallCertificate - the CA is still correctly trusted by non-NSS tools.
+func (m *Manager) installCertIntoNSSDatabases(caPath string) {
+	certutilPath, err := exec.LookPath("certutil")
+	if err != nil {
+		fmt.Println(utils.Colorize("[WARNING]", utils.ColorYellow) + " certutil not found (part of the 'nss' package) - skipping Chrome/Firefox certificate trust store. Those browsers may still show this certificate as untrusted even though it's trusted system-wide.")
+		return
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+
+	chromeDB := filepath.Join(home, ".pki", "nssdb")
+	if _, err := os.Stat(filepath.Join(chromeDB, "cert9.db")); os.IsNotExist(err) {
+		// Doesn't exist until Chrome first runs, or until we create it here
+		// (mkcert does the same for the same reason).
+		if err := os.MkdirAll(chromeDB, 0700); err == nil {
+			exec.Command(certutilPath, "-d", "sql:"+chromeDB, "-N", "--empty-password").Run()
+		}
+	}
+
+	for _, dir := range append([]string{chromeDB}, firefoxProfileDirs(home)...) {
+		if _, err := os.Stat(filepath.Join(dir, "cert9.db")); err != nil {
+			continue
+		}
+
+		cmd := exec.Command(certutilPath, "-d", "sql:"+dir, "-A",
+			"-t", "C,,",
+			"-n", "Alias Project CA Self Signed CN",
+			"-i", caPath)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: failed to trust certificate in %s: %v\n%s\n", dir, err, output)
+		}
+	}
+}
+
+// firefoxProfileDirs returns every Firefox profile directory under
+// ~/.mozilla/firefox that has its own NSS certificate database.
+func firefoxProfileDirs(home string) []string {
+	base := filepath.Join(home, ".mozilla", "firefox")
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		return nil
+	}
+
+	var dirs []string
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		profileDir := filepath.Join(base, e.Name())
+		if _, err := os.Stat(filepath.Join(profileDir, "cert9.db")); err == nil {
+			dirs = append(dirs, profileDir)
+		}
+	}
+	return dirs
 }
 
 func (m *Manager) installCertWindows(caPath string) error {
@@ -541,7 +635,14 @@ func (m *Manager) installCertWindows(caPath string) error {
 	return nil
 }
 
-func (m *Manager) isCertificateInstalled() bool {
+// IsCertificateInstalled reports whether the CA certificate is trusted on
+// this host - distinct from CAExists, which only checks that the CA file
+// has been generated into the alios_certs volume. A CA can exist without
+// being trusted (e.g. the user declined the install prompt, or a prior
+// `alios install` was interrupted between generating it and trusting it),
+// in which case every certificate it signs still shows as untrusted in the
+// browser even though every other setup step succeeded.
+func (m *Manager) IsCertificateInstalled() bool {
 	switch runtime.GOOS {
 	case "darwin":
 		cmd := exec.Command("security", "find-certificate", "-c", "AliasProjectCASelfSigned", "/Library/Keychains/System.keychain")
@@ -577,6 +678,24 @@ func (m *Manager) isCertificateInstalledViaTrust() bool {
 	}
 	normalized := strings.ToLower(strings.Join(strings.Fields(string(output)), ""))
 	return strings.Contains(normalized, "aliasprojectcaselfsigned")
+}
+
+// isCertificateInstalledInChromeNSSDB checks Chrome/Chromium's default NSS
+// certificate database (~/.pki/nssdb) directly, since that - not the
+// system-wide trust anchor store - is what Chrome on Linux actually
+// consults. See installCertIntoNSSDatabases for why the two can disagree.
+func (m *Manager) isCertificateInstalledInChromeNSSDB() bool {
+	certutilPath, err := exec.LookPath("certutil")
+	if err != nil {
+		return false
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	dir := filepath.Join(home, ".pki", "nssdb")
+	cmd := exec.Command(certutilPath, "-L", "-d", "sql:"+dir, "-n", "Alias Project CA Self Signed CN")
+	return cmd.Run() == nil
 }
 
 func (m *Manager) showSystemCertificateInfo() {
