@@ -1,12 +1,14 @@
 #!/bin/bash
 
-# Minimal release script for Alios CLI
+# Release script for Alios CLI: bumps the version, builds binaries for every
+# platform, then commits + tags the bump and publishes a GitHub release with
+# the binaries attached. Releases are distributed via GitHub Releases
+# directly (internal/updater checks the GitHub API) -- there's no separate
+# manifest/cloud-storage upload step.
 set -e
 
 # Configuration
 VERSION="${1:-}"
-BUCKET="alios-cli-updates"
-BUCKET_URL="https://${BUCKET}.s3.amazonaws.com"
 
 # Colors
 RED='\033[0;31m'
@@ -24,6 +26,14 @@ fi
 
 NOTES="${2:-Bug fixes and improvements}"
 
+REPO_ROOT="$(cd .. && pwd)"
+
+# A dirty tree would otherwise get swept into the version-bump commit below.
+if [ -n "$(git -C "$REPO_ROOT" status --porcelain)" ]; then
+    echo -e "${RED}Error: working tree is not clean -- commit or stash first${NC}"
+    exit 1
+fi
+
 echo -e "${GREEN}Building Alios v${VERSION}${NC}"
 
 # Update version in code. Anchored to a line starting with "Version" (after
@@ -33,6 +43,9 @@ echo -e "${GREEN}Building Alios v${VERSION}${NC}"
 echo "Updating version..."
 sed -i.bak -E "s/^([[:space:]]*)Version = \".*\"/\1Version = \"${VERSION}\"/" ../internal/config/config.go
 rm ../internal/config/config.go.bak
+
+git -C "$REPO_ROOT" add internal/config/config.go
+git -C "$REPO_ROOT" commit -m "Bump version to ${VERSION}"
 
 # Build directory
 BUILD_DIR="./build"
@@ -58,15 +71,8 @@ build_binary() {
         -o "$BUILD_DIR/$OUTPUT" \
         ../cmd/main.go
 
-    # Calculate SHA256
-    local SHA256=$(sha256sum "$BUILD_DIR/$OUTPUT" | awk '{print $1}')
     local SIZE=$(stat -f%z "$BUILD_DIR/$OUTPUT" 2>/dev/null || stat -c%s "$BUILD_DIR/$OUTPUT")
-
     echo "    Size: $(echo $SIZE | awk '{printf "%.1fMB", $1/1024/1024}')"
-    echo "    SHA256: ${SHA256:0:8}..."
-
-    # Store for manifest
-    echo "${GOOS}_${GOARCH}|$OUTPUT|$SHA256|$SIZE" >> "$BUILD_DIR/files.txt"
 }
 
 # Build all platforms
@@ -76,58 +82,27 @@ build_binary "linux" "amd64"
 build_binary "linux" "arm64"
 build_binary "windows" "amd64"
 
-# Generate manifest.json
-echo -e "${YELLOW}Creating manifest...${NC}"
-
-cat > "$BUILD_DIR/manifest.json" <<EOF
-{
-  "version": "${VERSION}",
-  "date": "$(date -u +"%Y-%m-%d")",
-  "notes": "${NOTES}",
-  "critical": false,
-  "downloads": {
-EOF
-
-# Add downloads from files.txt
-FIRST=true
-while IFS='|' read -r platform filename sha256 size; do
-    if [ "$FIRST" = true ]; then
-        FIRST=false
-    else
-        echo "," >> "$BUILD_DIR/manifest.json"
-    fi
-
-    cat >> "$BUILD_DIR/manifest.json" <<EOF
-    "${platform}": {
-      "url": "${BUCKET_URL}/stable/${VERSION}/${filename}",
-      "sha256": "${sha256}",
-      "size": ${size}
-    }
-EOF
-done < "$BUILD_DIR/files.txt"
-
-cat >> "$BUILD_DIR/manifest.json" <<EOF
-
-  }
-}
-EOF
-
-rm "$BUILD_DIR/files.txt"
-
 echo -e "${GREEN}✓ Build complete!${NC}"
 echo ""
 echo "Files in $BUILD_DIR:"
 ls -lh "$BUILD_DIR"
 
-# Upload to S3
 echo ""
-echo -e "${YELLOW}Upload to S3:${NC}"
+echo -e "${YELLOW}Publishing to GitHub...${NC}"
+
+git -C "$REPO_ROOT" push origin HEAD
+git -C "$REPO_ROOT" tag "v${VERSION}"
+git -C "$REPO_ROOT" push origin "v${VERSION}"
+
+gh release create "v${VERSION}" \
+    "$BUILD_DIR"/alios-darwin-amd64 \
+    "$BUILD_DIR"/alios-darwin-arm64 \
+    "$BUILD_DIR"/alios-linux-amd64 \
+    "$BUILD_DIR"/alios-linux-arm64 \
+    "$BUILD_DIR"/alios-windows-amd64.exe \
+    --repo aliasproject/alios-cli \
+    --title "v${VERSION}" \
+    --notes "$NOTES"
+
 echo ""
-echo "1. Upload binaries:"
-echo "   aws s3 cp $BUILD_DIR/ s3://${BUCKET}/stable/${VERSION}/ --recursive --exclude manifest.json"
-echo ""
-echo "2. Upload manifest:"
-echo "   aws s3 cp $BUILD_DIR/manifest.json s3://${BUCKET}/stable/ --cache-control 'max-age=300'"
-echo ""
-echo "3. Make public (if needed):"
-echo "   aws s3 cp s3://${BUCKET}/ s3://${BUCKET}/ --recursive --acl public-read"
+echo -e "${GREEN}✓ Released v${VERSION}: https://github.com/aliasproject/alios-cli/releases/tag/v${VERSION}${NC}"

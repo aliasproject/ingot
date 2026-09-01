@@ -52,7 +52,6 @@ type GitHubRelease struct {
 
 // Updater handles self-updates
 type Updater struct {
-	manifestURL string
 	httpClient  *http.Client
 	githubToken string
 	githubRepo  string
@@ -60,12 +59,6 @@ type Updater struct {
 
 // New creates a new updater instance
 func New() *Updater {
-	// Get manifest URL from environment or use default
-	manifestURL := os.Getenv("ALIOS_UPDATE_URL")
-	if manifestURL == "" {
-		manifestURL = "https://alios-cli-updates.s3.amazonaws.com/stable/manifest.json"
-	}
-
 	// Get GitHub configuration
 	githubRepo := os.Getenv("ALIOS_GITHUB_REPO")
 	if githubRepo == "" {
@@ -73,27 +66,17 @@ func New() *Updater {
 	}
 
 	return &Updater{
-		manifestURL: manifestURL,
-		httpClient:  &http.Client{Timeout: 30 * time.Second},
-		githubRepo:  githubRepo,
+		httpClient: &http.Client{Timeout: 30 * time.Second},
+		githubRepo: githubRepo,
 	}
 }
 
-// CheckForUpdate checks if a new version is available
+// CheckForUpdate checks if a new version is available. Releases are
+// published to GitHub directly (see scripts/release.sh) -- this repo is
+// private, so a GitHub token is required; there's no other distribution
+// channel to fall back to.
 func (u *Updater) CheckForUpdate() (*Release, bool, error) {
-	// Try GitHub releases first if token is available
-	if u.githubToken != "" {
-		release, err := u.fetchLatestGitHubRelease()
-		if err == nil {
-			isNewer := compareVersions(release.Version, config.Version) > 0
-			return release, isNewer, nil
-		}
-		// If GitHub fails, fall back to manifest
-		fmt.Printf("Warning: GitHub release check failed: %v\nFalling back to manifest...\n", err)
-	}
-
-	// Fall back to S3 manifest
-	release, err := u.fetchLatestRelease()
+	release, err := u.fetchLatestGitHubRelease()
 	if err != nil {
 		return nil, false, err
 	}
@@ -138,26 +121,6 @@ func (u *Updater) Update(force bool) error {
 // SetGitHubToken sets the GitHub token for accessing private repositories
 func (u *Updater) SetGitHubToken(token string) {
 	u.githubToken = token
-}
-
-// fetchLatestRelease fetches the latest release information from S3 manifest
-func (u *Updater) fetchLatestRelease() (*Release, error) {
-	resp, err := u.httpClient.Get(u.manifestURL)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to fetch manifest: %s", resp.Status)
-	}
-
-	var release Release
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return nil, err
-	}
-
-	return &release, nil
 }
 
 // fetchLatestGitHubRelease fetches the latest release from GitHub

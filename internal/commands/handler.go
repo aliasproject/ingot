@@ -337,50 +337,40 @@ func (h *Handler) isFullySetUp() bool {
 	return h.config.IsInstalled() && h.services.IsRunning() && h.ssl.CAExists()
 }
 
-// handleUpdate updates Alios to the latest version
-func (h *Handler) handleUpdate() error {
-	// Set GitHub token if available for private repo access
+// ensureUpdaterAuthenticated makes sure the updater has a GitHub token before
+// checking/downloading a release. Releases are published to GitHub directly
+// and this is a private repo, so there's no other channel to fall back to if
+// authentication isn't available -- the caller's subsequent CheckForUpdate/
+// Update call will simply fail with a clear GitHub API error in that case.
+func (h *Handler) ensureUpdaterAuthenticated() {
 	if token := h.config.GetGithubToken(); token != "" {
 		h.updater.SetGitHubToken(token)
-	} else {
-		// Try to ensure GitHub authentication for update checks
-		fmt.Println("🔍 Checking for updates...")
-		if err := h.github.EnsureAuthenticated(); err != nil {
-			fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow) + " Warning: No GitHub authentication available for private repo updates.\n")
-			fmt.Printf("   Run 'alios github-auth' to authenticate for access to latest releases.\n")
-			fmt.Printf("   Falling back to public update manifest...\n\n")
-		} else {
-			// Authentication successful, set token
-			if token := h.config.GetGithubToken(); token != "" {
-				h.updater.SetGitHubToken(token)
-				fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " GitHub authentication found, checking private repository...")
-			}
-		}
+		return
 	}
+
+	fmt.Println("🔍 Checking for updates...")
+	if err := h.github.EnsureAuthenticated(); err != nil {
+		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow) + " Warning: No GitHub authentication available.\n")
+		fmt.Printf("   Run 'alios github-auth' to authenticate for access to releases.\n\n")
+		return
+	}
+
+	if token := h.config.GetGithubToken(); token != "" {
+		h.updater.SetGitHubToken(token)
+		fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " GitHub authentication found, checking for updates...")
+	}
+}
+
+// handleUpdate updates Alios to the latest version
+func (h *Handler) handleUpdate() error {
+	h.ensureUpdaterAuthenticated()
 
 	return h.updater.Update(false)
 }
 
 // handleCheckUpdate checks for available updates without installing
 func (h *Handler) handleCheckUpdate() error {
-	// Set GitHub token if available for private repo access
-	if token := h.config.GetGithubToken(); token != "" {
-		h.updater.SetGitHubToken(token)
-	} else {
-		// Try to ensure GitHub authentication for update checks
-		fmt.Println("🔍 Checking for updates...")
-		if err := h.github.EnsureAuthenticated(); err != nil {
-			fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow) + " Warning: No GitHub authentication available for private repo updates.\n")
-			fmt.Printf("   Run 'alios github-auth' to authenticate for access to latest releases.\n")
-			fmt.Printf("   Falling back to public update manifest...\n\n")
-		} else {
-			// Authentication successful, set token
-			if token := h.config.GetGithubToken(); token != "" {
-				h.updater.SetGitHubToken(token)
-				fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " GitHub authentication found, checking private repository...")
-			}
-		}
-	}
+	h.ensureUpdaterAuthenticated()
 
 	// Check for updates
 	release, isNewer, err := h.updater.CheckForUpdate()
