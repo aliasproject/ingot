@@ -2,7 +2,7 @@
 
 Alios CLI (`alios`) is a single-binary local development environment manager
 for PHP projects. It's the local-dev companion to
-[Alios](https://github.com/aliasproject), the cloud infrastructure and
+[Alios](https://alios.app), the cloud infrastructure and
 application management platform — local environments are built to mirror
 production as closely as possible: the same Caddy reverse proxy, the same
 prebuilt-vs-custom-Dockerfile image model, the same config-injection pattern.
