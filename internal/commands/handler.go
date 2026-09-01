@@ -102,6 +102,8 @@ func (h *Handler) Execute(args []string) error {
 		return h.handleStop()
 	case "restart":
 		return h.handleRestart()
+	case "rebuild":
+		return h.handleRebuild()
 	case "pause":
 		return h.handlePause()
 	case "resume":
@@ -703,6 +705,25 @@ func (h *Handler) handleRestart() error {
 		return err
 	}
 	return h.handleStart()
+}
+
+// handleRebuild forces the current project's container to be recreated from
+// a freshly resolved image. Start already detects a stale prebuilt/pulled
+// image on its own; this is for when you've just edited a custom Dockerfile
+// (image=build) and want that picked up immediately rather than only on the
+// next PHP-version or .env change.
+func (h *Handler) handleRebuild() error {
+	project, err := h.projects.GetCurrentProject()
+	if err != nil {
+		return err
+	}
+
+	if err := h.projects.Rebuild(); err != nil {
+		return fmt.Errorf("failed to rebuild project: %w", err)
+	}
+
+	fmt.Printf(utils.Colorize("[SUCCESS]", utils.ColorGreen)+" '%s' rebuilt and running\n", project.Name)
+	return nil
 }
 
 // handleRemove removes the current project
@@ -1324,6 +1345,8 @@ COMMANDS:
     start [version]    Start project (with optional PHP version)
     stop               Stop the current project
     restart            Restart the current project
+    rebuild            Force-recreate the container from a fresh image
+                        (e.g. after editing a custom Dockerfile)
     remove             Remove the current project
     status             Show project status
     list               List all projects

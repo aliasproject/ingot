@@ -271,14 +271,28 @@ func (m *Manager) Start(phpVersion string, imageChoice ImageChoice, serverRoot .
 			existingEnvHash := info.Labels["alios.project.env_hash"]
 			envChanged := existingEnvHash != EnvFileHash(project.Path)
 
-			if versionChanged || envChanged {
-				reason := "PHP version changed"
-				if envChanged && !versionChanged {
-					reason = ".env changed"
-				} else if envChanged && versionChanged {
-					reason = "PHP version and .env changed"
+			// Only worth a registry round-trip when nothing else already
+			// forces a recreate -- resolveImage builds the prebuilt tag off
+			// project.PHPVersion, so this must run with the version this
+			// start actually committed to, not whatever was on disk before.
+			stale := false
+			if !versionChanged && !envChanged {
+				project.PHPVersion = desiredPHPVersion
+				stale = m.imageIsStale(project, info)
+			}
+
+			if versionChanged || envChanged || stale {
+				var reasons []string
+				if versionChanged {
+					reasons = append(reasons, "PHP version changed")
 				}
-				fmt.Printf(utils.Colorize("[RESTARTING]", utils.ColorCyan)+" %s, recreating container...\n", reason)
+				if envChanged {
+					reasons = append(reasons, ".env changed")
+				}
+				if stale {
+					reasons = append(reasons, "a newer image is available")
+				}
+				fmt.Printf(utils.Colorize("[RESTARTING]", utils.ColorCyan)+" %s, recreating container...\n", strings.Join(reasons, " and "))
 				if err := m.docker.RemoveContainer(project.Container, true); err != nil {
 					return fmt.Errorf("failed to remove old container: %w", err)
 				}
@@ -310,6 +324,34 @@ func (m *Manager) Start(phpVersion string, imageChoice ImageChoice, serverRoot .
 	}
 
 	return nil
+}
+
+// Rebuild forces the current project's container to be recreated from a
+// freshly resolved image, regardless of whether Start would otherwise
+// notice anything changed. Start's own staleness check (imageIsStale) only
+// covers registry-backed images -- a local Dockerfile build has no upstream
+// tag to compare against, so editing one and running "start" again would
+// otherwise keep the old container running forever. This is the deliberate,
+// on-demand escape hatch for that case (and works the same way for the
+// other image types too).
+func (m *Manager) Rebuild() error {
+	project, err := m.GetCurrentProject()
+	if err != nil {
+		return err
+	}
+
+	if project.Status == "not initialized" {
+		return fmt.Errorf("no project to rebuild")
+	}
+
+	if m.docker.ContainerExists(project.Container) {
+		fmt.Printf(utils.Colorize("[REBUILDING]", utils.ColorCyan)+" Recreating '%s'...\n", project.Container)
+		if err := m.docker.RemoveContainer(project.Container, true); err != nil {
+			return fmt.Errorf("failed to remove existing container: %w", err)
+		}
+	}
+
+	return m.createContainer(project)
 }
 
 // Stop stops the project container
@@ -698,6 +740,104 @@ type ProjectStatus struct {
 	Uptime      string            `json:"uptime,omitempty"`
 }
 
+// resolveImage figures out which image a project's container should run,
+// pulling or building it as needed, and returns the reference to run it
+// with. Mirrors production Alios's image_type/custom_image_source decision
+// tree (ResolvePrebuiltImage.php, CreateApplication.php) - see the
+// Project/ImageChoice doc comments.
+//
+// Factored out of createContainer so Start can also call it to check an
+// already-running container for staleness (see imageIsStale) before
+// deciding whether starting it as-is is actually correct, and so Rebuild
+// can force the same resolution on demand.
+func (m *Manager) resolveImage(project *Project) (string, error) {
+	switch project.ImageType {
+	case "custom":
+		switch project.ImageSource {
+		case "pull":
+			image := project.ImageURL
+			if err := m.docker.PullImage(image, nil); err != nil {
+				// Continue even if pull fails - image might exist locally
+				fmt.Printf("Warning: Failed to pull image: %v\n", err)
+			}
+			return image, nil
+		case "build":
+			// Local build tag, mirroring production's local/{site}:latest
+			// convention. No PullImage call at all: the Dockerfile itself
+			// encodes whatever the image needs, same as production skipping
+			// registry auth entirely for a local build.
+			image := fmt.Sprintf("local/%s:latest", project.Name)
+			if err := m.docker.BuildImage(&docker.BuildConfig{
+				Tag:            image,
+				DockerfilePath: filepath.Join(project.Path, project.DockerfilePath),
+				Context:        filepath.Join(project.Path, project.BuildContext),
+				BuildArgs:      project.BuildArgs,
+			}); err != nil {
+				return "", fmt.Errorf("failed to build image: %w", err)
+			}
+			return image, nil
+		default:
+			return "", fmt.Errorf("project has image_type=custom but no image_source set")
+		}
+	default: // "prebuilt"
+		tag := fmt.Sprintf("%s-frankenphp-dev", project.PHPVersion)
+		if project.Framework == "wordpress" {
+			tag = fmt.Sprintf("%s-frankenphp-wordpress-dev", project.PHPVersion)
+		}
+		image := fmt.Sprintf("ghcr.io/aliasproject/php:%s", tag)
+		if err := m.docker.PullImage(image, nil); err != nil {
+			// Continue even if pull fails - image might exist locally
+			fmt.Printf("Warning: Failed to pull image: %v\n", err)
+		}
+		return image, nil
+	}
+}
+
+// imageIsStale reports whether a registry-backed image (prebuilt, or an
+// explicitly pulled custom image) has moved on since the given container
+// was created from it. Always returns false for a local Dockerfile build --
+// there's no upstream tag for it to drift from; Rebuild is the deliberate,
+// on-demand way to pick up a local Dockerfile edit instead.
+//
+// This exists because Start only ever pulled fresh at first container
+// creation (see createContainer) -- a container left running for months
+// would silently keep whatever image it was created from even after the
+// tag it came from published security/hardening fixes. Same shape of bug
+// as recordDeployedImageDigest() in the main Alios platform trusting a
+// stale cache instead of checking fresh; same fix, checked here instead.
+func (m *Manager) imageIsStale(project *Project, info *docker.ContainerInfo) bool {
+	if project.ImageType == "custom" && project.ImageSource != "pull" {
+		return false
+	}
+
+	image, err := m.resolveImage(project)
+	if err != nil {
+		return false
+	}
+
+	latestID, err := m.docker.GetImageID(image)
+	if err != nil || latestID == "" {
+		return false
+	}
+
+	return latestID != info.ImageID
+}
+
+// hostUIDRootGroup returns "uid:0" for the current host user -- the
+// container's main process should own the bind-mounted project files as
+// this host user (so a plain host-side edit/touch never needs a manual
+// chown), while staying in GID 0 to keep the write access the base image
+// already grants group 0 on its own runtime directories (Caddy config,
+// msmtp, etc. -- see docker-php's frankenphp Dockerfile). Falls back to
+// empty (container/image default) if detection fails.
+func hostUIDRootGroup() string {
+	u, err := user.Current()
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%s:0", u.Uid)
+}
+
 // createContainer creates a new container for the project
 func (m *Manager) createContainer(project *Project) error {
 	networkConfig := config.GetNetworkConfig()
@@ -707,46 +847,9 @@ func (m *Manager) createContainer(project *Project) error {
 		return fmt.Errorf("failed to create network: %w", err)
 	}
 
-	// Resolve which image to run. Mirrors production Alios's image_type/
-	// custom_image_source decision tree (ResolvePrebuiltImage.php,
-	// CreateApplication.php) - see the Project/ImageChoice doc comments.
-	var image string
-	switch project.ImageType {
-	case "custom":
-		switch project.ImageSource {
-		case "pull":
-			image = project.ImageURL
-			if err := m.docker.PullImage(image, nil); err != nil {
-				// Continue even if pull fails - image might exist locally
-				fmt.Printf("Warning: Failed to pull image: %v\n", err)
-			}
-		case "build":
-			// Local build tag, mirroring production's local/{site}:latest
-			// convention. No PullImage call at all: the Dockerfile itself
-			// encodes whatever the image needs, same as production skipping
-			// registry auth entirely for a local build.
-			image = fmt.Sprintf("local/%s:latest", project.Name)
-			if err := m.docker.BuildImage(&docker.BuildConfig{
-				Tag:            image,
-				DockerfilePath: filepath.Join(project.Path, project.DockerfilePath),
-				Context:        filepath.Join(project.Path, project.BuildContext),
-				BuildArgs:      project.BuildArgs,
-			}); err != nil {
-				return fmt.Errorf("failed to build image: %w", err)
-			}
-		default:
-			return fmt.Errorf("project has image_type=custom but no image_source set")
-		}
-	default: // "prebuilt"
-		tag := fmt.Sprintf("%s-frankenphp-dev", project.PHPVersion)
-		if project.Framework == "wordpress" {
-			tag = fmt.Sprintf("%s-frankenphp-wordpress-dev", project.PHPVersion)
-		}
-		image = fmt.Sprintf("ghcr.io/aliasproject/php:%s", tag)
-		if err := m.docker.PullImage(image, nil); err != nil {
-			// Continue even if pull fails - image might exist locally
-			fmt.Printf("Warning: Failed to pull image: %v\n", err)
-		}
+	image, err := m.resolveImage(project)
+	if err != nil {
+		return err
 	}
 
 	// Resolve the DNS container's live IP on the internal network rather than
@@ -791,6 +894,7 @@ func (m *Manager) createContainer(project *Project) error {
 		Detached: true,
 		Restart:  "unless-stopped",
 		Network:  networkConfig.BridgeName,
+		User:     hostUIDRootGroup(),
 		Volumes: []string{
 			fmt.Sprintf("%s:/app", project.Path),
 		},

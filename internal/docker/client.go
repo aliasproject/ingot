@@ -186,9 +186,16 @@ func (c *Client) StreamOutput(callback func(string), args ...string) error {
 
 // ContainerInfo holds information about a Docker container
 type ContainerInfo struct {
-	ID         string            `json:"id"`
-	Name       string            `json:"name"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// Image is the reference the container was run with (e.g. a tag) --
+	// this stays the same text even after that tag is re-pulled to a new
+	// digest, so it's no good for detecting staleness. ImageID is the
+	// actual resolved image ID this container is running, which is what
+	// changes when the tag moves; compare that against a freshly pulled
+	// image's ID (GetImageID) to tell if a running container is stale.
 	Image      string            `json:"image"`
+	ImageID    string            `json:"image_id"`
 	Status     string            `json:"status"`
 	State      string            `json:"state"`
 	Labels     map[string]string `json:"labels"`
@@ -219,6 +226,7 @@ func (c *Client) InspectContainer(name string) (*ContainerInfo, error) {
 	var containers []struct {
 		ID     string `json:"Id"`
 		Name   string `json:"Name"`
+		Image  string `json:"Image"` // resolved image ID, distinct from Config.Image below
 		Config struct {
 			Image  string            `json:"Image"`
 			Labels map[string]string `json:"Labels"`
@@ -250,6 +258,7 @@ func (c *Client) InspectContainer(name string) (*ContainerInfo, error) {
 		ID:        container.ID,
 		Name:      strings.TrimPrefix(container.Name, "/"),
 		Image:     container.Config.Image,
+		ImageID:   container.Image,
 		Status:    container.State.Status,
 		Labels:    container.Config.Labels,
 		CreatedAt: container.Created,
@@ -444,6 +453,10 @@ func (c *Client) RunContainer(config *ContainerConfig) error {
 		args = append(args, "--platform", config.Platform)
 	}
 
+	if config.User != "" {
+		args = append(args, "--user", config.User)
+	}
+
 	// Add volumes
 	for _, volume := range config.Volumes {
 		args = append(args, "-v", volume)
@@ -481,12 +494,15 @@ func (c *Client) RunContainer(config *ContainerConfig) error {
 
 // ContainerConfig holds configuration for running a container
 type ContainerConfig struct {
-	Name        string
-	Image       string
-	Detached    bool
-	Restart     string
-	Network     string
-	Platform    string
+	Name     string
+	Image    string
+	Detached bool
+	Restart  string
+	Network  string
+	Platform string
+	// User overrides the image's default USER, as "uid:gid". Leave empty to
+	// use whatever the image itself specifies.
+	User        string
 	Volumes     []string
 	Ports       []string
 	Environment map[string]string
@@ -534,6 +550,14 @@ func (c *Client) PullImage(image string, callback func(string)) error {
 		return c.StreamOutput(callback, "pull", image)
 	}
 	return c.Run("pull", image)
+}
+
+// GetImageID returns the local image ID (sha256:...) that a reference
+// currently resolves to. Call this after PullImage to compare against a
+// running container's ContainerInfo.ImageID and detect whether the tag has
+// moved since that container was created.
+func (c *Client) GetImageID(image string) (string, error) {
+	return c.RunWithOutput("image", "inspect", image, "--format", "{{.Id}}")
 }
 
 // BuildConfig holds configuration for building a Docker image from a Dockerfile
