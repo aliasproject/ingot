@@ -52,6 +52,18 @@ type Project struct {
 	BuildContext   string            // only meaningful when ImageSource == "build"; default "."
 	BuildArgs      map[string]string // only meaningful when ImageSource == "build"; values for the Dockerfile's no-default ARGs
 	Framework      string            // "" or "wordpress"; detected from the project directory
+
+	// Env holds user-supplied env vars for the container, managed with
+	// `alios env set/unset` and stored in the alios.project.env label. This
+	// is how a project gets config into its container the same way
+	// production supplies it (plain KEY=VALUE vars on `docker run`, see
+	// RunDockerContainer's buildEnvironmentVariables in the Alios platform
+	// repo). Alios deliberately does not read the project's own .env: the
+	// project directory is bind-mounted, so an app that reads .env itself
+	// (Laravel, etc.) already sees edits instantly, and injecting the same
+	// keys as real env vars would only shadow the file with a stale copy
+	// until the next restart.
+	Env map[string]string
 }
 
 // ImageChoice carries a project's first-init image and framework selection
@@ -126,6 +138,7 @@ func (m *Manager) GetCurrentProject() (*Project, error) {
 	}
 
 	buildArgs := parseBuildArgs(info.Labels["alios.project.build_args"])
+	env := parseEnv(info.Labels[envLabel])
 
 	status := "stopped"
 	if info.State == "running" {
@@ -149,6 +162,7 @@ func (m *Manager) GetCurrentProject() (*Project, error) {
 		BuildContext:   buildContext,
 		BuildArgs:      buildArgs,
 		Framework:      info.Labels["alios.project.framework"],
+		Env:            env,
 	}, nil
 }
 
@@ -258,36 +272,29 @@ func (m *Manager) Start(phpVersion string, imageChoice ImageChoice, serverRoot .
 
 	// Check if container exists
 	if m.docker.ContainerExists(project.Container) {
-		// Check if the existing container's PHP version or injected .env
-		// content is still current. Recreating on an .env change mirrors
-		// production: RunAndSwapContainer always recreates the container on
-		// any config change too, never patches env vars into a running one
-		// (Docker has no way to do that regardless).
+		// Check if the existing container's PHP version is still current.
+		// Env var changes never surface here: `alios env set/unset` recreates
+		// the container itself (Docker has no way to patch env vars into a
+		// running one, and neither does production's RunAndSwapContainer).
 		info, err := m.docker.InspectContainer(project.Container)
 		if err == nil {
 			existingVersion := info.Labels["alios.project.php_version"]
 			versionChanged := existingVersion != "" && existingVersion != desiredPHPVersion
-
-			existingEnvHash := info.Labels["alios.project.env_hash"]
-			envChanged := existingEnvHash != EnvFileHash(project.Path)
 
 			// Only worth a registry round-trip when nothing else already
 			// forces a recreate -- resolveImage builds the prebuilt tag off
 			// project.PHPVersion, so this must run with the version this
 			// start actually committed to, not whatever was on disk before.
 			stale := false
-			if !versionChanged && !envChanged {
+			if !versionChanged {
 				project.PHPVersion = desiredPHPVersion
 				stale = m.imageIsStale(project, info)
 			}
 
-			if versionChanged || envChanged || stale {
+			if versionChanged || stale {
 				var reasons []string
 				if versionChanged {
 					reasons = append(reasons, "PHP version changed")
-				}
-				if envChanged {
-					reasons = append(reasons, ".env changed")
 				}
 				if stale {
 					reasons = append(reasons, "a newer image is available")
@@ -507,6 +514,89 @@ func (m *Manager) ChangeServerRoot(newServerRoot string) error {
 		}
 	}
 
+	return nil
+}
+
+// SetEnv adds or replaces user env vars on the current project and recreates
+// the container so they take effect. Reserved infra keys are rejected. If the
+// container was stopped it's left stopped after the recreate, so this only
+// changes config, never whether the project is running.
+func (m *Manager) SetEnv(vars map[string]string) error {
+	for key := range vars {
+		if IsReservedEnvKey(key) {
+			return fmt.Errorf("%s is set by alios itself and cannot be overridden", key)
+		}
+	}
+
+	project, err := m.GetCurrentProject()
+	if err != nil {
+		return err
+	}
+	if project.Status == "not initialized" {
+		return fmt.Errorf("project not initialized")
+	}
+
+	if project.Env == nil {
+		project.Env = make(map[string]string)
+	}
+	changed := false
+	for key, value := range vars {
+		if existing, ok := project.Env[key]; !ok || existing != value {
+			project.Env[key] = value
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+
+	return m.recreateWithEnv(project)
+}
+
+// UnsetEnv removes user env vars from the current project and recreates the
+// container. Keys that aren't set are ignored.
+func (m *Manager) UnsetEnv(keys []string) error {
+	project, err := m.GetCurrentProject()
+	if err != nil {
+		return err
+	}
+	if project.Status == "not initialized" {
+		return fmt.Errorf("project not initialized")
+	}
+
+	changed := false
+	for _, key := range keys {
+		if _, ok := project.Env[key]; ok {
+			delete(project.Env, key)
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+
+	return m.recreateWithEnv(project)
+}
+
+// recreateWithEnv replaces the project's container with one carrying
+// project.Env, preserving the running/stopped state it had before. The
+// container has to be recreated even when stopped: its labels are the only
+// place the env vars persist, so removing it and waiting for the next start
+// would lose them.
+func (m *Manager) recreateWithEnv(project *Project) error {
+	wasRunning := project.Status == "running"
+
+	if err := m.docker.RemoveContainer(project.Container, true); err != nil {
+		return fmt.Errorf("failed to remove old container: %w", err)
+	}
+	if err := m.createContainer(project); err != nil {
+		return fmt.Errorf("failed to create new container: %w", err)
+	}
+	if !wasRunning {
+		if err := m.docker.StopContainer(project.Container, 10); err != nil {
+			return fmt.Errorf("failed to stop recreated container: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -861,26 +951,23 @@ func (m *Manager) createContainer(project *Project) error {
 		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Could not resolve alios_dns IP (%v); falling back to public DNS. .test domains will not resolve.\n", err)
 	}
 
-	// Load the project's own .env, if it has one, and inject it the same way
+	// Inject the project's user env vars (`alios env set`) the same way
 	// production supplies a site's config: plain KEY=VALUE env vars on the
 	// container (see RunDockerContainer's buildEnvironmentVariables in the
-	// Alios platform repo), just sourced from the local file instead of a
-	// database-backed setting. Set after copying in .env so these always win
-	// regardless of what .env contains - mirrors production setting
-	// SERVER_ROOT last, specifically so a stray env var can never silently
-	// override it. PORT matters beyond the prebuilt image's own defaults: a
-	// custom Dockerfile's baked Caddyfile can reference {$PORT} with no
-	// fallback of its own (production always supplies it - see
-	// buildDockerCommand's `-e PORT=...` - so its own Caddyfiles are never
-	// written to expect a default), and an empty substitution there is a
-	// hard Caddyfile parse failure, not a graceful fallback.
-	envVars, err := LoadEnvFile(project.Path)
-	if err != nil {
-		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Failed to read .env: %v\n", err)
-		envVars = nil
-	}
-	if envVars == nil {
-		envVars = make(map[string]string)
+	// Alios platform repo), just sourced from the container label instead of
+	// a database-backed setting. Alios's own infra vars are set after them
+	// so they always win - mirrors production setting SERVER_ROOT last,
+	// specifically so a stray env var can never silently override it (SetEnv
+	// also rejects these keys up front). PORT matters beyond the prebuilt
+	// image's own defaults: a custom Dockerfile's baked Caddyfile can
+	// reference {$PORT} with no fallback of its own (production always
+	// supplies it - see buildDockerCommand's `-e PORT=...` - so its own
+	// Caddyfiles are never written to expect a default), and an empty
+	// substitution there is a hard Caddyfile parse failure, not a graceful
+	// fallback.
+	envVars := make(map[string]string, len(project.Env)+4)
+	for key, value := range project.Env {
+		envVars[key] = value
 	}
 	envVars["SERVER_NAME"] = ":80"
 	envVars["SERVER_ROOT"] = project.ServerRoot
@@ -911,7 +998,7 @@ func (m *Manager) createContainer(project *Project) error {
 			"alios.project.build_context":   project.BuildContext,
 			"alios.project.build_args":      serializeBuildArgs(project.BuildArgs),
 			"alios.project.framework":       project.Framework,
-			"alios.project.env_hash":        EnvFileHash(project.Path),
+			envLabel:                        serializeEnv(project.Env),
 		},
 		DNS: dnsServers,
 	}

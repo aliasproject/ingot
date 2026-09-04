@@ -120,6 +120,8 @@ func (h *Handler) Execute(args []string) error {
 		return h.handleServerRoot(commandArgs)
 	case "image":
 		return h.handleImage(commandArgs)
+	case "env":
+		return h.handleEnv(commandArgs)
 
 	// Container interaction
 	case "exec", "run":
@@ -717,7 +719,7 @@ func (h *Handler) handleRestart() error {
 // a freshly resolved image. Start already detects a stale prebuilt/pulled
 // image on its own; this is for when you've just edited a custom Dockerfile
 // (image=build) and want that picked up immediately rather than only on the
-// next PHP-version or .env change.
+// next PHP-version change.
 func (h *Handler) handleRebuild() error {
 	project, err := h.projects.GetCurrentProject()
 	if err != nil {
@@ -907,6 +909,107 @@ func (h *Handler) handleServerRoot(args []string) error {
 		fmt.Println("Run 'alios start' to start with the new server root")
 	}
 	return nil
+}
+
+// handleEnv manages the env vars injected into the project container:
+//
+//	alios env list
+//	alios env set KEY=VALUE [KEY2=VALUE2 ...]
+//	alios env unset KEY [KEY2 ...]
+//
+// Values persist in the container's alios.project.env label; set/unset
+// recreate the container so the change takes effect immediately.
+func (h *Handler) handleEnv(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("missing env subcommand. Use: env list | env set KEY=VALUE ... | env unset KEY ...")
+	}
+
+	proj, err := h.projects.GetCurrentProject()
+	if err != nil {
+		return err
+	}
+
+	if proj.Status == "not initialized" {
+		return fmt.Errorf("project not initialized. Run 'alios start' first")
+	}
+
+	switch args[0] {
+	case "list", "ls":
+		if len(proj.Env) == 0 {
+			fmt.Println("No env vars set. Use 'alios env set KEY=VALUE' to add one")
+			return nil
+		}
+		for _, key := range project.SortedEnvKeys(proj.Env) {
+			fmt.Printf("%s=%s\n", key, proj.Env[key])
+		}
+		return nil
+
+	case "set":
+		if len(args) < 2 {
+			return fmt.Errorf("missing env vars. Use: env set KEY=VALUE [KEY2=VALUE2 ...]")
+		}
+		vars := make(map[string]string, len(args)-1)
+		for _, arg := range args[1:] {
+			key, value, err := project.ParseEnvPair(arg)
+			if err != nil {
+				return err
+			}
+			vars[key] = value
+		}
+
+		if err := h.projects.SetEnv(vars); err != nil {
+			return fmt.Errorf("failed to set env vars: %w", err)
+		}
+
+		for _, key := range project.SortedEnvKeys(vars) {
+			fmt.Printf(utils.Colorize("[SUCCESS]", utils.ColorGreen)+" Set %s\n", key)
+		}
+		h.printEnvApplied(proj)
+		return nil
+
+	case "unset", "rm", "remove":
+		if len(args) < 2 {
+			return fmt.Errorf("missing keys. Use: env unset KEY [KEY2 ...]")
+		}
+		keys := args[1:]
+		var missing []string
+		for _, key := range keys {
+			if _, ok := proj.Env[key]; !ok {
+				missing = append(missing, key)
+			}
+		}
+		for _, key := range missing {
+			fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" %s is not set\n", key)
+		}
+		if len(missing) == len(keys) {
+			return nil
+		}
+
+		if err := h.projects.UnsetEnv(keys); err != nil {
+			return fmt.Errorf("failed to unset env vars: %w", err)
+		}
+
+		for _, key := range keys {
+			if _, ok := proj.Env[key]; ok {
+				fmt.Printf(utils.Colorize("[SUCCESS]", utils.ColorGreen)+" Unset %s\n", key)
+			}
+		}
+		h.printEnvApplied(proj)
+		return nil
+
+	default:
+		return fmt.Errorf("unknown env subcommand %q. Use: env list | env set KEY=VALUE ... | env unset KEY ...", args[0])
+	}
+}
+
+// printEnvApplied tells the user what SetEnv/UnsetEnv just did to the
+// container, based on the state it was in before the change.
+func (h *Handler) printEnvApplied(proj *project.Project) {
+	if proj.Status == "running" {
+		fmt.Println(utils.Colorize("[RESTARTING]", utils.ColorCyan) + " Container recreated to apply the change")
+	} else {
+		fmt.Println("Run 'alios start' to start with the new env vars")
+	}
 }
 
 // handleContainerExec executes a command in the project container (for backward compatibility)
@@ -1359,6 +1462,9 @@ COMMANDS:
     php [version]      Change PHP version
     server-root [path] Change server root path
     image [mode]       Switch image mode: prebuilt, dockerfile, or pull
+    env list           Show env vars injected into the container
+    env set K=V ...    Set one or more env vars (recreates the container)
+    env unset K ...    Remove one or more env vars (recreates the container)
 
   Machine Lifecycle:
     pause              Stop every alios container (projects + global services)
@@ -1399,6 +1505,8 @@ EXAMPLES:
   alios server-root public # Change server root to 'public' directory
   alios image prebuilt     # Switch back to the prebuilt image
   alios image dockerfile   # Switch to building from the project's Dockerfile
+  alios env set APP_DEBUG=true DB_HOST=alios_mysql  # Inject env vars
+  alios env unset APP_DEBUG # Remove an env var
   alios check-update       # Check for available updates
   alios update             # Update to latest version
   alios pause              # Stop everything, free up all CPU/RAM

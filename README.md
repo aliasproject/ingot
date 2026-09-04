@@ -21,7 +21,7 @@ labels.
 - Automatic WordPress detection (extra extensions, hardening, live-reload)
 - A choice of prebuilt image, your project's own Dockerfile, or an arbitrary
   pulled image — per project, switchable any time
-- `.env` automatically injected into the container, same as production
+- Per-project env vars injected into the container, same as production
 - Pause/resume everything with one command
 
 ## Installation
@@ -177,19 +177,31 @@ is built:
 Switch between them any time with `alios image <mode>` — no need to remove
 and recreate the project.
 
-## `.env` handling
+## Env vars
 
-If a project has a `.env` file, `alios start` loads it and injects every
-variable into the container — the same way production supplies a site's
-config as plain environment variables, just sourced from your local file
-instead of a database setting. Editing `.env` and restarting picks up the
-change automatically (the container recreates, the same way changing PHP
-version does — Docker has no way to update a running container's
-environment in place, and neither does production).
+To inject environment variables into a project's container — the same way
+production supplies a site's config as plain environment variables — set
+them explicitly:
 
-`SERVER_NAME`, `SERVER_ROOT`, `HTTPS`, and `PORT` are always set after your
-`.env` values, so nothing in `.env` can accidentally override what Alios CLI
-itself needs.
+```
+alios env set APP_DEBUG=true DB_HOST=alios_mysql
+alios env unset APP_DEBUG
+alios env list
+```
+
+Values live in the container's labels, not in a file, and `set`/`unset`
+recreate the container so the change takes effect immediately (Docker has no
+way to update a running container's environment in place, and neither does
+production). A stopped project stays stopped.
+
+Alios CLI deliberately does **not** read your project's `.env`. The project
+directory is bind-mounted, so a framework that reads `.env` itself (Laravel,
+for example) already sees every edit instantly with no restart. Injecting
+those same keys as real env vars would only shadow the file with a stale
+copy.
+
+`SERVER_NAME`, `SERVER_ROOT`, `HTTPS`, and `PORT` are reserved for Alios CLI
+itself and can't be set with `alios env set`.
 
 ## Environment variables
 
