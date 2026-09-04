@@ -17,6 +17,8 @@ labels.
 - A shared Caddy reverse proxy with automatic HTTPS for `*.test` domains
   (self-signed, locally-trusted CA — no browser warnings)
 - Shared DNS so `*.test` resolves without touching `/etc/hosts`
+- A branded "No project here" page for any `*.test` domain that isn't running,
+  instead of a bare connection error
 - Optional MySQL/PostgreSQL, and MailHog for email testing
 - Automatic WordPress detection (extra extensions, hardening, live-reload)
 - A choice of prebuilt image, your project's own Dockerfile, or an arbitrary

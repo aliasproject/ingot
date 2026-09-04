@@ -30,12 +30,13 @@ type Handler struct {
 
 // NewHandler creates a new command handler
 func NewHandler(dockerClient *docker.Client, cfg *config.Config) *Handler {
+	sslManager := ssl.NewManager(dockerClient, cfg)
 	return &Handler{
 		docker:   dockerClient,
 		config:   cfg,
 		projects: project.NewManager(dockerClient),
-		services: services.NewManager(dockerClient),
-		ssl:      ssl.NewManager(dockerClient, cfg),
+		services: services.NewManager(dockerClient, sslManager),
+		ssl:      sslManager,
 		github:   github.NewClient(cfg),
 		updater:  updater.New(),
 	}

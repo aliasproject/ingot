@@ -10,20 +10,26 @@ import (
 
 	"github.com/aliasproject/alios-cli/internal/config"
 	"github.com/aliasproject/alios-cli/internal/docker"
+	"github.com/aliasproject/alios-cli/internal/ssl"
 )
 
 // Manager handles global services operations
 type Manager struct {
 	docker *docker.Client
 	config *config.Config
+	ssl    *ssl.Manager
 	mu     sync.RWMutex
 }
 
-// NewManager creates a new services manager
-func NewManager(dockerClient *docker.Client) *Manager {
+// NewManager creates a new services manager. The SSL manager is needed
+// because the reverse proxy's base Caddyfile loads the alios CA for its
+// catch-all site's on-demand certs, so the CA has to exist and be readable
+// before Caddy can start.
+func NewManager(dockerClient *docker.Client, sslManager *ssl.Manager) *Manager {
 	return &Manager{
 		docker: dockerClient,
 		config: config.Get(),
+		ssl:    sslManager,
 	}
 }
 
@@ -36,6 +42,64 @@ type Service struct {
 	Ports     []string
 	Health    string
 }
+
+// baseCaddyfile is the reverse proxy's root config. Per-project vhosts are
+// imported from the alios_vhosts volume; anything that doesn't match one of
+// them falls through to the host-less catch-all sites, which serve the
+// branded default page with a 404 instead of a bare TLS or connection error.
+// Caddy always routes host-matched sites ahead of host-less ones, so the
+// catch-all can't shadow a project.
+//
+// TLS for unknown hosts: a static cert can't cover them - browsers (and
+// curl) reject a wildcard directly under a TLD like *.test - so the https://
+// catch-all uses on-demand issuance from Caddy's internal CA, with that CA
+// rooted at the same alios CA that signs every project cert (the pki block;
+// see ssl.Manager.PrepareCAForCaddy for the key permissions). Caddy mints an
+// exact cert for whatever host was requested at handshake time, chained to
+// a root the browser already trusts, so the 404 page loads with no warning.
+// Project hosts never hit this path: their manually loaded certs match
+// first. Caddy warns that on-demand has "no protections" (no ask endpoint);
+// with an internal issuer on a loopback-only dev proxy there's nothing to
+// abuse, so that's left as-is.
+//
+// The http:// catch-all redirects to HTTPS rather than serving the page:
+// declaring an explicit :80 server stops Caddy from adding its own
+// HTTP->HTTPS redirects for the manually-certified project vhosts, so this
+// redirect covers both those and unknown hosts. An HTTP-only vhost
+// (ssl.Manager.updateVhostToHTTP) is host-matched and still wins over it.
+const baseCaddyfile = `{
+	skip_install_trust
+	pki {
+		ca alios {
+			name "Alios Local CA"
+			root {
+				cert /etc/caddy/ssl/` + ssl.CACertFile + `
+				key /etc/caddy/ssl/` + ssl.CAKeyFile + `
+			}
+		}
+	}
+}
+
+import /etc/caddy/*.caddyfile
+
+https:// {
+	tls {
+		issuer internal {
+			ca alios
+		}
+		on_demand
+	}
+	root * /etc/caddy/default
+	rewrite * /index.html
+	file_server {
+		status 404
+	}
+}
+
+http:// {
+	redir https://{host}{uri} 308
+}
+`
 
 // GlobalServices defines the core global services
 var GlobalServices = []string{
@@ -55,13 +119,26 @@ func (m *Manager) Start() error {
 		hostIP = "127.0.0.1"
 	}
 
-	// Write the base Caddyfile into the vhosts volume before the container ever
-	// starts. The published caddy image's own baked-in Caddyfile only serves a
-	// landing page and has no knowledge of per-project vhosts; mounting alios_vhosts
-	// at /etc/caddy replaces that entirely, so this file must exist in the volume
-	// (even empty of any project) or Caddy has nothing to run. Rewritten on every
-	// start so it can't drift from what this binary expects.
-	if err := m.docker.WriteFileToVolume("alios_vhosts", "Caddyfile", []byte("import /etc/caddy/*.caddyfile\n")); err != nil {
+	// The base Caddyfile's catch-all site (see baseCaddyfile) issues certs
+	// for unknown hosts from the alios CA, which Caddy loads at startup - so
+	// the CA has to exist and be readable before the container does. This
+	// also creates the CA on a fresh install, so ordering against
+	// ssl.SetupSSL doesn't matter.
+	if err := m.ssl.PrepareCAForCaddy(); err != nil {
+		return fmt.Errorf("failed to prepare CA for the reverse proxy: %w", err)
+	}
+
+	// Write the base Caddyfile and the default page into the vhosts volume
+	// before the container ever starts. The published caddy image's own
+	// baked-in Caddyfile only serves a landing page and has no knowledge of
+	// per-project vhosts; mounting alios_vhosts at /etc/caddy replaces that
+	// entirely, so this file must exist in the volume (even empty of any
+	// project) or Caddy has nothing to run. Rewritten on every start so it
+	// can't drift from what this binary expects.
+	if err := m.docker.WriteFileToVolume("alios_vhosts", "default/index.html", defaultPage); err != nil {
+		return fmt.Errorf("failed to write default page: %w", err)
+	}
+	if err := m.docker.WriteFileToVolume("alios_vhosts", "Caddyfile", []byte(baseCaddyfile)); err != nil {
 		return fmt.Errorf("failed to write base Caddyfile: %w", err)
 	}
 
@@ -78,35 +155,64 @@ func (m *Manager) Start() error {
 		return fmt.Errorf("services failed to start: %w", err)
 	}
 
-	return nil
-}
-
-// Stop stops all global services
-func (m *Manager) Stop() error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	// Generate minimal compose config for stopping
-	composeContent := `name: alios
-services: {}`
-
-	if err := m.docker.Compose(composeContent, "down"); err != nil {
-		return fmt.Errorf("failed to stop services: %w", err)
+	// Caddy only reads /etc/caddy/Caddyfile at startup. If compose judged the
+	// container unchanged and left it running (same image, same mounts), the
+	// base Caddyfile just rewritten above is not yet live - e.g. right after
+	// an alios update that changed it - so reload explicitly. A no-op when
+	// the container was freshly created or the config is unchanged.
+	if err := m.ssl.ReloadCaddy(); err != nil {
+		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Failed to reload Caddy config: %v\n", err)
 	}
 
 	return nil
 }
 
-// Restart restarts all global services
+// Stop stops every global-service container (core services and any database)
+// without removing them. Containers are the only place a database's
+// existence is recorded (config.Config.Databases is in-memory only and empty
+// on every fresh CLI invocation - see config.go), so a `compose down` that
+// actually removed orphans would silently lose every database on the next
+// Start. A plain `compose down` with an empty services list is a no-op on
+// modern Compose, which is what this used to do; stopping by name is what
+// "stop" means and keeps the database containers around for the next Start.
+func (m *Manager) Stop() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	_, err := m.Pause()
+	return err
+}
+
+// Restart stops all global services and brings them back up through the
+// compose-based Start, which recreates any core container whose definition
+// changed (new image, new mounts) and starts the rest as-is. Database
+// containers aren't in the fresh compose config (see Stop), so they're
+// started back up by name afterwards.
 func (m *Manager) Restart() error {
-	if err := m.Stop(); err != nil {
+	m.mu.Lock()
+	stopped, err := m.Pause()
+	m.mu.Unlock()
+	if err != nil {
 		return err
 	}
 
 	// Wait a moment for clean shutdown
 	time.Sleep(2 * time.Second)
 
-	return m.Start()
+	if err := m.Start(); err != nil {
+		return err
+	}
+
+	for _, name := range stopped {
+		if m.docker.IsContainerRunning(name) {
+			continue
+		}
+		if err := m.docker.StartContainer(name); err != nil {
+			fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Failed to start '%s': %v\n", name, err)
+		}
+	}
+
+	return nil
 }
 
 // Status returns the status of all global services

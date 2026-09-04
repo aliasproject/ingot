@@ -634,12 +634,13 @@ func (c *Client) CopyToContainer(container, destination string, data []byte) err
 
 // WriteFileToVolume writes data to a file inside a named Docker volume, using a
 // throwaway container. The volume is created automatically by the mount if it
-// doesn't already exist.
+// doesn't already exist, and so are any parent directories in filePath.
 func (c *Client) WriteFileToVolume(volumeName, filePath string, data []byte) error {
+	target := "/state/" + filePath
 	cmd := exec.Command(c.dockerPath, "run", "--rm", "-i",
 		"-v", volumeName+":/state",
 		"alpine:latest",
-		"sh", "-c", "cat > /state/"+filePath,
+		"sh", "-c", fmt.Sprintf("mkdir -p \"$(dirname %q)\" && cat > %q", target, target),
 	)
 	cmd.Stdin = bytes.NewReader(data)
 

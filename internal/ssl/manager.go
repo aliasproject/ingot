@@ -51,6 +51,34 @@ func (m *Manager) SetupSSL() error {
 	return nil
 }
 
+// CACertFile and CAKeyFile are the CA's filenames inside the alios_certs
+// volume, as written by the openssl image's entrypoint.
+const (
+	CACertFile = "AliasProjectCASelfSigned.pem"
+	CAKeyFile  = "AliasProjectCASelfSigned.key"
+)
+
+// PrepareCAForCaddy makes sure the CA exists and that Caddy's non-root user
+// can read its private key. The reverse proxy's catch-all site issues
+// on-demand certs signed by this CA (see services.baseCaddyfile), and Caddy
+// loads the key at startup, so services.Manager.Start calls this before
+// bringing the container up. The openssl image writes the key 0600
+// root:root; like fixCertPermissions does for project keys, this opens it to
+// group 0, which Caddy's appuser runs as.
+func (m *Manager) PrepareCAForCaddy() error {
+	if !m.caExistsInVolume() {
+		fmt.Println(utils.Colorize("[AUTH]", utils.ColorBlue) + " Generating CA certificate...")
+		if err := m.generateCA(); err != nil {
+			return fmt.Errorf("failed to generate CA certificate: %w", err)
+		}
+	}
+	return m.docker.Run("run", "--rm",
+		"-v", "alios_certs:/certificates",
+		"alpine:latest",
+		"sh", "-c", "chgrp 0 /certificates/"+CAKeyFile+" && chmod 640 /certificates/"+CAKeyFile,
+	)
+}
+
 // SetupProjectSSL generates SSL certificate for a project
 func (m *Manager) SetupProjectSSL(projectName string) error {
 	domain := projectName + ".test"
@@ -152,6 +180,12 @@ func (m *Manager) RepairVhosts(projectNames []string) (int, error) {
 // requires Caddy to already be in a running state to accept `docker exec`).
 func (m *Manager) RestartCaddy() error {
 	return m.docker.Run("restart", "alios-reverse-proxy")
+}
+
+// ReloadCaddy makes the running reverse proxy re-read /etc/caddy/Caddyfile
+// (and everything it imports) without dropping connections.
+func (m *Manager) ReloadCaddy() error {
+	return m.reloadCaddy()
 }
 
 // RemoveProjectSSL removes SSL configuration for a project
