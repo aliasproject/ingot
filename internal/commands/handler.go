@@ -145,6 +145,9 @@ func (h *Handler) Execute(args []string) error {
 	case "github-verify":
 		return h.handleGitHubVerify()
 
+	case "doctor":
+		return h.handleDoctor()
+
 	// Logs
 	case "logs":
 		return h.handleLogs(commandArgs)
@@ -167,7 +170,7 @@ func (h *Handler) handleDefaultCommand() error {
 	}
 
 	fmt.Println(utils.Colorize("[INFO]", utils.ColorBlue) + " No alios project found in this directory")
-	fmt.Println("Run 'alios init' to initialize a project or 'alios help' for more information")
+	fmt.Println("Run 'alios start' to set up a project here, or 'alios help' for more information")
 	return nil
 }
 
@@ -444,7 +447,6 @@ func (h *Handler) handleInit(args []string) error {
 
 // handleStart starts the current project
 func (h *Handler) handleStart(args ...string) error {
-	fmt.Println("Handle Start")
 	// Get project info early for cleanup purposes
 	proj, err := h.projects.GetCurrentProject()
 	if err != nil {
@@ -817,7 +819,7 @@ func (h *Handler) handlePHPVersion(args []string) error {
 	}
 
 	if proj.Status == "not initialized" {
-		return fmt.Errorf("project not initialized. Run 'alios init' first")
+		return fmt.Errorf("project not initialized. Run 'alios start' first")
 	}
 
 	// PHP version only means anything on the prebuilt path - it's just the
@@ -865,7 +867,7 @@ func (h *Handler) handleServerRoot(args []string) error {
 	}
 
 	if proj.Status == "not initialized" {
-		return fmt.Errorf("project not initialized. Run 'alios init' first")
+		return fmt.Errorf("project not initialized. Run 'alios start' first")
 	}
 
 	// Get current server root from config
@@ -1495,6 +1497,8 @@ COMMANDS:
     cert repair        Regenerate all vhosts (no container start) + restart Caddy
 
   System:
+    doctor             Check Docker, GitHub/GHCR access, DNS, services, SSL,
+                        and the current project, with a fix for each failure
     install            Install Alios
     update             Update to latest version
     check-update       Check for available updates
@@ -1508,6 +1512,7 @@ EXAMPLES:
   alios image dockerfile   # Switch to building from the project's Dockerfile
   alios env set APP_DEBUG=true DB_HOST=alios_mysql  # Inject env vars
   alios env unset APP_DEBUG # Remove an env var
+  alios doctor             # Diagnose why something isn't working
   alios check-update       # Check for available updates
   alios update             # Update to latest version
   alios pause              # Stop everything, free up all CPU/RAM
@@ -1534,12 +1539,12 @@ EXAMPLES:
 
 QUICK START:
   1. Navigate to your project directory
-  2. Run 'alios init' to initialize
-  3. Run 'alios start' to launch
-  4. Access at https://[project-name].test
+  2. Run 'alios start' to set it up and launch it (first run asks for
+     PHP version, server root, and image)
+  3. Access at https://[project-name].test
 
 EXAMPLES:
-  alios init 8.4           # Initialize with PHP 8.4
+  alios start 8.4          # First start with PHP 8.4
   alios start              # Start current project
   alios global start       # Start global services
   alios database add       # Add a database

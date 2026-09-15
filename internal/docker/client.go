@@ -81,7 +81,10 @@ func (c *Client) CheckAvailability() error {
 	return nil
 }
 
-// Run executes a docker command without returning output
+// Run executes a docker command without returning output. Stderr is
+// captured and folded into the returned error so callers (and the user)
+// see *why* docker failed - "exit status 125" on its own hides the real
+// cause, e.g. a registry "denied" on pull or "Unable to find image" on run.
 func (c *Client) Run(args ...string) error {
 	if err := c.CheckAvailability(); err != nil {
 		return err
@@ -89,13 +92,54 @@ func (c *Client) Run(args ...string) error {
 
 	cmd := exec.Command(c.dockerPath, args...)
 	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
+		if detail := summarizeStderr(stderr.String()); detail != "" {
+			return fmt.Errorf("docker %s failed: %w: %s", args[0], err, detail)
+		}
 		return fmt.Errorf("docker %s failed: %w", args[0], err)
 	}
 
 	return nil
+}
+
+// summarizeStderr reduces a docker command's stderr to the meaningful
+// lines: the "See 'docker run --help'" boilerplate is dropped, duplicate
+// lines collapse, and at most the last three lines survive so an error
+// message stays readable.
+func summarizeStderr(stderr string) string {
+	var lines []string
+	seen := map[string]bool{}
+	for _, line := range strings.Split(stderr, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || seen[line] {
+			continue
+		}
+		lower := strings.ToLower(line)
+		if strings.HasPrefix(lower, "see 'docker") || strings.HasPrefix(lower, "run 'docker") {
+			continue
+		}
+		// docker often repeats the registry's one-word reason ("denied")
+		// as its own final line; drop anything already contained above.
+		redundant := false
+		for _, kept := range lines {
+			if strings.Contains(kept, line) {
+				redundant = true
+				break
+			}
+		}
+		if redundant {
+			continue
+		}
+		seen[line] = true
+		lines = append(lines, line)
+	}
+	if len(lines) > 3 {
+		lines = lines[len(lines)-3:]
+	}
+	return strings.Join(lines, " | ")
 }
 
 // RunWithOutput executes a docker command and returns output
@@ -393,6 +437,60 @@ func (c *Client) ForceRemoveContainer(name string) error {
 	// Always attempt force removal, don't check if exists first
 	// This ensures we try to clean up even partially created containers
 	return c.Run("rm", "-f", name)
+}
+
+// NetworkExists reports whether a Docker network with this name exists.
+func (c *Client) NetworkExists(name string) bool {
+	return c.Run("network", "inspect", name) == nil
+}
+
+// VolumeExists reports whether a Docker volume with this name exists.
+func (c *Client) VolumeExists(name string) bool {
+	return c.Run("volume", "inspect", name) == nil
+}
+
+// ImageExists reports whether an image reference is present locally.
+func (c *Client) ImageExists(image string) bool {
+	_, err := c.GetImageID(image)
+	return err == nil
+}
+
+// CheckRegistryAccess verifies the stored registry credentials can read the
+// given image, without downloading it (a manifest fetch is a few KB). This
+// is the cheap way to tell "docker login succeeded" apart from "docker can
+// actually pull" - GHCR accepts a login from any valid GitHub token, but
+// only serves a private package to one carrying the read:packages scope.
+func (c *Client) CheckRegistryAccess(image string) error {
+	if err := c.CheckAvailability(); err != nil {
+		return err
+	}
+	cmd := exec.Command(c.dockerPath, "manifest", "inspect", image)
+	cmd.Stdout = io.Discard
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if detail := summarizeStderr(stderr.String()); detail != "" {
+			return fmt.Errorf("%s", detail)
+		}
+		return err
+	}
+	return nil
+}
+
+// ServerVersion returns the Docker daemon version string.
+func (c *Client) ServerVersion() (string, error) {
+	return c.RunWithOutput("version", "--format", "{{.Server.Version}}")
+}
+
+// ComposeVersion returns the docker compose plugin version, or an error if
+// the plugin is not installed (global services are a compose project).
+func (c *Client) ComposeVersion() (string, error) {
+	return c.RunWithOutput("compose", "version", "--short")
+}
+
+// Path returns the docker binary being used.
+func (c *Client) Path() string {
+	return c.dockerPath
 }
 
 // CreateNetwork creates a Docker network

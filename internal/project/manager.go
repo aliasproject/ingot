@@ -846,9 +846,8 @@ func (m *Manager) resolveImage(project *Project) (string, error) {
 		switch project.ImageSource {
 		case "pull":
 			image := project.ImageURL
-			if err := m.docker.PullImage(image, nil); err != nil {
-				// Continue even if pull fails - image might exist locally
-				fmt.Printf("Warning: Failed to pull image: %v\n", err)
+			if err := m.pullOrUseLocal(image); err != nil {
+				return "", err
 			}
 			return image, nil
 		case "build":
@@ -870,17 +869,66 @@ func (m *Manager) resolveImage(project *Project) (string, error) {
 			return "", fmt.Errorf("project has image_type=custom but no image_source set")
 		}
 	default: // "prebuilt"
-		tag := fmt.Sprintf("%s-frankenphp-dev", project.PHPVersion)
-		if project.Framework == "wordpress" {
-			tag = fmt.Sprintf("%s-frankenphp-wordpress-dev", project.PHPVersion)
-		}
-		image := fmt.Sprintf("ghcr.io/aliasproject/php:%s", tag)
-		if err := m.docker.PullImage(image, nil); err != nil {
-			// Continue even if pull fails - image might exist locally
-			fmt.Printf("Warning: Failed to pull image: %v\n", err)
+		image := m.ImageReference(project)
+		if err := m.pullOrUseLocal(image); err != nil {
+			return "", err
 		}
 		return image, nil
 	}
+}
+
+// ImageReference returns the image a project's container runs, without
+// pulling or building anything. This is the pure half of resolveImage, so
+// `alios doctor` can report (and probe registry access for) the exact tag
+// a not-yet-initialized project would use.
+func (m *Manager) ImageReference(project *Project) string {
+	if project.ImageType == "custom" {
+		if project.ImageSource == "build" {
+			return fmt.Sprintf("local/%s:latest", project.Name)
+		}
+		return project.ImageURL
+	}
+	phpVersion := project.PHPVersion
+	if phpVersion == "" {
+		phpVersion = m.config.DefaultPHPVersion
+	}
+	tag := fmt.Sprintf("%s-frankenphp-dev", phpVersion)
+	if project.Framework == "wordpress" {
+		tag = fmt.Sprintf("%s-frankenphp-wordpress-dev", phpVersion)
+	}
+	return fmt.Sprintf("ghcr.io/aliasproject/php:%s", tag)
+}
+
+// pullOrUseLocal pulls a registry image, tolerating a failed pull only when
+// a copy is already present locally (offline work, a flaky registry). If
+// the pull fails *and* nothing is cached, it returns a real error instead
+// of letting `docker run` fail later with an opaque exit status 125 -- and
+// names the likely cause when the registry said "denied", which for GHCR
+// almost always means the GitHub token lacks the read:packages scope even
+// though `docker login` itself succeeded with it.
+func (m *Manager) pullOrUseLocal(image string) error {
+	err := m.docker.PullImage(image, nil)
+	if err == nil {
+		return nil
+	}
+	if m.docker.ImageExists(image) {
+		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Failed to pull %s (%v); using the locally cached copy\n", image, err)
+		return nil
+	}
+
+	msg := fmt.Sprintf("image %s could not be pulled and is not available locally: %v", image, err)
+	lower := strings.ToLower(err.Error())
+	if strings.Contains(lower, "denied") || strings.Contains(lower, "unauthorized") {
+		msg += "\n  The registry refused access. Your GitHub token is probably missing the 'read:packages' scope" +
+			"\n  (docker login accepts any valid token, but GHCR only serves private images to one with read:packages)." +
+			"\n  Fix: gh auth refresh -h github.com -s read:packages   (or export GITHUB_TOKEN with read:packages)" +
+			"\n  Then run 'alios doctor' to confirm registry access."
+	} else if strings.Contains(lower, "not found") || strings.Contains(lower, "manifest unknown") {
+		msg += "\n  The registry has no such tag. Run 'alios doctor' to see which image this project resolves to."
+	} else {
+		msg += "\n  Run 'alios doctor' to check Docker, GitHub, and registry access."
+	}
+	return fmt.Errorf("%s", msg)
 }
 
 // imageIsStale reports whether a registry-backed image (prebuilt, or an

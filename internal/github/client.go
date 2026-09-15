@@ -335,7 +335,85 @@ func (c *Client) setupGHCR(token string) error {
 	}
 
 	fmt.Printf(utils.Colorize("[SUCCESS]", utils.ColorGreen)+" Successfully logged into ghcr.io as %s\n", username)
+
+	// A login succeeding says nothing about whether pulls will: GHCR
+	// accepts any valid GitHub token at login but only serves private
+	// packages to one with read:packages. Warn now rather than letting the
+	// user find out via an opaque "denied" on the next image pull.
+	if scopes, reported, err := c.TokenScopes(token); err == nil && reported && !HasPackagesScope(scopes) {
+		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Token scopes (%s) do not include 'read:packages' - pulls from ghcr.io will be denied\n", strings.Join(scopes, ", "))
+		fmt.Println("   Fix: gh auth refresh -h github.com -s read:packages   (or use a GITHUB_TOKEN that has read:packages)")
+	}
 	return nil
+}
+
+// FindToken returns the token EnsureAuthenticated would settle on and a
+// human-readable description of where it came from, without validating it
+// or touching docker login. Empty strings mean no token is available.
+func (c *Client) FindToken() (token string, source string) {
+	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
+		return token, "GITHUB_TOKEN environment variable"
+	}
+	if token, err := c.getTokenFromGitHubCLI(); err == nil && token != "" {
+		return token, "GitHub CLI (gh auth token)"
+	}
+	return "", ""
+}
+
+// ValidateToken checks a token against the GitHub API.
+func (c *Client) ValidateToken(token string) error {
+	return c.validateToken(token)
+}
+
+// Username returns the GitHub login for a token.
+func (c *Client) Username(token string) string {
+	return c.getUsername(token)
+}
+
+// TokenScopes returns the OAuth scopes GitHub reports for a token via the
+// X-OAuth-Scopes response header. Classic personal access tokens and gh CLI
+// OAuth tokens carry that header; fine-grained tokens do not, in which case
+// reported is false and the caller can't tell what the token permits.
+func (c *Client) TokenScopes(token string) (scopes []string, reported bool, err error) {
+	req, err := http.NewRequest("GET", "https://api.github.com/user", nil)
+	if err != nil {
+		return nil, false, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, false, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, false, fmt.Errorf("invalid token (status: %d)", resp.StatusCode)
+	}
+
+	header := resp.Header.Get("X-OAuth-Scopes")
+	if header == "" {
+		return nil, false, nil
+	}
+	for _, scope := range strings.Split(header, ",") {
+		if scope = strings.TrimSpace(scope); scope != "" {
+			scopes = append(scopes, scope)
+		}
+	}
+	return scopes, true, nil
+}
+
+// HasPackagesScope reports whether a scope list permits reading GHCR
+// packages. write:packages and delete:packages imply read:packages.
+func HasPackagesScope(scopes []string) bool {
+	for _, scope := range scopes {
+		switch scope {
+		case "read:packages", "write:packages", "delete:packages":
+			return true
+		}
+	}
+	return false
 }
 
 // DeviceCode represents the GitHub device code response

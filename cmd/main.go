@@ -23,6 +23,12 @@ func main() {
 			commands.ShowHelp()
 			return
 		}
+		// `doctor` is exactly the command someone reaches for when Docker
+		// is the problem, so it must still produce a report without it.
+		if len(os.Args) > 1 && os.Args[1] == "doctor" {
+			commands.DoctorWithoutDocker(err)
+			os.Exit(1)
+		}
 		fmt.Fprintf(os.Stderr, "Error: Docker is not installed or not running\n")
 		fmt.Fprintf(os.Stderr, "Please ensure Docker is installed and running\n")
 		os.Exit(1)

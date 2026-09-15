@@ -718,6 +718,38 @@ func (m *Manager) isCertificateInstalledViaTrust() bool {
 // certificate database (~/.pki/nssdb) directly, since that - not the
 // system-wide trust anchor store - is what Chrome on Linux actually
 // consults. See installCertIntoNSSDatabases for why the two can disagree.
+// ChromeNSSDBStatus reports whether Chrome/Chromium's per-user NSS database
+// exists on this machine (Linux only; needs certutil to inspect) and, if so,
+// whether the alios CA is in it. Chrome on Linux trusts this database, not
+// the system anchor store, so `cert verify` passing is not enough for it.
+//
+// Returns present=false when there is no database to check (non-Linux, or
+// Chrome has never run for this user). checkable=false with present=true
+// means the database exists but certutil (package nss) isn't installed to
+// read it, so installed is unknown.
+func (m *Manager) ChromeNSSDBStatus() (present bool, checkable bool, installed bool) {
+	if runtime.GOOS != "linux" {
+		return false, false, false
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false, false, false
+	}
+	if info, err := os.Stat(filepath.Join(home, ".pki", "nssdb")); err != nil || !info.IsDir() {
+		return false, false, false
+	}
+	if _, err := exec.LookPath("certutil"); err != nil {
+		return true, false, false
+	}
+	return true, true, m.isCertificateInstalledInChromeNSSDB()
+}
+
+// CertificateExists reports whether a per-domain cert and key exist in the
+// alios_certs volume.
+func (m *Manager) CertificateExists(domain string) bool {
+	return m.certificateExists(domain)
+}
+
 func (m *Manager) isCertificateInstalledInChromeNSSDB() bool {
 	certutilPath, err := exec.LookPath("certutil")
 	if err != nil {

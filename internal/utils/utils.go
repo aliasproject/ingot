@@ -211,6 +211,29 @@ func cleanupDNSLinux() error {
 	return nil
 }
 
+// TestDomainResolverStatus reports whether the host's resolver has been
+// pointed at alios_dns for .test (the counterpart of SetupTestDomainResolver)
+// and which config file does it. On platforms the setup doesn't handle it
+// returns configured=false with an explanatory detail.
+func TestDomainResolverStatus() (configured bool, detail string) {
+	switch runtime.GOOS {
+	case "darwin":
+		if FileExists("/etc/resolver/test") {
+			return true, "/etc/resolver/test"
+		}
+		return false, "/etc/resolver/test missing"
+	case "linux":
+		for _, path := range []string{"/etc/systemd/resolved.conf.d/alios.conf", "/etc/dnsmasq.d/alios.conf"} {
+			if FileExists(path) {
+				return true, path
+			}
+		}
+		return false, "no alios.conf under /etc/systemd/resolved.conf.d or /etc/dnsmasq.d"
+	default:
+		return false, "automatic resolver setup is not supported on " + runtime.GOOS
+	}
+}
+
 // SetupTestDomainResolver sets up DNS resolver for .test domains
 func SetupTestDomainResolver() error {
 	switch runtime.GOOS {
