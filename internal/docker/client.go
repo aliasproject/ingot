@@ -767,6 +767,36 @@ func (c *Client) ReadFileFromVolume(volumeName, filePath string) (string, error)
 	return output, nil
 }
 
+// ListVolumeFiles returns the names of files at the root of a named Docker
+// volume whose names match a shell glob (e.g. "*.share.caddyfile"), using a
+// throwaway container. A glob with no matches returns an empty slice.
+func (c *Client) ListVolumeFiles(volumeName, glob string) ([]string, error) {
+	output, err := c.RunWithOutput("run", "--rm",
+		"-v", volumeName+":/state",
+		"alpine:latest",
+		"sh", "-c", fmt.Sprintf("cd /state && for f in %s; do [ -f \"$f\" ] && echo \"$f\"; done; true", glob),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	if output == "" {
+		return []string{}, nil
+	}
+
+	return strings.Split(output, "\n"), nil
+}
+
+// RemoveFileFromVolume deletes a file from inside a named Docker volume, using
+// a throwaway container. A file that doesn't exist is not an error.
+func (c *Client) RemoveFileFromVolume(volumeName, filePath string) error {
+	return c.Run("run", "--rm",
+		"-v", volumeName+":/state",
+		"alpine:latest",
+		"rm", "-f", "/state/"+filePath,
+	)
+}
+
 // Errors
 var (
 	ErrContainerNotFound = fmt.Errorf("container not found")

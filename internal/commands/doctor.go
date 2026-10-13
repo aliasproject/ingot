@@ -122,6 +122,7 @@ func (h *Handler) handleDoctor() error {
 	h.doctorServices(r)
 	h.doctorSSL(r)
 	h.doctorProject(r, tokenOK)
+	h.doctorShare(r)
 
 	return r.summary()
 }
@@ -473,4 +474,40 @@ func probeHTTPS(url string) (int, error) {
 	}
 	resp.Body.Close()
 	return resp.StatusCode, nil
+}
+
+// doctorShare reports active shares and flags ones whose tunnel is gone, plus
+// a half-configured named-tunnel setup (which silently falls back to quick
+// tunnels).
+func (h *Handler) doctorShare(r *doctorReport) {
+	r.section("SHARE")
+
+	token, domain := h.config.ShareTunnelToken != "", h.config.ShareDomain != ""
+	switch {
+	case token && domain:
+		r.ok("Named tunnel configured (https://<project>.%s)", h.config.ShareDomain)
+	case token != domain:
+		r.warn("Only one of ALIOS_SHARE_TUNNEL_TOKEN / ALIOS_SHARE_DOMAIN is set, so shares use quick tunnels",
+			"set both for stable named-tunnel URLs, or unset the other (see docs/SHARING.md)")
+	default:
+		r.info("Using quick tunnels (set ALIOS_SHARE_TUNNEL_TOKEN and ALIOS_SHARE_DOMAIN for stable URLs)")
+	}
+
+	shares, err := h.share.List()
+	if err != nil {
+		r.warn(fmt.Sprintf("Could not read shares: %v", err), "")
+		return
+	}
+	if len(shares) == 0 {
+		r.info("No projects are shared")
+		return
+	}
+	for _, sh := range shares {
+		if h.share.TunnelRunning(sh) {
+			r.ok("%s shared at %s", sh.Project, sh.URL)
+		} else {
+			r.warn(fmt.Sprintf("%s has a share vhost but its tunnel isn't running", sh.Project),
+				fmt.Sprintf("cd into %s and run 'alios share stop' (then 'alios share' to reshare)", sh.Project))
+		}
+	}
 }

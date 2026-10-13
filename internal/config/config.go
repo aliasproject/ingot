@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strings"
 	"sync"
 )
 
@@ -36,6 +37,17 @@ type Config struct {
 	// Features
 	EnableSSL bool
 	EnableDNS bool
+
+	// Sharing (alios share). When both are set, shares use a named Cloudflare
+	// Tunnel with stable <project>.<ShareDomain> hostnames instead of a
+	// throwaway trycloudflare.com quick tunnel.
+	ShareTunnelToken string
+	ShareDomain      string
+}
+
+// ShareNamedMode reports whether alios share should use a named tunnel.
+func (c *Config) ShareNamedMode() bool {
+	return c.ShareTunnelToken != "" && c.ShareDomain != ""
 }
 
 // DatabaseConfig holds configuration for a database instance
@@ -168,6 +180,10 @@ func (c *Config) loadFromEnvironment() {
 	if autoStart := os.Getenv("ALIOS_AUTO_START_GLOBAL"); autoStart != "" {
 		c.AutoStartGlobal = autoStart == "true" || autoStart == "1"
 	}
+
+	// Named-tunnel sharing
+	c.ShareTunnelToken = os.Getenv("ALIOS_SHARE_TUNNEL_TOKEN")
+	c.ShareDomain = strings.TrimPrefix(strings.TrimSpace(os.Getenv("ALIOS_SHARE_DOMAIN")), ".")
 }
 
 // GetGithubToken returns the GitHub token from environment variable

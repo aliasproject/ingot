@@ -12,6 +12,7 @@ import (
 	"github.com/aliasproject/alios-cli/internal/github"
 	"github.com/aliasproject/alios-cli/internal/project"
 	"github.com/aliasproject/alios-cli/internal/services"
+	"github.com/aliasproject/alios-cli/internal/share"
 	"github.com/aliasproject/alios-cli/internal/ssl"
 	"github.com/aliasproject/alios-cli/internal/updater"
 	"github.com/aliasproject/alios-cli/internal/utils"
@@ -24,6 +25,7 @@ type Handler struct {
 	projects *project.Manager
 	services *services.Manager
 	ssl      *ssl.Manager
+	share    *share.Manager
 	github   *github.Client
 	updater  *updater.Updater
 }
@@ -37,6 +39,7 @@ func NewHandler(dockerClient *docker.Client, cfg *config.Config) *Handler {
 		projects: project.NewManager(dockerClient),
 		services: services.NewManager(dockerClient, sslManager),
 		ssl:      sslManager,
+		share:    share.NewManager(dockerClient, cfg, sslManager),
 		github:   github.NewClient(cfg),
 		updater:  updater.New(),
 	}
@@ -123,6 +126,8 @@ func (h *Handler) Execute(args []string) error {
 		return h.handleImage(commandArgs)
 	case "env":
 		return h.handleEnv(commandArgs)
+	case "share":
+		return h.handleShare(commandArgs)
 
 	// Container interaction
 	case "exec", "run":
@@ -706,6 +711,8 @@ func (h *Handler) handleStop() error {
 		return fmt.Errorf("failed to stop project: %w", err)
 	}
 
+	h.stopShareQuietly(project.Name)
+
 	fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Project stopped")
 	return nil
 }
@@ -765,6 +772,8 @@ func (h *Handler) handleRemove() error {
 	if err := h.ssl.RemoveProjectVhost(project.Name); err != nil {
 		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Failed to remove vhost configuration: %v\n", err)
 	}
+
+	h.stopShareQuietly(project.Name)
 
 	// Remove project
 	if err := h.projects.Remove(true); err != nil {
@@ -1382,6 +1391,9 @@ func (h *Handler) showStatus() error {
 		if project.Status == "running" {
 			fmt.Printf("  URL: %s\n", project.URL)
 		}
+		if sh, err := h.share.Get(project.Name); err == nil && sh != nil {
+			fmt.Printf("  Shared: %s\n", formatShare(sh, h.share.TunnelRunning(sh)))
+		}
 	}
 
 	// Network information
@@ -1468,6 +1480,9 @@ COMMANDS:
     env list           Show env vars injected into the container
     env set K=V ...    Set one or more env vars (recreates the container)
     env unset K ...    Remove one or more env vars (recreates the container)
+    share [--auth u:p] Share the project at a public URL (Cloudflare Tunnel)
+    share stop         Stop sharing the current project
+    share list         List every active share
 
   Machine Lifecycle:
     pause              Stop every alios container (projects + global services)
@@ -1512,6 +1527,8 @@ EXAMPLES:
   alios image dockerfile   # Switch to building from the project's Dockerfile
   alios env set APP_DEBUG=true DB_HOST=alios_mysql  # Inject env vars
   alios env unset APP_DEBUG # Remove an env var
+  alios share              # Get a public URL for the current project
+  alios share --auth demo:secret  # Same, behind a username/password
   alios doctor             # Diagnose why something isn't working
   alios check-update       # Check for available updates
   alios update             # Update to latest version
