@@ -12,13 +12,14 @@ import (
 )
 
 // Sample is one reading of a container's raw counters. CPU and network are
-// cumulative since the container started; Procs is the number of processes
-// (not threads) running in it.
+// cumulative since the container started. ExecProcs counts processes that
+// don't descend from the container's main process: `docker exec` sessions
+// (alios exec, alios shell) and health checks.
 type Sample struct {
-	At       time.Time
-	CPUNanos uint64
-	NetBytes uint64
-	Procs    int
+	At        time.Time
+	CPUNanos  uint64
+	NetBytes  uint64
+	ExecProcs int
 }
 
 // Thresholds decide when a container counts as active between two samples.
@@ -55,12 +56,11 @@ type Activity struct {
 }
 
 type instance struct {
-	startedAt   string
-	last        Sample
-	baseProcs   int
-	extraBefore bool
-	lastActive  time.Time
-	busySince   time.Time
+	startedAt  string
+	last       Sample
+	execBefore bool
+	lastActive time.Time
+	busySince  time.Time
 }
 
 // Tracker remembers each container's previous sample and decides whether it
@@ -82,7 +82,7 @@ func NewTracker(th Thresholds) *Tracker {
 func (t *Tracker) Observe(id, startedAt string, s Sample) Activity {
 	inst, ok := t.instances[id]
 	if !ok || inst.startedAt != startedAt || s.CPUNanos < inst.last.CPUNanos || s.NetBytes < inst.last.NetBytes {
-		t.instances[id] = &instance{startedAt: startedAt, last: s, baseProcs: s.Procs, lastActive: s.At}
+		t.instances[id] = &instance{startedAt: startedAt, last: s, execBefore: s.ExecProcs > 0, lastActive: s.At}
 		return Activity{Active: true, Reasons: []string{"new"}}
 	}
 
@@ -91,12 +91,7 @@ func (t *Tracker) Observe(id, startedAt string, s Sample) Activity {
 		return t.activity(inst, s.At, nil, false)
 	}
 
-	// The baseline is the fewest processes seen in this run: the server
-	// itself. Anything above it is an exec'd command, a worker or a job.
-	if s.Procs < inst.baseProcs {
-		inst.baseProcs = s.Procs
-	}
-	extra := s.Procs > inst.baseProcs
+	exec := s.ExecProcs > 0
 
 	var reasons []string
 	cpu := float64(s.CPUNanos-inst.last.CPUNanos) / float64(elapsed.Nanoseconds())
@@ -108,13 +103,15 @@ func (t *Tracker) Observe(id, startedAt string, s Sample) Activity {
 	if traffic {
 		reasons = append(reasons, "network")
 	}
-	// Extra processes count only when seen twice in a row, so a health check
-	// that happens to be running at the moment of a sample doesn't reset the
-	// timer. Real work that short shows up as CPU anyway.
-	if extra && inst.extraBefore {
-		reasons = append(reasons, "processes")
+	// An exec'd process counts only when seen twice in a row, so a health
+	// check that happens to be running at the moment of a sample doesn't
+	// reset the timer. Real work that short shows up as CPU anyway. An idle
+	// `alios shell` uses no CPU or container network, so this is the only
+	// signal that keeps a project with an open shell awake.
+	if exec && inst.execBefore {
+		reasons = append(reasons, "exec")
 	}
-	inst.extraBefore = extra
+	inst.execBefore = exec
 	inst.last = s
 
 	return t.activity(inst, s.At, reasons, traffic)

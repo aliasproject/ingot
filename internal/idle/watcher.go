@@ -63,18 +63,22 @@ func (w *Watcher) Tick(ctx context.Context) {
 			continue
 		}
 
-		// The listing doesn't carry StartedAt; Inspect does, and it's how
-		// the tracker tells a restarted container from the same run.
+		// Kept in the tracker even if this tick's reading fails, so a
+		// transient API error doesn't restart the project's idle timer.
+		seen[listed.ID] = true
+
+		// The listing doesn't carry StartedAt or the main PID; Inspect does.
+		// StartedAt is how the tracker tells a restarted container from the
+		// same run.
 		c, err := w.Engine.Inspect(ctx, listed.ID)
 		if err != nil || !c.Running {
 			continue
 		}
-		s, err := w.Engine.Sample(ctx, c.ID)
+		s, err := w.Engine.Sample(ctx, c)
 		if err != nil {
 			w.Log.Printf("sampling %s: %v", c.Project, err)
 			continue
 		}
-		seen[c.ID] = true
 
 		a := w.Tracker.Observe(c.ID, c.StartedAt, s)
 		w.warnIfBusy(c, a)

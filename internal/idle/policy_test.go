@@ -26,11 +26,11 @@ func busyCPU(s *Sample) { s.CPUNanos += 15_000_000_000 } // half a core
 
 func traffic(s *Sample) { s.NetBytes += 50_000 }
 
-func withProcs(n int) func(*Sample) {
-	return func(s *Sample) { quiet(s); s.Procs = n }
+func withExec(n int) func(*Sample) {
+	return func(s *Sample) { quiet(s); s.ExecProcs = n }
 }
 
-func base() Sample { return Sample{At: t0, CPUNanos: 1e9, NetBytes: 1000, Procs: 1} }
+func base() Sample { return Sample{At: t0, CPUNanos: 1e9, NetBytes: 1000} }
 
 func TestFirstSampleIsActive(t *testing.T) {
 	a := NewTracker(DefaultThresholds).Observe("c1", "run1", base())
@@ -51,9 +51,9 @@ func TestQuietContainerAccumulatesIdleTime(t *testing.T) {
 
 func TestEachSignalCountsAsActivity(t *testing.T) {
 	cases := map[string][]func(*Sample){
-		"cpu":       {quiet, busyCPU},
-		"network":   {quiet, traffic},
-		"processes": {quiet, withProcs(3), withProcs(3)},
+		"cpu":     {quiet, busyCPU},
+		"network": {quiet, traffic},
+		"exec":    {quiet, withExec(1), withExec(1)},
 	}
 	for want, steps := range cases {
 		a := feed(NewTracker(DefaultThresholds), base(), steps...)
@@ -70,30 +70,34 @@ func TestActivityResetsIdleTimer(t *testing.T) {
 	}
 }
 
-func TestSingleExtraProcessIsIgnored(t *testing.T) {
-	// A health check caught mid-run shows up as one extra process in one
+func TestSingleExecBlipIsIgnored(t *testing.T) {
+	// A health check caught mid-run shows up as one exec'd process in one
 	// sample. It must not keep the container awake.
-	a := feed(NewTracker(DefaultThresholds), base(), quiet, withProcs(2), withProcs(1), quiet)
+	a := feed(NewTracker(DefaultThresholds), base(), quiet, withExec(1), withExec(0), quiet)
 	if a.Active {
-		t.Fatalf("one-sample process blip counted as activity: %v", a.Reasons)
+		t.Fatalf("one-sample exec blip counted as activity: %v", a.Reasons)
 	}
 }
 
-func TestProcessBaselineDropsToTheServerAlone(t *testing.T) {
-	// First seen while `composer install` was running (3 processes); once it
-	// finishes the baseline must fall to 1, so a later job counts again.
+func TestShellOpenFromTheStartKeepsItAwake(t *testing.T) {
+	// `alios shell` on a sleeping project starts the container and execs a
+	// shell before the watcher's first sample. An idle shell uses no CPU or
+	// container network; it must still count for as long as it's open.
 	b := base()
-	b.Procs = 3
-	a := feed(NewTracker(DefaultThresholds), b, withProcs(1), withProcs(1), withProcs(2), withProcs(2))
-	if !a.Active {
-		t.Fatal("a job started after the baseline dropped wasn't seen")
+	b.ExecProcs = 1
+	steps := []func(*Sample){}
+	for i := 0; i < 120; i++ { // an hour
+		steps = append(steps, withExec(1))
+	}
+	if a := feed(NewTracker(DefaultThresholds), b, steps...); !a.Active {
+		t.Fatalf("open shell not counted: idle for %v", a.IdleFor)
 	}
 }
 
 func TestRestartStartsAFreshTimer(t *testing.T) {
 	tr := NewTracker(DefaultThresholds)
 	feed(tr, base(), quiet, quiet, quiet)
-	a := tr.Observe("c1", "run2", Sample{At: t0.Add(5 * time.Minute), CPUNanos: 5, NetBytes: 5, Procs: 1})
+	a := tr.Observe("c1", "run2", Sample{At: t0.Add(5 * time.Minute), CPUNanos: 5, NetBytes: 5})
 	if !a.Active {
 		t.Fatal("a restarted container must not inherit the idle time of its previous run")
 	}

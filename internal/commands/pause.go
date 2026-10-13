@@ -21,6 +21,10 @@ func (h *Handler) handlePause() error {
 		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Failed to stop shares: %v\n", err)
 	}
 
+	// The waker goes first: stopping projects takes a while, and a request
+	// arriving in the meantime would start one again behind the pause.
+	stoppedIdle := h.services.StopIdle()
+
 	stoppedProjects, err := h.projects.StopAll()
 	if err != nil {
 		return fmt.Errorf("failed to stop project containers: %w", err)
@@ -30,6 +34,7 @@ func (h *Handler) handlePause() error {
 	if err != nil {
 		return fmt.Errorf("failed to stop global services: %w", err)
 	}
+	stoppedServices = append(stoppedServices, stoppedIdle...)
 
 	if len(stoppedProjects) == 0 && len(stoppedServices) == 0 {
 		fmt.Println(utils.Colorize("[INFO]", utils.ColorBlue) + " Nothing was running")

@@ -1,0 +1,85 @@
+package services
+
+import (
+	"fmt"
+
+	"github.com/aliasproject/alios-cli/internal/config"
+	"github.com/aliasproject/alios-cli/internal/docker"
+)
+
+// IdleContainer is the alios_idle service, which stops idle projects and
+// wakes them on the next request (cmd/alios-idle, internal/idle).
+//
+// It's run with `docker run` rather than in the compose group: it's
+// optional, and compose aborts the whole `up` when one image can't be
+// pulled, so an unpublished or unreachable alios-idle image would otherwise
+// take every global service down with it.
+const IdleContainer = "alios_idle"
+
+// idleTimeoutLabel records the ALIOS_IDLE_TIMEOUT the running service was
+// started with, so status output can report the service's real setting
+// rather than whatever the current shell happens to have.
+const idleTimeoutLabel = "alios.idle.timeout"
+
+// startIdle makes sure alios_idle is running the image this CLI expects.
+//
+// The timeout is only changed when ALIOS_IDLE_TIMEOUT is set in this
+// shell. Global services also start implicitly (`alios start` calls
+// EnsureRunning), and a terminal without the variable mustn't silently
+// reset a timeout chosen in another.
+func (m *Manager) startIdle() error {
+	timeout := m.config.IdleTimeout
+	info, err := m.docker.InspectContainer(IdleContainer)
+	exists := err == nil
+	if exists && timeout == "" {
+		timeout = info.Labels[idleTimeoutLabel]
+	}
+
+	if exists && info.Image == config.IdleImage && info.Labels[idleTimeoutLabel] == timeout {
+		if info.State == "running" {
+			return nil
+		}
+		return m.docker.StartContainer(IdleContainer)
+	}
+	if exists {
+		if err := m.docker.RemoveContainer(IdleContainer, true); err != nil {
+			return fmt.Errorf("failed to replace %s: %w", IdleContainer, err)
+		}
+	}
+
+	return m.docker.RunContainer(&docker.ContainerConfig{
+		Name:     IdleContainer,
+		Image:    config.IdleImage,
+		Detached: true,
+		Restart:  "unless-stopped",
+		Network:  config.GetNetworkConfig().BridgeName,
+		// Docker Desktop maps this path to its VM's socket on macOS and
+		// Windows too. Rootless Docker isn't supported yet.
+		Volumes:     []string{"/var/run/docker.sock:/var/run/docker.sock"},
+		Environment: map[string]string{"ALIOS_IDLE_TIMEOUT": timeout},
+		Labels:      map[string]string{idleTimeoutLabel: timeout},
+	})
+}
+
+// StopIdle stops alios_idle if it's running and returns its name, so a pause
+// can stop it before the projects (otherwise a request arriving mid-pause
+// wakes a project that was just stopped) and still resume it afterwards.
+func (m *Manager) StopIdle() []string {
+	if !m.docker.IsContainerRunning(IdleContainer) {
+		return nil
+	}
+	if err := m.docker.StopContainer(IdleContainer, 10); err != nil {
+		return nil
+	}
+	return []string{IdleContainer}
+}
+
+// IdleTimeoutSetting returns the ALIOS_IDLE_TIMEOUT alios_idle was started
+// with ("" for its default), and whether the service is running.
+func (m *Manager) IdleTimeoutSetting() (string, bool) {
+	info, err := m.docker.InspectContainer(IdleContainer)
+	if err != nil {
+		return "", false
+	}
+	return info.Labels[idleTimeoutLabel], info.State == "running"
+}

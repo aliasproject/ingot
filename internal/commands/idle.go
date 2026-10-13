@@ -64,8 +64,11 @@ func (h *Handler) wakeForCommand() error {
 	return err
 }
 
+// describeIdle explains a project setting against the timeout the running
+// alios_idle service actually uses, not this shell's ALIOS_IDLE_TIMEOUT.
 func (h *Handler) describeIdle(setting string) string {
-	return project.DescribeIdle(setting, h.config.IdleTimeout)
+	global, _ := h.services.IdleTimeoutSetting()
+	return project.DescribeIdle(setting, global)
 }
 
 // formatProjectStatus shows a stopped project as sleeping when alios_idle is
@@ -81,12 +84,24 @@ func (h *Handler) formatProjectStatus(status string, waking bool) string {
 // zero, which don't start a stopped project on a visit. Each is rewritten on
 // that project's next `alios start`; `alios cert repair` does them all.
 func (h *Handler) hintVhostsWithoutWake() {
-	files, err := h.docker.RunWithOutput("run", "--rm", "-v", "alios_vhosts:/vhosts:ro", "alpine:latest",
+	output, err := h.docker.RunWithOutput("run", "--rm", "-v", "alios_vhosts:/vhosts:ro", "alpine:latest",
 		"sh", "-c", "cd /vhosts && grep -L 'import alios_wake' *.caddyfile 2>/dev/null; true")
-	if err != nil || files == "" {
+	if err != nil {
 		return
 	}
-	n := len(strings.Split(files, "\n"))
+	// Output can include docker's own pull messages, so count only file
+	// names. Share vhosts are skipped: cert repair doesn't rewrite them (the
+	// next `alios share` does), so counting them would repeat the hint.
+	n := 0
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasSuffix(line, ".caddyfile") && !strings.HasSuffix(line, ".share.caddyfile") {
+			n++
+		}
+	}
+	if n == 0 {
+		return
+	}
 	fmt.Printf(utils.Colorize("[INFO]", utils.ColorBlue)+" %d vhost(s) predate scale to zero, so those projects won't start on a visit. Run 'alios cert repair' to update them.\n", n)
 }
 
@@ -100,10 +115,15 @@ func (h *Handler) doctorIdle(r *doctorReport) {
 			"set it to e.g. 30m or 2h, or off, then run 'alios global restart'")
 	}
 
-	if !h.docker.IsContainerRunning(services.IdleContainer) {
+	running, ok := h.services.IdleTimeoutSetting()
+	if !ok {
 		r.fail("alios_idle isn't running: idle projects aren't stopped, and stopped ones aren't started on a visit",
-			"alios global start")
+			"alios global start (its output says why it couldn't start, e.g. the image couldn't be pulled)")
 		return
+	}
+	if h.config.IdleTimeout != "" && h.config.IdleTimeout != running {
+		r.warn(fmt.Sprintf("ALIOS_IDLE_TIMEOUT is %q here but alios_idle runs with %q", h.config.IdleTimeout, running),
+			"alios global restart, to apply this shell's value")
 	}
 	r.ok("alios_idle running (%s)", strings.TrimPrefix(h.describeIdle(""), "stops "))
 

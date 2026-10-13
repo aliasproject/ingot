@@ -235,7 +235,8 @@ ALIOS_ENABLE_SSL             Enable/disable SSL setup (default: true)
 ALIOS_ENABLE_DNS             Enable/disable DNS setup (default: true)
 ALIOS_AUTO_START_GLOBAL      Auto-start global services (default: true)
 ALIOS_IDLE_TIMEOUT           Stop projects idle this long, e.g. 30m, 2h, or
-                             off (default: 30m; applied by 'global restart')
+                             off (default: 30m; applied by 'global restart',
+                             kept when unset)
 ```
 
 ## Supported versions

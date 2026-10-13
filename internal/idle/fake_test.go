@@ -59,13 +59,13 @@ func (f *fakeEngine) Inspect(_ context.Context, name string) (*Container, error)
 	return &cp, nil
 }
 
-func (f *fakeEngine) Sample(_ context.Context, id string) (Sample, error) {
+func (f *fakeEngine) Sample(_ context.Context, c *Container) (Sample, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	queue := f.samples[id]
+	queue := f.samples[c.ID]
 	s := queue[0]
 	if len(queue) > 1 {
-		f.samples[id] = queue[1:]
+		f.samples[c.ID] = queue[1:]
 	}
 	return s, nil
 }
@@ -77,7 +77,11 @@ func (f *fakeEngine) Start(_ context.Context, id string) error {
 	if f.startErr != nil {
 		return f.startErr
 	}
-	f.byID(id).Running = true
+	c := f.byID(id)
+	if !c.Running {
+		c.Running = true
+		c.StartedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	}
 	return nil
 }
 

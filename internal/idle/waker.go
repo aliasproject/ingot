@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 )
@@ -33,14 +34,14 @@ type Waker struct {
 
 	mu    sync.Mutex
 	waits map[string]*wake
-	woken map[string]time.Time // container ID -> when its last wake finished
 }
 
-// recentWake is how long after a wake a failed request is still assumed to be
-// one that Caddy sent while the container was down, rather than a running
+// recentStart is how long after a container starts a failed request is still
+// assumed to be one Caddy sent while it was down, rather than a running
 // project failing. Requests for a page's assets arrive in a burst, and the
-// later ones can reach the waker after the first one already woke it.
-const recentWake = 15 * time.Second
+// later ones can reach the waker after the first one already woke it; a
+// visit right after `alios start` or `alios exec` started it is the same.
+const recentStart = 15 * time.Second
 
 // wake is one start in progress. Concurrent requests for the same project
 // (a page and its assets) share it instead of each starting the container.
@@ -84,7 +85,7 @@ func (w *Waker) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 				fmt.Sprintf("%s: %v. Check 'alios logs'.", project, err))
 			return
 		}
-	case !w.wokeRecently(c.ID):
+	case !c.StartedWithin(recentStart, time.Now()):
 		// Caddy failed to reach a container that has been up and listening
 		// for a while, so starting it again won't help - and redirecting
 		// would loop.
@@ -98,21 +99,22 @@ func (w *Waker) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	// is resubmitted rather than turned into a GET. The relative Location
 	// keeps whatever scheme and host the browser used.
 	rw.Header().Set("Cache-Control", "no-store")
-	rw.Header().Set("Location", r.URL.RequestURI())
+	rw.Header().Set("Location", sameOriginPath(r.URL.RequestURI()))
 	rw.WriteHeader(http.StatusTemporaryRedirect)
+}
+
+// sameOriginPath makes a request URI safe to redirect to. A path starting
+// "//" (or "/\", which browsers treat the same) would be read as a
+// protocol-relative URL, turning https://<share>//evil.com into a redirect
+// to evil.com.
+func sameOriginPath(uri string) string {
+	return "/" + strings.TrimLeft(uri, "/\\")
 }
 
 func (w *Waker) inProgress(id string) *wake {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.waits[id]
-}
-
-func (w *Waker) wokeRecently(id string) bool {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	at, ok := w.woken[id]
-	return ok && time.Since(at) < recentWake
 }
 
 func (w *Waker) wakeOnce(c *Container) error {
@@ -141,12 +143,6 @@ func (w *Waker) wakeOnce(c *Container) error {
 
 	w.mu.Lock()
 	delete(w.waits, c.ID)
-	if wk.err == nil {
-		if w.woken == nil {
-			w.woken = make(map[string]time.Time)
-		}
-		w.woken[c.ID] = time.Now()
-	}
 	w.mu.Unlock()
 	close(wk.done)
 	return wk.err
@@ -156,7 +152,7 @@ func (w *Waker) start(ctx context.Context, c *Container) error {
 	if err := w.Engine.Start(ctx, c.ID); err != nil {
 		return err
 	}
-	for {
+	for i := 1; ; i++ {
 		if w.ready(ctx, c.Name) {
 			return nil
 		}
@@ -164,6 +160,16 @@ func (w *Waker) start(ctx context.Context, c *Container) error {
 		case <-ctx.Done():
 			return errNotReady
 		case <-time.After(100 * time.Millisecond):
+		}
+		// A container that was being stopped when the request came in
+		// (by the watcher, or `alios stop`) still counted as running, so
+		// Start was a no-op. Once the stop finishes, start it for real.
+		if i%10 == 0 {
+			if cur, err := w.Engine.Inspect(ctx, c.ID); err == nil && !cur.Running {
+				if err := w.Engine.Start(ctx, c.ID); err != nil {
+					return err
+				}
+			}
 		}
 	}
 }

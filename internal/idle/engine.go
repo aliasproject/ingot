@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 )
 
@@ -26,7 +27,15 @@ type Container struct {
 	Project   string // ProjectLabel value
 	Idle      string // IdleLabel value
 	Running   bool
-	StartedAt string
+	StartedAt string // RFC 3339; from Inspect only
+	MainPID   int    // host PID of the main process; from Inspect only
+}
+
+// StartedWithin reports whether the container's current run began less than
+// d ago.
+func (c *Container) StartedWithin(d time.Duration, now time.Time) bool {
+	at, err := time.Parse(time.RFC3339Nano, c.StartedAt)
+	return err == nil && now.Sub(at) < d
 }
 
 // Engine is the Docker access the service needs. *SocketEngine implements it
@@ -34,7 +43,7 @@ type Container struct {
 type Engine interface {
 	ListProjects(ctx context.Context) ([]Container, error)
 	Inspect(ctx context.Context, name string) (*Container, error)
-	Sample(ctx context.Context, id string) (Sample, error)
+	Sample(ctx context.Context, c *Container) (Sample, error)
 	Start(ctx context.Context, id string) error
 	Stop(ctx context.Context, id string, timeout time.Duration) error
 }
@@ -50,6 +59,9 @@ type SocketEngine struct {
 // NewSocketEngine returns an Engine using the daemon socket at path.
 func NewSocketEngine(path string) *SocketEngine {
 	return &SocketEngine{http: &http.Client{
+		// Bounds every call, so a wedged container can't hang the watcher.
+		// Generous enough for a stop, which waits up to 10s for the app.
+		Timeout: 30 * time.Second,
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 				var d net.Dialer
@@ -120,6 +132,7 @@ func (e *SocketEngine) Inspect(ctx context.Context, name string) (*Container, er
 		State struct {
 			Running   bool
 			StartedAt string
+			Pid       int
 		}
 		Config struct {
 			Labels map[string]string
@@ -139,12 +152,14 @@ func (e *SocketEngine) Inspect(ctx context.Context, name string) (*Container, er
 		Idle:      c.Config.Labels[IdleLabel],
 		Running:   c.State.Running,
 		StartedAt: c.State.StartedAt,
+		MainPID:   c.State.Pid,
 	}, nil
 }
 
-// Sample reads a running container's CPU and network counters and counts its
-// processes.
-func (e *SocketEngine) Sample(ctx context.Context, id string) (Sample, error) {
+// Sample reads a running container's CPU and network counters and counts the
+// processes exec'd into it. c must come from Inspect, for its MainPID.
+func (e *SocketEngine) Sample(ctx context.Context, c *Container) (Sample, error) {
+	id := c.ID
 	var stats struct {
 		CPUStats struct {
 			CPUUsage struct {
@@ -162,14 +177,21 @@ func (e *SocketEngine) Sample(ctx context.Context, id string) (Sample, error) {
 		return Sample{}, err
 	}
 
+	// Default ps arguments (-ef) on purpose: they work with whatever ps the
+	// daemon's host has, including Docker Desktop's VM.
 	var top struct {
+		Titles    []string
 		Processes [][]string
 	}
 	if _, err := e.do(ctx, http.MethodGet, "/containers/"+id+"/top", &top); err != nil {
 		return Sample{}, err
 	}
+	execProcs, err := countExecProcs(top.Titles, top.Processes, c.MainPID)
+	if err != nil {
+		return Sample{}, err
+	}
 
-	s := Sample{At: time.Now(), CPUNanos: stats.CPUStats.CPUUsage.TotalUsage, Procs: len(top.Processes)}
+	s := Sample{At: time.Now(), CPUNanos: stats.CPUStats.CPUUsage.TotalUsage, ExecProcs: execProcs}
 	for _, n := range stats.Networks {
 		s.NetBytes += n.RxBytes + n.TxBytes
 	}
@@ -186,6 +208,55 @@ func (e *SocketEngine) Start(ctx context.Context, id string) error {
 func (e *SocketEngine) Stop(ctx context.Context, id string, timeout time.Duration) error {
 	_, err := e.do(ctx, http.MethodPost, fmt.Sprintf("/containers/%s/stop?t=%d", id, int(timeout.Seconds())), nil)
 	return err
+}
+
+// countExecProcs counts the processes in a `docker top` listing that don't
+// descend from mainPID. Everything the container's own server starts (worker
+// processes, a supervisor's queue workers) descends from it; `docker exec`
+// sessions are started beside it by the runtime, so they don't.
+func countExecProcs(titles []string, rows [][]string, mainPID int) (int, error) {
+	pidCol, ppidCol := -1, -1
+	for i, t := range titles {
+		switch t {
+		case "PID":
+			pidCol = i
+		case "PPID":
+			ppidCol = i
+		}
+	}
+	if pidCol < 0 || ppidCol < 0 {
+		return 0, fmt.Errorf("docker top output has no PID/PPID columns: %v", titles)
+	}
+
+	parent := make(map[int]int, len(rows))
+	for _, row := range rows {
+		if len(row) <= pidCol || len(row) <= ppidCol {
+			continue
+		}
+		pid, err1 := strconv.Atoi(row[pidCol])
+		ppid, err2 := strconv.Atoi(row[ppidCol])
+		if err1 == nil && err2 == nil {
+			parent[pid] = ppid
+		}
+	}
+
+	count := 0
+	for pid := range parent {
+		p := pid
+		// Walk up while the parent is inside the container. Bounded by the
+		// listing's size, so a malformed cycle can't loop forever.
+		for i := 0; i <= len(parent) && p != mainPID; i++ {
+			pp, ok := parent[p]
+			if !ok {
+				break
+			}
+			p = pp
+		}
+		if p != mainPID {
+			count++
+		}
+	}
+	return count, nil
 }
 
 func trimSlash(name string) string {
