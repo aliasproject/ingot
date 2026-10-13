@@ -258,8 +258,10 @@ func (m *Manager) Status() ([]*Service, error) {
 
 	services := make([]*Service, 0)
 
-	// Check core services
-	for _, containerName := range GlobalServices {
+	// Check core services, plus the optional alios_idle so a stopped or
+	// crashed one shows up in status rather than silently disabling scale
+	// to zero.
+	for _, containerName := range append(GlobalServices[:len(GlobalServices):len(GlobalServices)], IdleContainer) {
 		displayName := strings.TrimPrefix(containerName, "alios_")
 		if displayName == "alios-reverse-proxy" {
 			displayName = "caddy"

@@ -41,6 +41,22 @@ func (m *Manager) startIdle() error {
 		}
 		return m.docker.StartContainer(IdleContainer)
 	}
+	// Get the new image before touching the old container: after a CLI
+	// update its tag is new, and if it can't be pulled (offline, not yet
+	// published) the old service must keep running rather than leave no
+	// waker at all.
+	if !m.docker.ImageExists(config.IdleImage) {
+		if err := m.docker.PullImage(config.IdleImage, nil); err != nil {
+			if exists {
+				if info.State != "running" {
+					m.docker.StartContainer(IdleContainer)
+				}
+				return fmt.Errorf("couldn't pull %s, so the previous version keeps running: %w", config.IdleImage, err)
+			}
+			return fmt.Errorf("couldn't pull %s: %w", config.IdleImage, err)
+		}
+	}
+
 	if exists {
 		if err := m.docker.RemoveContainer(IdleContainer, true); err != nil {
 			return fmt.Errorf("failed to replace %s: %w", IdleContainer, err)

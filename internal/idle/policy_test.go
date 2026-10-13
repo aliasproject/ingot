@@ -126,3 +126,15 @@ func TestForgetDropsRemovedContainers(t *testing.T) {
 		t.Fatal("c2 was forgotten")
 	}
 }
+
+func TestIdleShellIsNotBusyWithoutTraffic(t *testing.T) {
+	// An open `alios shell` keeps the project awake, but it isn't a stuck
+	// job: it must not trigger busy warnings.
+	steps := []func(*Sample){}
+	for i := 0; i < 10; i++ {
+		steps = append(steps, withExec(1))
+	}
+	if a := feed(NewTracker(DefaultThresholds), base(), steps...); !a.Active || a.BusyWithoutTrafficFor != 0 {
+		t.Fatalf("active=%v busy=%v, want active and not busy", a.Active, a.BusyWithoutTrafficFor)
+	}
+}

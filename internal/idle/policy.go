@@ -8,6 +8,7 @@
 package idle
 
 import (
+	"slices"
 	"time"
 )
 
@@ -45,13 +46,14 @@ var DefaultThresholds = Thresholds{
 type Activity struct {
 	Active bool
 	// Reasons lists what made the container active ("cpu", "network",
-	// "processes", "new"), for logging.
+	// "exec", "new"), for logging.
 	Reasons []string
 	// IdleFor is how long the container has been quiet; zero when active.
 	IdleFor time.Duration
-	// BusyWithoutTrafficFor is how long the container has been busy (CPU or
-	// extra processes) with no network traffic at all - a job running on its
-	// own, or something stuck. Zero when that isn't the case.
+	// BusyWithoutTrafficFor is how long the container has been using CPU
+	// with no network traffic at all - a job running on its own, or
+	// something stuck. An open but idle shell keeps a project awake without
+	// counting here. Zero when that isn't the case.
 	BusyWithoutTrafficFor time.Duration
 }
 
@@ -78,7 +80,7 @@ func NewTracker(th Thresholds) *Tracker {
 
 // Observe records a sample for container id. startedAt identifies the
 // container's current run: when it changes the container was restarted, and
-// its counters and process baseline start over.
+// its counters start over.
 func (t *Tracker) Observe(id, startedAt string, s Sample) Activity {
 	inst, ok := t.instances[id]
 	if !ok || inst.startedAt != startedAt || s.CPUNanos < inst.last.CPUNanos || s.NetBytes < inst.last.NetBytes {
@@ -125,7 +127,7 @@ func (t *Tracker) activity(inst *instance, now time.Time, reasons []string, traf
 
 	inst.lastActive = now
 	a := Activity{Active: true, Reasons: reasons}
-	if traffic {
+	if traffic || !slices.Contains(reasons, "cpu") {
 		inst.busySince = time.Time{}
 	} else {
 		if inst.busySince.IsZero() {

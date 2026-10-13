@@ -309,6 +309,9 @@ func (h *Handler) doctorServices(r *doctorReport) {
 		return
 	}
 	for _, svc := range svcs {
+		if svc.Container == services.IdleContainer {
+			continue // optional; checked in its own section (doctorIdle)
+		}
 		if svc.Status == "running" {
 			r.ok("%s running (%s)", svc.Name, svc.Container)
 			continue

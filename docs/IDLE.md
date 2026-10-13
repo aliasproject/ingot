@@ -67,8 +67,9 @@ starts it again.
 
 ## Busy without traffic
 
-A project that is busy (CPU or extra processes) for 2 hours with no traffic at
-all is either running a long job or stuck. `alios_idle` keeps it running
+A project that keeps using CPU for 2 hours with no traffic at all is either
+running a long job or stuck. (An open but idle `alios shell` keeps a project
+awake without counting as busy.) `alios_idle` keeps it running
 either way, and logs a `busy-warning` line, which `alios doctor` shows. Check
 it with `alios logs` or `docker top alios_php_<project>`.
 
@@ -76,9 +77,9 @@ it with `alios logs` or `docker top alios_php_<project>`.
 
 Use `alios idle off` for a project that has to keep running with no requests:
 one with a queue worker or scheduler running inside its container, for
-example. A worker that's part of the container from the start counts toward
-the process baseline, and its polling may be too light to register as
-traffic, so the project can be stopped while the worker waits for jobs.
+example. A worker the container's server starts isn't an exec session, so
+only its CPU and traffic count, and its polling may be too light to register,
+so the project can be stopped while the worker waits for jobs.
 
 ## Upgrading
 
