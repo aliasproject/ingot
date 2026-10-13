@@ -274,7 +274,7 @@ func (m *Manager) Status() ([]*Service, error) {
 	// to zero.
 	for _, containerName := range append(GlobalServices[:len(GlobalServices):len(GlobalServices)], IdleContainer) {
 		displayName := strings.TrimPrefix(containerName, "ingot_")
-		if displayName == "ingot_proxy" {
+		if displayName == "proxy" {
 			displayName = "caddy"
 		}
 		service := &Service{
@@ -394,10 +394,9 @@ func (m *Manager) ListManagedContainers() ([]string, error) {
 		return nil, fmt.Errorf("failed to list containers: %w", err)
 	}
 
-	// The reverse proxy uses production's own name (ingot_proxy),
-	// not the ingot_ prefix everything else here follows, so it wouldn't
-	// match the prefix check below on its own - check GlobalServices
-	// membership explicitly first so it's still tracked for pause/resume.
+	// Global services all share the ingot_ prefix today; checking
+	// GlobalServices membership as well keeps one that ever doesn't
+	// tracked for pause/resume.
 	globalServiceNames := make(map[string]bool, len(GlobalServices))
 	for _, n := range GlobalServices {
 		globalServiceNames[n] = true
