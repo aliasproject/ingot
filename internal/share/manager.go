@@ -19,6 +19,8 @@
 package share
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"regexp"
 	"sort"
@@ -48,10 +50,23 @@ const (
 	proxyOrigin     = "http://" + proxyContainer + ":80"
 	projectLabel    = "alios.share.project"
 	modeLabel       = "alios.share.mode"
+	tokenLabel      = "alios.share.token_sha256"
 	quickURLTimeout = 30 * time.Second
 )
 
 var quickURLPattern = regexp.MustCompile(`https://[a-z0-9-]+\.trycloudflare\.com`)
+
+// quickTunnelURL returns the share URL from cloudflared's log, skipping
+// api.trycloudflare.com: cloudflared names that host in its error when it
+// can't reach the quick-tunnel service (offline, DNS failure, outage).
+func quickTunnelURL(logs string) string {
+	for _, url := range quickURLPattern.FindAllString(logs, -1) {
+		if url != "https://api.trycloudflare.com" {
+			return url
+		}
+	}
+	return ""
+}
 
 // Credentials protect a share with HTTP basic auth.
 type Credentials struct {
@@ -179,7 +194,10 @@ func (m *Manager) Start(projectName string, auth *Credentials) (share *Share, st
 	var host, mode string
 	if m.config.ShareNamedMode() {
 		mode = ModeNamed
-		host = PublicLabel(projectName) + "." + m.config.ShareDomain
+		host, err = m.namedHost(projectName)
+		if err != nil {
+			return nil, false, err
+		}
 		if err := m.ensureNamedTunnel(); err != nil {
 			return nil, false, err
 		}
@@ -218,7 +236,13 @@ func (m *Manager) Stop(projectName string) (bool, error) {
 		if err := m.docker.RemoveFileFromVolume(vhostVolume, projectName+vhostSuffix); err != nil {
 			return false, fmt.Errorf("failed to remove share vhost: %w", err)
 		}
-		m.reloadCaddy()
+		// Until Caddy reloads it keeps serving the old vhost from memory, so
+		// with a named tunnel still up for other shares the project would
+		// stay public. Report that rather than claiming the share ended.
+		if err := m.reloadCaddy(); err != nil {
+			m.teardownTunnel(projectName, share.Mode)
+			return false, fmt.Errorf("removed the share vhost but Caddy failed to reload, so it may still be served; run 'alios global restart': %w", err)
+		}
 	}
 
 	mode := ModeQuick
@@ -274,6 +298,34 @@ func PublicLabel(projectName string) string {
 	return strings.Trim(b.String(), "-")
 }
 
+// namedHost returns the public host for a named-mode share, refusing one
+// that isn't a valid DNS label or that another project's share already uses
+// (PublicLabel maps both my_app and my.app to my-app).
+func (m *Manager) namedHost(projectName string) (string, error) {
+	label := PublicLabel(projectName)
+	if label == "" || len(label) > 63 {
+		return "", fmt.Errorf("can't make a public hostname from project name %q (needs 1-63 letters, digits or dashes)", projectName)
+	}
+	host := label + "." + m.config.ShareDomain
+
+	shares, err := m.List()
+	if err != nil {
+		return "", fmt.Errorf("failed to read existing shares: %w", err)
+	}
+	for _, other := range shares {
+		if other.Project != projectName && other.URL == "https://"+host {
+			return "", fmt.Errorf("https://%s is already used by the share for %s; stop that share first", host, other.Project)
+		}
+	}
+	return host, nil
+}
+
+// tokenFingerprint identifies a tunnel token without storing it in a label.
+func tokenFingerprint(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:8])
+}
+
 func (m *Manager) ensureImage() error {
 	if m.docker.ImageExists(Image) {
 		return nil
@@ -312,7 +364,7 @@ func (m *Manager) startQuickTunnel(projectName string) (string, error) {
 	var logs string
 	for time.Now().Before(deadline) {
 		logs, _ = m.docker.RunWithOutput("logs", name)
-		if url := quickURLPattern.FindString(logs); url != "" {
+		if url := quickTunnelURL(logs); url != "" {
 			return strings.TrimPrefix(url, "https://"), nil
 		}
 		if !m.docker.IsContainerRunning(name) {
@@ -326,13 +378,18 @@ func (m *Manager) startQuickTunnel(projectName string) (string, error) {
 }
 
 // ensureNamedTunnel makes sure the shared named-tunnel container is running.
+// A container started with a different ALIOS_SHARE_TUNNEL_TOKEN (rotated
+// since) is replaced rather than reused.
 func (m *Manager) ensureNamedTunnel() error {
-	if m.docker.IsContainerRunning(NamedContainer) {
-		return nil
-	}
-	if m.docker.ContainerExists(NamedContainer) {
-		if err := m.docker.StartContainer(NamedContainer); err == nil {
-			return nil
+	fingerprint := tokenFingerprint(m.config.ShareTunnelToken)
+	if info, err := m.docker.InspectContainer(NamedContainer); err == nil {
+		if info.Labels[tokenLabel] == fingerprint {
+			if info.State == "running" {
+				return nil
+			}
+			if err := m.docker.StartContainer(NamedContainer); err == nil {
+				return m.checkNamedTunnelUp()
+			}
 		}
 		m.docker.RemoveContainer(NamedContainer, true)
 	}
@@ -343,11 +400,13 @@ func (m *Manager) ensureNamedTunnel() error {
 		Detached: true,
 		Restart:  "unless-stopped",
 		Network:  config.GetNetworkConfig().BridgeName,
-		// Passed via env rather than argv so it doesn't show in `ps`.
+		// cloudflared reads the token from env. It's still visible to anyone
+		// who can run `docker inspect`, as any container env is.
 		Environment: map[string]string{"TUNNEL_TOKEN": m.config.ShareTunnelToken},
 		Labels: map[string]string{
 			projectLabel: "",
 			modeLabel:    ModeNamed,
+			tokenLabel:   fingerprint,
 		},
 		Command: []string{"tunnel", "--no-autoupdate", "run"},
 	})
@@ -355,8 +414,13 @@ func (m *Manager) ensureNamedTunnel() error {
 		return fmt.Errorf("failed to start named tunnel container: %w", err)
 	}
 
-	// cloudflared exits almost immediately on a bad token; catch that here
-	// rather than leaving the user with a URL that never loads.
+	return m.checkNamedTunnelUp()
+}
+
+// checkNamedTunnelUp waits out cloudflared's startup: it exits almost
+// immediately on a bad token, so catch that here rather than leaving the user
+// with a URL that never loads.
+func (m *Manager) checkNamedTunnelUp() error {
 	time.Sleep(3 * time.Second)
 	if !m.docker.IsContainerRunning(NamedContainer) {
 		logs, _ := m.docker.RunWithOutput("logs", NamedContainer)
@@ -424,16 +488,20 @@ http://%s {
 	return nil
 }
 
-func (m *Manager) reloadCaddy() {
+// reloadCaddy applies vhost changes. A stopped Caddy isn't serving anything,
+// so there's nothing to reload.
+func (m *Manager) reloadCaddy() error {
 	if m.docker.IsContainerRunning(proxyContainer) {
-		m.ssl.ReloadCaddy()
+		return m.ssl.ReloadCaddy()
 	}
+	return nil
 }
 
 // hashPassword bcrypt-hashes a basic-auth password with Caddy's own tool, so
 // alios doesn't need a bcrypt dependency.
 func (m *Manager) hashPassword(password string) (string, error) {
-	output, err := m.docker.RunWithOutput("exec", proxyContainer, "caddy", "hash-password", "--plaintext", password)
+	// Sent on stdin rather than --plaintext, so it never shows in `ps`.
+	output, err := m.docker.RunWithInput(password+"\n", "exec", "-i", proxyContainer, "caddy", "hash-password")
 	if err != nil {
 		return "", fmt.Errorf("failed to hash --auth password: %w", err)
 	}

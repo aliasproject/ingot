@@ -484,6 +484,9 @@ func (h *Handler) doctorShare(r *doctorReport) {
 
 	token, domain := h.config.ShareTunnelToken != "", h.config.ShareDomain != ""
 	switch {
+	case token && domain && !h.config.ShareDomainValid():
+		r.fail(fmt.Sprintf("ALIOS_SHARE_DOMAIN %q isn't a valid domain, so Caddy will reject named shares", h.config.ShareDomain),
+			"set it to the bare domain, e.g. acme-dev.com")
 	case token && domain:
 		r.ok("Named tunnel configured (https://<project>.%s)", h.config.ShareDomain)
 	case token != domain:

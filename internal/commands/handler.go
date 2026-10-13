@@ -698,8 +698,15 @@ func (h *Handler) handleImage(args []string) error {
 	return h.showProjectStatus(updated)
 }
 
-// handleStop stops the current project
+// handleStop stops the current project and ends its share.
 func (h *Handler) handleStop() error {
+	return h.stopProject(true)
+}
+
+// stopProject stops the current project. A restart passes endShare=false:
+// the tunnel points at Caddy, not the container, so the share keeps working
+// (and keeps its URL) once the project is back up.
+func (h *Handler) stopProject(endShare bool) error {
 	project, err := h.projects.GetCurrentProject()
 	if err != nil {
 		return err
@@ -711,7 +718,9 @@ func (h *Handler) handleStop() error {
 		return fmt.Errorf("failed to stop project: %w", err)
 	}
 
-	h.stopShareQuietly(project.Name)
+	if endShare {
+		h.stopShareQuietly(project.Name)
+	}
 
 	fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Project stopped")
 	return nil
@@ -719,7 +728,7 @@ func (h *Handler) handleStop() error {
 
 // handleRestart restarts the current project
 func (h *Handler) handleRestart() error {
-	if err := h.handleStop(); err != nil {
+	if err := h.stopProject(false); err != nil {
 		return err
 	}
 	return h.handleStart()

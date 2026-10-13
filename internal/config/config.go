@@ -183,7 +183,33 @@ func (c *Config) loadFromEnvironment() {
 
 	// Named-tunnel sharing
 	c.ShareTunnelToken = os.Getenv("ALIOS_SHARE_TUNNEL_TOKEN")
-	c.ShareDomain = strings.TrimPrefix(strings.TrimSpace(os.Getenv("ALIOS_SHARE_DOMAIN")), ".")
+	c.ShareDomain = normalizeShareDomain(os.Getenv("ALIOS_SHARE_DOMAIN"))
+}
+
+// normalizeShareDomain accepts the forms people paste - "*.acme-dev.com" (the
+// hostname Cloudflare's dashboard is set up with), "https://acme-dev.com/",
+// ".acme-dev.com" - and reduces them to the bare domain.
+func normalizeShareDomain(value string) string {
+	d := strings.ToLower(strings.TrimSpace(value))
+	d = strings.TrimPrefix(d, "https://")
+	d = strings.TrimPrefix(d, "http://")
+	d = strings.TrimSuffix(d, "/")
+	d = strings.TrimPrefix(d, "*")
+	return strings.Trim(d, ".")
+}
+
+// ShareDomainValid reports whether ShareDomain is a plausible hostname, so
+// doctor can flag a typo before Caddy rejects the vhost built from it.
+func (c *Config) ShareDomainValid() bool {
+	if c.ShareDomain == "" || !strings.Contains(c.ShareDomain, ".") {
+		return false
+	}
+	for _, r := range c.ShareDomain {
+		if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' || r == '.') {
+			return false
+		}
+	}
+	return true
 }
 
 // GetGithubToken returns the GitHub token from environment variable

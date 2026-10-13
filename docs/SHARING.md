@@ -9,7 +9,7 @@ alios share list                  # every active share
 alios share stop                  # stop sharing the current project
 ```
 
-A share is also ended automatically by `alios stop`, `alios remove` and `alios pause`. Shares are not restored by `alios resume`.
+A share is also ended automatically by `alios stop`, `alios remove` and `alios pause`. Shares are not restored by `alios resume`. `alios restart` and `alios global restart` keep the share and its URL.
 
 > **Anyone with the URL can reach your dev site**, including debug pages and error dumps. Use `--auth` for anything that isn't throwaway.
 

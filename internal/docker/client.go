@@ -157,6 +157,23 @@ func (c *Client) RunWithOutput(args ...string) (string, error) {
 	return strings.TrimSpace(string(output)), nil
 }
 
+// RunWithInput executes a docker command with input on its stdin and returns
+// its output. Use it for secrets, which would show in `ps` as arguments.
+func (c *Client) RunWithInput(input string, args ...string) (string, error) {
+	if err := c.CheckAvailability(); err != nil {
+		return "", err
+	}
+
+	cmd := exec.Command(c.dockerPath, args...)
+	cmd.Stdin = strings.NewReader(input)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("docker %s failed: %w\nOutput: %s", args[0], err, string(output))
+	}
+
+	return strings.TrimSpace(string(output)), nil
+}
+
 // RunInteractive executes a docker command with stdin/stdout/stderr attached
 func (c *Client) RunInteractive(args ...string) error {
 	if err := c.CheckAvailability(); err != nil {
