@@ -18,6 +18,10 @@ const (
 
 	// AliosBinary is the installation path for the alios binary
 	AliosBinary = "/usr/local/bin/alios"
+
+	// IdleImage is the alios_idle service's image, tagged with the CLI
+	// version so each CLI runs the service built from the same source.
+	IdleImage = "ghcr.io/aliasproject/alios-idle:" + Version
 )
 
 // Config holds the application configuration
@@ -43,6 +47,12 @@ type Config struct {
 	// throwaway trycloudflare.com quick tunnel.
 	ShareTunnelToken string
 	ShareDomain      string
+
+	// IdleTimeout is how long a project may sit idle before alios_idle stops
+	// it (ALIOS_IDLE_TIMEOUT: a Go duration such as "30m", or "off"). Empty
+	// means the service's own default. Passed through to the service as-is;
+	// it validates the value.
+	IdleTimeout string
 }
 
 // ShareNamedMode reports whether alios share should use a named tunnel.
@@ -184,6 +194,9 @@ func (c *Config) loadFromEnvironment() {
 	// Named-tunnel sharing
 	c.ShareTunnelToken = os.Getenv("ALIOS_SHARE_TUNNEL_TOKEN")
 	c.ShareDomain = normalizeShareDomain(os.Getenv("ALIOS_SHARE_DOMAIN"))
+
+	// Scale to zero
+	c.IdleTimeout = strings.TrimSpace(os.Getenv("ALIOS_IDLE_TIMEOUT"))
 }
 
 // normalizeShareDomain accepts the forms people paste - "*.acme-dev.com" (the

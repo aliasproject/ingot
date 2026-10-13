@@ -115,7 +115,9 @@ func (m *Manager) SetupProjectSSL(projectName string) error {
 	}
 
 	// Create Caddy vhost configuration
-	if err := m.createCaddyVhost(projectName, domain); err != nil {
+	// Called by `alios start`, so the project wakes on visits again even if
+	// it was stopped with `alios stop`.
+	if err := m.createCaddyVhost(projectName, domain, false); err != nil {
 		return fmt.Errorf("failed to create Caddy vhost: %w", err)
 	}
 
@@ -141,6 +143,13 @@ func (m *Manager) RepairVhosts(projectNames []string) (int, error) {
 		return 0, fmt.Errorf("CA certificate not found. Run 'alios cert install' first")
 	}
 
+	// Keep projects stopped with `alios stop` stopped: a repair only fixes
+	// configuration, it shouldn't make a visit start them again.
+	stopped, err := m.StoppedProjects()
+	if err != nil {
+		return 0, fmt.Errorf("failed to read which projects are stopped: %w", err)
+	}
+
 	var errs []string
 	repaired := 0
 
@@ -160,7 +169,7 @@ func (m *Manager) RepairVhosts(projectNames []string) (int, error) {
 			continue
 		}
 
-		if err := m.createCaddyVhost(name, domain); err != nil {
+		if err := m.createCaddyVhost(name, domain, stopped[name]); err != nil {
 			errs = append(errs, fmt.Sprintf("%s: failed to write vhost: %v", name, err))
 			continue
 		}
@@ -232,6 +241,14 @@ func (m *Manager) RemoveProjectVhost(projectName string) error {
 
 // updateVhostToHTTP updates a project's vhost configuration to use HTTP instead of HTTPS
 func (m *Manager) updateVhostToHTTP(projectName string) error {
+	// Keep an `alios stop`: removing the certificate shouldn't make a visit
+	// start the project again.
+	ending := wakeImport
+	if current, err := m.docker.ReadFileFromVolume("alios_vhosts", projectName+".caddyfile"); err == nil &&
+		strings.Contains(current, stoppedImport+projectName) {
+		ending = stoppedImport
+	}
+
 	// Create HTTP-only vhost configuration - no tls directive, so Caddy serves
 	// this site block in plaintext instead of attempting automatic HTTPS (which
 	// can't work for .test domains anyway; see createCaddyVhost).
@@ -242,11 +259,9 @@ func (m *Manager) updateVhostToHTTP(projectName string) error {
         header_up X-Forwarded-For {remote}
         header_up X-Forwarded-Proto {scheme}
     }
-    handle_errors {
-        respond "Project unavailable" 503
-    }
+    `+ending+`%s
 }
-`, projectName, projectName)
+`, projectName, projectName, projectName)
 
 	// Write HTTP vhost configuration to volume
 	if err := m.docker.WriteFileToVolume("alios_vhosts", projectName+".caddyfile", []byte(httpVhostConfig)); err != nil {
@@ -490,7 +505,12 @@ func (m *Manager) copyCAToTempFile(tmpPath string) error {
 // container by name on the shared Docker network natively, and reverse_proxy
 // handles WebSocket upgrade automatically, so neither needs the manual
 // resolver/upgrade-header wiring the old nginx vhost required.
-func (m *Manager) createCaddyVhost(projectName, domain string) error {
+func (m *Manager) createCaddyVhost(projectName, domain string, stopped bool) error {
+	ending := wakeImport
+	if stopped {
+		ending = stoppedImport
+	}
+
 	vhostConfig := fmt.Sprintf(`%s {
     tls /etc/caddy/ssl/%s.crt /etc/caddy/ssl/%s.key
 
@@ -501,11 +521,9 @@ func (m *Manager) createCaddyVhost(projectName, domain string) error {
         header_up X-Forwarded-Proto {scheme}
     }
 
-    handle_errors {
-        respond "Project unavailable" 503
-    }
+    `+ending+`%s
 }
-`, domain, domain, domain, projectName)
+`, domain, domain, domain, projectName, projectName)
 
 	// Write directly to the alios_vhosts volume rather than docker exec-ing into
 	// the Caddy container, so vhosts can be written/repaired even when Caddy isn't
@@ -514,6 +532,82 @@ func (m *Manager) createCaddyVhost(projectName, domain string) error {
 	// services.Manager.generateComposeConfig), alongside the base Caddyfile that
 	// imports every *.caddyfile written here.
 	return m.docker.WriteFileToVolume("alios_vhosts", projectName+".caddyfile", []byte(vhostConfig))
+}
+
+// Each project vhost ends with exactly one of these lines; see the
+// alios_wake and alios_stopped snippets in services.baseCaddyfile.
+const (
+	wakeImport    = "import alios_wake "
+	stoppedImport = "import alios_stopped "
+)
+
+// SetProjectStopped switches a project's vhost between waking it on a visit
+// (asleep) and answering that it's stopped (stopped with `alios stop`). The
+// vhost is the record of which: like a share, it's routing state that lives
+// where Caddy reads it, with no label or file of its own. A project without
+// a vhost, or with one from before scale to zero, is left alone.
+func (m *Manager) SetProjectStopped(projectName string, stopped bool) error {
+	file := projectName + ".caddyfile"
+	content, err := m.docker.ReadFileFromVolume("alios_vhosts", file)
+	if err == docker.ErrFileNotFound {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	updated, changed := swapVhostEnding(content, projectName, stopped)
+	if !changed {
+		return nil
+	}
+	if err := m.docker.WriteFileToVolume("alios_vhosts", file, []byte(updated)); err != nil {
+		return err
+	}
+	if m.docker.IsContainerRunning("alios-reverse-proxy") {
+		if err := m.reloadCaddy(); err != nil {
+			// Caddy keeps its old config, but the file it would load on
+			// its next start is the one it just rejected: put it back.
+			m.docker.WriteFileToVolume("alios_vhosts", file, []byte(content+"\n"))
+			return fmt.Errorf("Caddy rejected the change: %w", err)
+		}
+	}
+	return nil
+}
+
+// swapVhostEnding switches a vhost's final import between alios_wake and
+// alios_stopped. It matches the whole line, so a vhost that merely mentions
+// another project whose name starts with this one's can't be changed.
+func swapVhostEnding(content, projectName string, stopped bool) (string, bool) {
+	from, to := wakeImport+projectName, stoppedImport+projectName
+	if !stopped {
+		from, to = to, from
+	}
+	lines := strings.Split(strings.TrimRight(content, "\n"), "\n")
+	for i, line := range lines {
+		if strings.TrimSpace(line) == from {
+			lines[i] = strings.Replace(line, from, to, 1)
+			return strings.Join(lines, "\n") + "\n", true
+		}
+	}
+	return content, false
+}
+
+// StoppedProjects returns the projects stopped with `alios stop`, read from
+// every vhost with one throwaway container.
+func (m *Manager) StoppedProjects() (map[string]bool, error) {
+	output, err := m.docker.RunWithOutput("run", "--rm", "-v", "alios_vhosts:/vhosts:ro", "alpine:latest",
+		"sh", "-c", "cd /vhosts && grep -l '"+strings.TrimSpace(stoppedImport)+"' *.caddyfile 2>/dev/null; true")
+	if err != nil {
+		return nil, err
+	}
+	stopped := make(map[string]bool)
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasSuffix(line, ".caddyfile") && !strings.HasSuffix(line, ".share.caddyfile") {
+			stopped[strings.TrimSuffix(line, ".caddyfile")] = true
+		}
+	}
+	return stopped, nil
 }
 
 func (m *Manager) reloadCaddy() error {

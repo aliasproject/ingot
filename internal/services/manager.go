@@ -80,6 +80,40 @@ const baseCaddyfile = `{
 	}
 }
 
+# Project vhosts end with "import alios_wake <project>". When the project's
+# container is stopped, Caddy can't reach it and the request goes to
+# alios_idle instead, which starts the container and redirects the browser
+# back to the same URL. Scoped to upstream failures so the app's own error
+# pages, and a share's basic-auth 401, pass through untouched. Defined before
+# the import below, since Caddy needs a snippet declared before it's used.
+#
+# The failed first hop has already consumed the request body, so the waker
+# is always asked with a bodiless GET; forwarding a POST would fail on the
+# closed body. The browser resends the original method and body itself,
+# because the waker answers with a 307.
+(alios_wake) {
+	handle_errors 502 503 504 {
+		request_header -Content-Length
+		request_header -Content-Type
+		request_header -Transfer-Encoding
+		reverse_proxy ` + IdleContainer + `:8080 {
+			method GET
+			header_up X-Alios-Project {args[0]}
+		}
+	}
+}
+
+# "alios stop" swaps a vhost's alios_wake import for this one: a project
+# stopped by hand stays down until "alios start", rather than being started
+# by the next visit (a polling tab would otherwise undo the stop at once).
+(alios_stopped) {
+	handle_errors 502 503 504 {
+		header Content-Type "text/plain; charset=utf-8"
+		header Cache-Control no-store
+		respond "{args[0]} is stopped. Run 'alios start' in the project to start it again." 503
+	}
+}
+
 import /etc/caddy/*.caddyfile
 
 https:// {
@@ -101,7 +135,9 @@ http:// {
 }
 `
 
-// GlobalServices defines the core global services
+// GlobalServices defines the core global services. alios_idle isn't one of
+// them: it's optional (see idle.go), so a missing image never takes down
+// DNS, Caddy and every project with it.
 var GlobalServices = []string{
 	"alios_dns",
 	"alios-reverse-proxy", // matches the name production uses for the same role
@@ -128,18 +164,8 @@ func (m *Manager) Start() error {
 		return fmt.Errorf("failed to prepare CA for the reverse proxy: %w", err)
 	}
 
-	// Write the base Caddyfile and the default page into the vhosts volume
-	// before the container ever starts. The published caddy image's own
-	// baked-in Caddyfile only serves a landing page and has no knowledge of
-	// per-project vhosts; mounting alios_vhosts at /etc/caddy replaces that
-	// entirely, so this file must exist in the volume (even empty of any
-	// project) or Caddy has nothing to run. Rewritten on every start so it
-	// can't drift from what this binary expects.
-	if err := m.docker.WriteFileToVolume("alios_vhosts", "default/index.html", defaultPage); err != nil {
-		return fmt.Errorf("failed to write default page: %w", err)
-	}
-	if err := m.docker.WriteFileToVolume("alios_vhosts", "Caddyfile", []byte(baseCaddyfile)); err != nil {
-		return fmt.Errorf("failed to write base Caddyfile: %w", err)
+	if err := m.WriteBaseConfig(); err != nil {
+		return err
 	}
 
 	// Generate compose configuration
@@ -164,6 +190,27 @@ func (m *Manager) Start() error {
 		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Failed to reload Caddy config: %v\n", err)
 	}
 
+	if err := m.startIdle(); err != nil {
+		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Scale to zero is unavailable, so idle projects won't be stopped or woken: %v\n", err)
+	}
+
+	return nil
+}
+
+// WriteBaseConfig writes the base Caddyfile and the default page into the
+// vhosts volume. The published caddy image's own baked-in Caddyfile only
+// serves a landing page and has no knowledge of per-project vhosts; mounting
+// alios_vhosts at /etc/caddy replaces that entirely, so this file must exist
+// in the volume (even empty of any project) or Caddy has nothing to run.
+// Rewritten on every start, and before `cert repair` rewrites vhosts, so it
+// can't drift from what those vhosts expect (the alios_wake snippet).
+func (m *Manager) WriteBaseConfig() error {
+	if err := m.docker.WriteFileToVolume("alios_vhosts", "default/index.html", defaultPage); err != nil {
+		return fmt.Errorf("failed to write default page: %w", err)
+	}
+	if err := m.docker.WriteFileToVolume("alios_vhosts", "Caddyfile", []byte(baseCaddyfile)); err != nil {
+		return fmt.Errorf("failed to write base Caddyfile: %w", err)
+	}
 	return nil
 }
 
@@ -222,8 +269,10 @@ func (m *Manager) Status() ([]*Service, error) {
 
 	services := make([]*Service, 0)
 
-	// Check core services
-	for _, containerName := range GlobalServices {
+	// Check core services, plus the optional alios_idle so a stopped or
+	// crashed one shows up in status rather than silently disabling scale
+	// to zero.
+	for _, containerName := range append(GlobalServices[:len(GlobalServices):len(GlobalServices)], IdleContainer) {
 		displayName := strings.TrimPrefix(containerName, "alios_")
 		if displayName == "alios-reverse-proxy" {
 			displayName = "caddy"

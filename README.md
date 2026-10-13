@@ -25,6 +25,8 @@ labels.
   pulled image — per project, switchable any time
 - Per-project env vars injected into the container, same as production
 - Pause/resume everything with one command
+- Scale to zero: idle projects are stopped and start again on the next
+  visit (see [docs/IDLE.md](docs/IDLE.md))
 
 ## Installation
 
@@ -119,6 +121,21 @@ alios global start
 alios global stop
 alios global restart
 alios global status
+```
+
+### Scale to zero
+
+Projects nobody is using are stopped after 30 minutes (`ALIOS_IDLE_TIMEOUT`),
+and the next request to one starts it again. The first page load takes a
+second or two longer. `exec`, `shell` and `share` start a sleeping project
+too. A project stopped with `alios stop` stays down until `alios start`. See
+[docs/IDLE.md](docs/IDLE.md) for how idle is detected.
+
+```
+alios idle            # show this project's setting
+alios idle off        # never stop it (e.g. it runs a queue worker)
+alios idle 2h         # its own timeout
+alios idle on         # back to ALIOS_IDLE_TIMEOUT
 ```
 
 ### Pause & resume
@@ -218,6 +235,9 @@ ALIOS_DNS_PORT               DNS listener port (default: 53)
 ALIOS_ENABLE_SSL             Enable/disable SSL setup (default: true)
 ALIOS_ENABLE_DNS             Enable/disable DNS setup (default: true)
 ALIOS_AUTO_START_GLOBAL      Auto-start global services (default: true)
+ALIOS_IDLE_TIMEOUT           Stop projects idle this long, e.g. 30m, 2h, or
+                             off (default: 30m; applied by 'global restart',
+                             kept when unset)
 ```
 
 ## Supported versions
