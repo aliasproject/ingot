@@ -585,9 +585,12 @@ func (h *Handler) handleStart(args ...string) error {
 	}
 
 	// The SSL setup below rewrites the vhost, which also clears an `alios
-	// stop`; without SSL, clear it directly.
+	// stop`; without SSL, clear it directly (the base config was just
+	// written, so skip clearStopped's rewrite).
 	if !h.config.EnableSSL {
-		h.clearStopped(proj.Name)
+		if err := h.ssl.SetProjectStopped(proj.Name, false); err != nil {
+			fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Failed to re-enable waking for the project: %v\n", err)
+		}
 	}
 
 	// Setup SSL for project
@@ -763,6 +766,11 @@ func (h *Handler) stopProject(manual bool) error {
 	}
 
 	if err := h.projects.Stop(); err != nil {
+		// Still running: don't leave it marked stopped, or once it next
+		// goes idle a visit would show the "stopped" page.
+		if marked {
+			h.ssl.SetProjectStopped(project.Name, false)
+		}
 		return fmt.Errorf("failed to stop project: %w", err)
 	}
 
