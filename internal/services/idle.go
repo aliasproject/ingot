@@ -49,7 +49,9 @@ func (m *Manager) startIdle() error {
 		if err := m.docker.PullImage(config.IdleImage, nil); err != nil {
 			if exists {
 				if info.State != "running" {
-					m.docker.StartContainer(IdleContainer)
+					if startErr := m.docker.StartContainer(IdleContainer); startErr != nil {
+						return fmt.Errorf("couldn't pull %s (%v), and the previous version wouldn't start either: %w", config.IdleImage, err, startErr)
+					}
 				}
 				return fmt.Errorf("couldn't pull %s, so the previous version keeps running: %w", config.IdleImage, err)
 			}
