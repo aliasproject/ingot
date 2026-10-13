@@ -126,6 +126,8 @@ func (h *Handler) Execute(args []string) error {
 		return h.handleImage(commandArgs)
 	case "env":
 		return h.handleEnv(commandArgs)
+	case "idle":
+		return h.handleIdle(commandArgs)
 	case "share":
 		return h.handleShare(commandArgs)
 
@@ -192,6 +194,7 @@ func (h *Handler) handleGlobalCommand(args []string) error {
 			return fmt.Errorf("failed to start services: %w", err)
 		}
 		fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Global services started successfully")
+		h.hintVhostsWithoutWake()
 		return h.showServicesStatus()
 
 	case "stop":
@@ -211,6 +214,7 @@ func (h *Handler) handleGlobalCommand(args []string) error {
 			return fmt.Errorf("failed to restart services: %w", err)
 		}
 		fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Global services restarted")
+		h.hintVhostsWithoutWake()
 		return h.showServicesStatus()
 
 	case "status":
@@ -730,6 +734,9 @@ func (h *Handler) stopProject(endShare bool) error {
 	}
 
 	fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Project stopped")
+	if h.docker.IsContainerRunning(services.IdleContainer) {
+		fmt.Printf("  Visiting %s starts it again.\n", project.URL)
+	}
 	return nil
 }
 
@@ -822,17 +829,13 @@ func (h *Handler) handleList() error {
 		return nil
 	}
 
+	waking := h.docker.IsContainerRunning(services.IdleContainer)
 	fmt.Printf("Found %d project(s):\n\n", len(projects))
 	for _, proj := range projects {
-		status := utils.Colorize("[STOPPED]", utils.ColorRed) + " stopped"
-		if proj.Status == "running" {
-			status = utils.Colorize("[RUNNING]", utils.ColorGreen) + " running"
-		}
-
-		fmt.Printf("  %s (%s)\n", proj.Name, status)
+		fmt.Printf("  %s (%s)\n", proj.Name, h.formatProjectStatus(proj.Status, waking))
 		fmt.Printf("    PHP: %s\n", proj.PHPVersion)
 		fmt.Printf("    Path: %s\n", proj.Path)
-		if proj.Status == "running" {
+		if proj.Status == "running" || waking {
 			fmt.Printf("    URL: %s\n", proj.URL)
 		}
 		fmt.Println()
@@ -1056,8 +1059,8 @@ func (h *Handler) handleContainerExec(command string, args []string) error {
 		return fmt.Errorf("unknown command: %s (project not initialized)", command)
 	}
 
-	if project.Status != "running" {
-		return fmt.Errorf("project container is not running. Run 'alios start' first")
+	if err := h.wakeForCommand(); err != nil {
+		return err
 	}
 
 	// Prepare command for execution
@@ -1087,8 +1090,8 @@ func (h *Handler) handleExec(args []string) error {
 		return fmt.Errorf("project not initialized. Run 'alios start' first")
 	}
 
-	if project.Status != "running" {
-		return fmt.Errorf("project container is not running. Run 'alios start' first")
+	if err := h.wakeForCommand(); err != nil {
+		return err
 	}
 
 	err = h.projects.Exec(args, false)
@@ -1118,8 +1121,8 @@ func (h *Handler) handleShell(args []string) error {
 		return fmt.Errorf("project not initialized. Run 'alios start' first")
 	}
 
-	if project.Status != "running" {
-		return fmt.Errorf("project container is not running. Run 'alios start' first")
+	if err := h.wakeForCommand(); err != nil {
+		return err
 	}
 
 	if *userFlag != "" {
@@ -1408,10 +1411,12 @@ func (h *Handler) showStatus() error {
 		fmt.Printf("\n" + utils.Colorize("[DIRECTORY]", utils.ColorCyan) + " Current Project:\n")
 		fmt.Printf("  Name: %s\n", project.Name)
 		fmt.Printf("  PHP: %s\n", project.PHPVersion)
-		fmt.Printf("  Status: %s\n", utils.FormatStatus(project.Status))
-		if project.Status == "running" {
+		waking := h.docker.IsContainerRunning(services.IdleContainer)
+		fmt.Printf("  Status: %s\n", h.formatProjectStatus(project.Status, waking))
+		if project.Status == "running" || waking {
 			fmt.Printf("  URL: %s\n", project.URL)
 		}
+		fmt.Printf("  Idle: %s\n", h.describeIdle(project.Idle))
 		if sh, err := h.share.Get(project.Name); err == nil && sh != nil {
 			fmt.Printf("  Shared: %s\n", formatShare(sh, h.share.TunnelRunning(sh)))
 		}
@@ -1504,6 +1509,8 @@ COMMANDS:
     share [--auth u:p] Share the project at a public URL (Cloudflare Tunnel)
     share stop         Stop sharing the current project
     share list         List every active share
+    idle               Show when the project is stopped for being idle
+    idle off|on|<dur>  Never stop it / use ALIOS_IDLE_TIMEOUT / own timeout
 
   Machine Lifecycle:
     pause              Stop every alios container (projects + global services)
@@ -1550,6 +1557,7 @@ EXAMPLES:
   alios env unset APP_DEBUG # Remove an env var
   alios share              # Get a public URL for the current project
   alios share --auth demo:secret  # Same, behind a username/password
+  alios idle off           # Keep a project with a queue worker running
   alios doctor             # Diagnose why something isn't working
   alios check-update       # Check for available updates
   alios update             # Update to latest version

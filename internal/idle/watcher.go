@@ -130,6 +130,10 @@ func (w *Watcher) warnIfBusy(c *Container, a Activity) {
 		BusyWarning, c.Project, a.BusyWithoutTrafficFor.Round(time.Minute), strings.Join(a.Reasons, ", "), c.Name)
 }
 
+// DefaultTimeout is how long a project may sit idle before it's stopped when
+// ALIOS_IDLE_TIMEOUT isn't set.
+const DefaultTimeout = 30 * time.Minute
+
 // ParseTimeout reads a timeout setting: a Go duration, or "off"/"0" to
 // disable. An empty string means the default.
 func ParseTimeout(value string, def time.Duration) (time.Duration, error) {

@@ -30,7 +30,7 @@ func main() {
 		return
 	}
 
-	timeout := duration(logger, "ALIOS_IDLE_TIMEOUT", 30*time.Minute)
+	timeout := duration(logger, "ALIOS_IDLE_TIMEOUT", idle.DefaultTimeout)
 	engine := idle.NewSocketEngine(envOr("ALIOS_IDLE_DOCKER_SOCKET", "/var/run/docker.sock"))
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)

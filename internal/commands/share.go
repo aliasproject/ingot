@@ -51,8 +51,8 @@ func (h *Handler) handleShare(args []string) error {
 	if project.Status == "not initialized" {
 		return fmt.Errorf("project not initialized. Run 'alios start' first")
 	}
-	if project.Status != "running" {
-		return fmt.Errorf("project container is not running. Run 'alios start' first")
+	if err := h.wakeForCommand(); err != nil {
+		return err
 	}
 
 	mode := "quick tunnel"

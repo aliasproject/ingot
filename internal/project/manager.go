@@ -11,6 +11,7 @@ import (
 
 	"github.com/aliasproject/alios-cli/internal/config"
 	"github.com/aliasproject/alios-cli/internal/docker"
+	"github.com/aliasproject/alios-cli/internal/idle"
 	"github.com/aliasproject/alios-cli/internal/utils"
 )
 
@@ -64,6 +65,11 @@ type Project struct {
 	// keys as real env vars would only shadow the file with a stale copy
 	// until the next restart.
 	Env map[string]string
+
+	// Idle is the project's scale-to-zero setting, from the
+	// alios.project.idle label (`alios idle`): "" for the global
+	// ALIOS_IDLE_TIMEOUT, "off" to never stop it, or its own timeout.
+	Idle string
 }
 
 // ImageChoice carries a project's first-init image and framework selection
@@ -163,6 +169,7 @@ func (m *Manager) GetCurrentProject() (*Project, error) {
 		BuildArgs:      buildArgs,
 		Framework:      info.Labels["alios.project.framework"],
 		Env:            env,
+		Idle:           info.Labels[idle.IdleLabel],
 	}, nil
 }
 
@@ -550,7 +557,7 @@ func (m *Manager) SetEnv(vars map[string]string) error {
 		return nil
 	}
 
-	return m.recreateWithEnv(project)
+	return m.recreate(project)
 }
 
 // UnsetEnv removes user env vars from the current project and recreates the
@@ -575,15 +582,15 @@ func (m *Manager) UnsetEnv(keys []string) error {
 		return nil
 	}
 
-	return m.recreateWithEnv(project)
+	return m.recreate(project)
 }
 
-// recreateWithEnv replaces the project's container with one carrying
-// project.Env, preserving the running/stopped state it had before. The
-// container has to be recreated even when stopped: its labels are the only
-// place the env vars persist, so removing it and waiting for the next start
-// would lose them.
-func (m *Manager) recreateWithEnv(project *Project) error {
+// recreate replaces the project's container with one carrying project's
+// current settings (env vars, idle setting), preserving the running/stopped
+// state it had before. The container has to be recreated even when stopped:
+// its labels are the only place these settings persist, so removing it and
+// waiting for the next start would lose them.
+func (m *Manager) recreate(project *Project) error {
 	wasRunning := project.Status == "running"
 
 	if err := m.docker.RemoveContainer(project.Container, true); err != nil {
@@ -1047,6 +1054,7 @@ func (m *Manager) createContainer(project *Project) error {
 			"alios.project.build_args":      serializeBuildArgs(project.BuildArgs),
 			"alios.project.framework":       project.Framework,
 			envLabel:                        serializeEnv(project.Env),
+			idle.IdleLabel:                  project.Idle,
 		},
 		DNS: dnsServers,
 	}

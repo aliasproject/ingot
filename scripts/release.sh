@@ -83,6 +83,17 @@ build_binary "linux" "arm64"
 build_binary "windows" "amd64"
 
 echo -e "${GREEN}✓ Build complete!${NC}"
+
+# The alios_idle service image. The CLI runs the tag matching its own
+# version (config.IdleImage), so it must be pushed before the release is
+# published. Needs `docker buildx` and a ghcr.io login with write:packages.
+echo -e "${YELLOW}Building and pushing ghcr.io/aliasproject/alios-idle:${VERSION}...${NC}"
+docker buildx build \
+    --platform linux/amd64,linux/arm64 \
+    -f "$REPO_ROOT/Dockerfile.idle" \
+    -t "ghcr.io/aliasproject/alios-idle:${VERSION}" \
+    --push \
+    "$REPO_ROOT"
 echo ""
 echo "Files in $BUILD_DIR:"
 ls -lh "$BUILD_DIR"

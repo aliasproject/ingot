@@ -123,6 +123,7 @@ func (h *Handler) handleDoctor() error {
 	h.doctorSSL(r)
 	h.doctorProject(r, tokenOK)
 	h.doctorShare(r)
+	h.doctorIdle(r)
 
 	return r.summary()
 }
@@ -408,8 +409,12 @@ func (h *Handler) doctorProject(r *doctorReport, registryOK bool) {
 	}
 
 	domain := proj.Name + ".test"
-	if _, err := h.docker.ReadFileFromVolume("alios_vhosts", proj.Name+".caddyfile"); err == nil {
+	if vhost, err := h.docker.ReadFileFromVolume("alios_vhosts", proj.Name+".caddyfile"); err == nil {
 		r.ok("Caddy vhost %s.caddyfile present", proj.Name)
+		if !strings.Contains(vhost, "import alios_wake") {
+			r.warn("Vhost predates scale to zero, so visiting the project while it's stopped won't start it",
+				"alios cert repair")
+		}
 	} else {
 		r.fail("Caddy vhost missing (https://"+domain+" will hit the 'No project here' page)", "alios cert repair")
 	}

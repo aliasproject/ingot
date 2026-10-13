@@ -242,11 +242,9 @@ func (m *Manager) updateVhostToHTTP(projectName string) error {
         header_up X-Forwarded-For {remote}
         header_up X-Forwarded-Proto {scheme}
     }
-    handle_errors {
-        respond "Project unavailable" 503
-    }
+    import alios_wake %s
 }
-`, projectName, projectName)
+`, projectName, projectName, projectName)
 
 	// Write HTTP vhost configuration to volume
 	if err := m.docker.WriteFileToVolume("alios_vhosts", projectName+".caddyfile", []byte(httpVhostConfig)); err != nil {
@@ -501,11 +499,9 @@ func (m *Manager) createCaddyVhost(projectName, domain string) error {
         header_up X-Forwarded-Proto {scheme}
     }
 
-    handle_errors {
-        respond "Project unavailable" 503
-    }
+    import alios_wake %s
 }
-`, domain, domain, domain, projectName)
+`, domain, domain, domain, projectName, projectName)
 
 	// Write directly to the alios_vhosts volume rather than docker exec-ing into
 	// the Caddy container, so vhosts can be written/repaired even when Caddy isn't

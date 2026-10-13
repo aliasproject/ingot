@@ -80,6 +80,20 @@ const baseCaddyfile = `{
 	}
 }
 
+# Project vhosts end with "import alios_wake <project>". When the project's
+# container is stopped, Caddy can't reach it and the request goes to
+# alios_idle instead, which starts the container and redirects the browser
+# back to the same URL. Scoped to upstream failures so the app's own error
+# pages, and a share's basic-auth 401, pass through untouched. Defined before
+# the import below, since Caddy needs a snippet declared before it's used.
+(alios_wake) {
+	handle_errors 502 503 504 {
+		reverse_proxy ` + IdleContainer + `:8080 {
+			header_up X-Alios-Project {args[0]}
+		}
+	}
+}
+
 import /etc/caddy/*.caddyfile
 
 https:// {
@@ -101,11 +115,16 @@ http:// {
 }
 `
 
+// IdleContainer is the alios_idle service, which stops idle projects and
+// wakes them on the next request (cmd/alios-idle, internal/idle).
+const IdleContainer = "alios_idle"
+
 // GlobalServices defines the core global services
 var GlobalServices = []string{
 	"alios_dns",
 	"alios-reverse-proxy", // matches the name production uses for the same role
 	"alios_mail",
+	IdleContainer,
 }
 
 // Start starts all global services
@@ -459,7 +478,7 @@ services:
     networks:
       - internal
     environment:
-      - COMMANDS=--address=/test/%s --server=1.1.1.1 --server=8.8.8.8 --log-facility=- --interface=* --bind-dynamic
+      - COMMANDS=--address=/test/%[1]s --server=1.1.1.1 --server=8.8.8.8 --log-facility=- --interface=* --bind-dynamic
     dns:
       - 1.1.1.1
       - 8.8.8.8
@@ -479,6 +498,18 @@ services:
     depends_on:
       - dns
 
+  idle:
+    container_name: %[2]s
+    image: %[3]s
+    restart: unless-stopped
+    environment:
+      - ALIOS_IDLE_TIMEOUT=%[4]s
+    volumes:
+      # Docker Desktop maps this path to its VM's socket on macOS/Windows too.
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - internal
+
   mail:
     container_name: alios_mail
     image: mailhog/mailhog:latest
@@ -489,7 +520,7 @@ services:
       - "8025:8025"
     networks:
       - internal
-`, hostIP)
+`, hostIP, IdleContainer, config.IdleImage, m.config.IdleTimeout)
 
 	// Add databases
 	for name, dbConfig := range databases {

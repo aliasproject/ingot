@@ -479,13 +479,11 @@ http://%s {
         header_up X-Alios-Share 1
     }
 
-    # Scoped to upstream failures so basic_auth's 401 (and its
-    # WWW-Authenticate challenge) passes through untouched.
-    handle_errors 502 503 504 {
-        respond "Project unavailable" 503
-    }
+    # Wakes the project if it's asleep. The snippet only handles upstream
+    # failures, so basic_auth's 401 and its challenge pass through.
+    import alios_wake %s
 }
-`, mode, host, authLine, projectName)
+`, mode, host, authLine, projectName, projectName)
 
 	if err := m.docker.WriteFileToVolume(vhostVolume, projectName+vhostSuffix, []byte(vhost)); err != nil {
 		return fmt.Errorf("failed to write share vhost: %w", err)
