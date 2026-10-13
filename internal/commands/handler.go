@@ -577,6 +577,14 @@ func (h *Handler) handleStart(args ...string) error {
 		return fmt.Errorf("failed to start project: %w", err)
 	}
 
+	// The SSL setup below rewrites the vhost, which also clears an `alios
+	// stop`; without SSL, clear it directly.
+	if !h.config.EnableSSL {
+		if err := h.ssl.SetProjectStopped(proj.Name, false); err != nil {
+			fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Failed to re-enable waking for the project: %v\n", err)
+		}
+	}
+
 	// Setup SSL for project
 	if h.config.EnableSSL {
 		if err := h.ssl.SetupProjectSSL(proj.Name); err != nil {
@@ -716,15 +724,18 @@ func (h *Handler) handleImage(args []string) error {
 	return h.showProjectStatus(updated)
 }
 
-// handleStop stops the current project and ends its share.
+// handleStop stops the current project until the next `alios start`: it
+// ends the share and marks the vhost stopped, so a visit doesn't start it
+// again the way it would a project that went to sleep for being idle.
 func (h *Handler) handleStop() error {
 	return h.stopProject(true)
 }
 
-// stopProject stops the current project. A restart passes endShare=false:
-// the tunnel points at Caddy, not the container, so the share keeps working
-// (and keeps its URL) once the project is back up.
-func (h *Handler) stopProject(endShare bool) error {
+// stopProject stops the current project. A restart passes manual=false: the
+// project is coming straight back, so its share keeps working (the tunnel
+// points at Caddy, not the container, so it keeps its URL) and its vhost
+// isn't marked stopped.
+func (h *Handler) stopProject(manual bool) error {
 	project, err := h.projects.GetCurrentProject()
 	if err != nil {
 		return err
@@ -736,13 +747,16 @@ func (h *Handler) stopProject(endShare bool) error {
 		return fmt.Errorf("failed to stop project: %w", err)
 	}
 
-	if endShare {
+	if manual {
 		h.stopShareQuietly(project.Name)
+		if err := h.ssl.SetProjectStopped(project.Name, true); err != nil {
+			fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Failed to mark the project stopped, so a visit may start it again: %v\n", err)
+		}
 	}
 
 	fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Project stopped")
-	if h.docker.IsContainerRunning(services.IdleContainer) {
-		fmt.Printf("  Visiting %s starts it again.\n", project.URL)
+	if manual {
+		fmt.Println("  It stays stopped until 'alios start'.")
 	}
 	return nil
 }
@@ -837,12 +851,14 @@ func (h *Handler) handleList() error {
 	}
 
 	waking := h.docker.IsContainerRunning(services.IdleContainer)
+	stopped, _ := h.ssl.StoppedProjects()
 	fmt.Printf("Found %d project(s):\n\n", len(projects))
 	for _, proj := range projects {
-		fmt.Printf("  %s (%s)\n", proj.Name, h.formatProjectStatus(proj.Status, waking))
+		asleep := waking && !stopped[proj.Name]
+		fmt.Printf("  %s (%s)\n", proj.Name, h.formatProjectStatus(proj.Status, asleep))
 		fmt.Printf("    PHP: %s\n", proj.PHPVersion)
 		fmt.Printf("    Path: %s\n", proj.Path)
-		if proj.Status == "running" || waking {
+		if proj.Status == "running" || asleep {
 			fmt.Printf("    URL: %s\n", proj.URL)
 		}
 		fmt.Println()
@@ -1418,9 +1434,9 @@ func (h *Handler) showStatus() error {
 		fmt.Printf("\n" + utils.Colorize("[DIRECTORY]", utils.ColorCyan) + " Current Project:\n")
 		fmt.Printf("  Name: %s\n", project.Name)
 		fmt.Printf("  PHP: %s\n", project.PHPVersion)
-		waking := h.docker.IsContainerRunning(services.IdleContainer)
-		fmt.Printf("  Status: %s\n", h.formatProjectStatus(project.Status, waking))
-		if project.Status == "running" || waking {
+		asleep := h.projectAsleep(project.Name, project.Status)
+		fmt.Printf("  Status: %s\n", h.formatProjectStatus(project.Status, asleep))
+		if project.Status == "running" || asleep {
 			fmt.Printf("  URL: %s\n", project.URL)
 		}
 		fmt.Printf("  Idle: %s\n", h.describeIdle(project.Idle))
@@ -1500,7 +1516,7 @@ USAGE:
 COMMANDS:
   Project Management:
     start [version]    Start project (with optional PHP version)
-    stop               Stop the current project
+    stop               Stop the current project until the next start
     restart            Restart the current project
     rebuild            Force-recreate the container from a fresh image
                         (e.g. after editing a custom Dockerfile)

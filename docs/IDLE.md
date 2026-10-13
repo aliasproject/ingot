@@ -60,10 +60,21 @@ then shows Caddy's empty 502 until `alios_idle` is running again, and
 request arriving mid-pause can't start one again.
 
 `alios exec`, `alios shell` and `alios share` start a sleeping project
-themselves. `alios list` and `alios status` show a stopped project as
-"sleeping" while `alios_idle` is running, because a visit starts it.
-`alios stop` therefore works like putting a project to sleep: visiting it
-starts it again.
+themselves. `alios list` and `alios status` show such a project as
+"sleeping".
+
+## Sleeping vs stopped
+
+A project the watcher stopped for being idle is **sleeping**: the next visit
+starts it. A project you stop with `alios stop` is **stopped**: it stays down
+until `alios start`. A visit gets a short "stopped" page instead, and `exec`,
+`shell` and `share` ask you to start it first. That way, a browser tab that
+keeps polling the project can't undo the stop.
+
+The difference is recorded in the project's vhost: `alios stop` swaps its
+`import alios_wake <project>` line for `import alios_stopped <project>`, and
+`alios start` swaps it back. `alios restart` and `alios pause`/`resume` don't
+change it, and `alios cert repair` keeps it.
 
 ## Busy without traffic
 

@@ -103,6 +103,17 @@ const baseCaddyfile = `{
 	}
 }
 
+# "alios stop" swaps a vhost's alios_wake import for this one: a project
+# stopped by hand stays down until "alios start", rather than being started
+# by the next visit (a polling tab would otherwise undo the stop at once).
+(alios_stopped) {
+	handle_errors 502 503 504 {
+		header Content-Type "text/plain; charset=utf-8"
+		header Cache-Control no-store
+		respond "{args[0]} is stopped. Run 'alios start' in the project to start it again." 503
+	}
+}
+
 import /etc/caddy/*.caddyfile
 
 https:// {

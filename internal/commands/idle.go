@@ -54,12 +54,20 @@ func (h *Handler) handleIdle(args []string) error {
 	return nil
 }
 
-// wakeForCommand starts the current project if it's asleep (or stopped), for
-// commands that need its container running: exec, shell, share.
+// wakeForCommand starts the current project if it's asleep, for commands
+// that need its container running: exec, shell, share. A project stopped
+// with `alios stop` stays stopped.
 func (h *Handler) wakeForCommand() error {
+	proj, err := h.projects.GetCurrentProject()
+	if err != nil {
+		return err
+	}
+	if proj.Status == "stopped" && !h.projectAsleep(proj.Name, proj.Status) {
+		return fmt.Errorf("project is stopped. Run 'alios start' first")
+	}
 	woke, err := h.projects.Wake()
 	if woke {
-		fmt.Println(utils.Colorize("[STARTING]", utils.ColorCyan) + " Project was stopped; started it")
+		fmt.Println(utils.Colorize("[STARTING]", utils.ColorCyan) + " Project was asleep; started it")
 	}
 	return err
 }
@@ -71,10 +79,21 @@ func (h *Handler) describeIdle(setting string) string {
 	return project.DescribeIdle(setting, global)
 }
 
-// formatProjectStatus shows a stopped project as sleeping when alios_idle is
-// running, because the next request to it starts it again.
-func (h *Handler) formatProjectStatus(status string, waking bool) string {
-	if status == "stopped" && waking {
+// projectAsleep reports whether a stopped project starts again on the next
+// visit: alios_idle is running and the project wasn't stopped with `alios
+// stop`.
+func (h *Handler) projectAsleep(name, status string) bool {
+	if status != "stopped" || !h.docker.IsContainerRunning(services.IdleContainer) {
+		return false
+	}
+	stopped, err := h.ssl.StoppedProjects()
+	return err == nil && !stopped[name]
+}
+
+// formatProjectStatus shows a stopped project as sleeping when the next
+// request to it starts it again.
+func (h *Handler) formatProjectStatus(status string, asleep bool) string {
+	if status == "stopped" && asleep {
 		return utils.Colorize("[SLEEPING]", utils.ColorBlue) + " sleeping, starts on the next visit"
 	}
 	return utils.FormatStatus(status)
@@ -85,7 +104,7 @@ func (h *Handler) formatProjectStatus(status string, waking bool) string {
 // that project's next `alios start`; `alios cert repair` does them all.
 func (h *Handler) hintVhostsWithoutWake() {
 	output, err := h.docker.RunWithOutput("run", "--rm", "-v", "alios_vhosts:/vhosts:ro", "alpine:latest",
-		"sh", "-c", "cd /vhosts && grep -L 'import alios_wake' *.caddyfile 2>/dev/null; true")
+		"sh", "-c", "cd /vhosts && grep -LE 'import alios_(wake|stopped)' *.caddyfile 2>/dev/null; true")
 	if err != nil {
 		return
 	}

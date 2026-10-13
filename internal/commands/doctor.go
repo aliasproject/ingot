@@ -414,8 +414,11 @@ func (h *Handler) doctorProject(r *doctorReport, registryOK bool) {
 	domain := proj.Name + ".test"
 	if vhost, err := h.docker.ReadFileFromVolume("alios_vhosts", proj.Name+".caddyfile"); err == nil {
 		r.ok("Caddy vhost %s.caddyfile present", proj.Name)
-		if !strings.Contains(vhost, "import alios_wake") {
-			r.warn("Vhost predates scale to zero, so visiting the project while it's stopped won't start it",
+		switch {
+		case strings.Contains(vhost, "import alios_stopped"):
+			r.info("Stopped with 'alios stop': visits won't start it until 'alios start'")
+		case !strings.Contains(vhost, "import alios_wake"):
+			r.warn("Vhost predates scale to zero, so visiting the project while it's asleep won't start it",
 				"alios cert repair")
 		}
 	} else {

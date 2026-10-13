@@ -128,7 +128,8 @@ alios global status
 Projects nobody is using are stopped after 30 minutes (`ALIOS_IDLE_TIMEOUT`),
 and the next request to one starts it again. The first page load takes a
 second or two longer. `exec`, `shell` and `share` start a sleeping project
-too. See [docs/IDLE.md](docs/IDLE.md) for how idle is detected.
+too. A project stopped with `alios stop` stays down until `alios start`. See
+[docs/IDLE.md](docs/IDLE.md) for how idle is detected.
 
 ```
 alios idle            # show this project's setting
