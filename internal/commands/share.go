@@ -131,6 +131,9 @@ func (h *Handler) handleShareList() error {
 // stopShareQuietly ends a project's share as part of stopping or removing the
 // project, so a share never outlives the site it points at.
 func (h *Handler) stopShareQuietly(projectName string) {
+	if projectName == "" {
+		return
+	}
 	stopped, err := h.share.Stop(projectName)
 	if err != nil {
 		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Failed to stop sharing: %v\n", err)
@@ -139,6 +142,27 @@ func (h *Handler) stopShareQuietly(projectName string) {
 	if stopped {
 		fmt.Println(utils.Colorize("[INFO]", utils.ColorBlue) + " Stopped sharing")
 	}
+}
+
+// stopAllSharesQuietly ends every share, for commands that take the whole
+// stack down.
+func (h *Handler) stopAllSharesQuietly() {
+	stopped, err := h.share.StopAll()
+	if err != nil {
+		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Failed to stop shares: %v\n", err)
+	}
+	if len(stopped) > 0 {
+		fmt.Printf(utils.Colorize("[INFO]", utils.ColorBlue)+" Stopped %d share(s)\n", len(stopped))
+	}
+}
+
+// currentProjectName returns the current directory's project name, or "" if
+// it can't be determined.
+func (h *Handler) currentProjectName() string {
+	if proj, err := h.projects.GetCurrentProject(); err == nil {
+		return proj.Name
+	}
+	return ""
 }
 
 func formatShare(sh *share.Share, tunnelRunning bool) string {

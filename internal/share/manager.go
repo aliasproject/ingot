@@ -21,6 +21,7 @@ package share
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -258,29 +259,40 @@ func (m *Manager) Stop(projectName string) (bool, error) {
 }
 
 // StopAll ends every share and removes every tunnel container, including
-// orphans. Returns the projects that were shared.
+// orphans. It keeps going past a share that fails to stop, so one bad share
+// can't leave the others' tunnels running, and always sweeps the tunnel
+// containers - with those gone no share is reachable, whatever else failed.
+// Returns the projects whose shares ended, and every error joined.
 func (m *Manager) StopAll() ([]string, error) {
+	var errs []error
+	var stopped []string
+
 	shares, err := m.List()
 	if err != nil {
-		return nil, err
+		errs = append(errs, fmt.Errorf("failed to list shares: %w", err))
 	}
-
-	var stopped []string
 	for _, share := range shares {
 		if _, err := m.Stop(share.Project); err != nil {
-			return stopped, fmt.Errorf("failed to stop share for %s: %w", share.Project, err)
+			errs = append(errs, fmt.Errorf("failed to stop share for %s: %w", share.Project, err))
+			continue
 		}
 		stopped = append(stopped, share.Project)
 	}
 
 	leftovers, err := m.docker.ListContainers("label=" + projectLabel)
-	if err == nil {
-		for _, name := range leftovers {
-			m.docker.RemoveContainer(name, true)
+	if err != nil {
+		errs = append(errs, fmt.Errorf("failed to list tunnel containers: %w", err))
+	}
+	for _, name := range leftovers {
+		if name == "" {
+			continue
+		}
+		if err := m.docker.RemoveContainer(name, true); err != nil {
+			errs = append(errs, fmt.Errorf("failed to remove tunnel container %s: %w", name, err))
 		}
 	}
 
-	return stopped, nil
+	return stopped, errors.Join(errs...)
 }
 
 // PublicLabel turns a project name into a single DNS label, so a project named

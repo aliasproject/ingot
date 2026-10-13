@@ -196,6 +196,9 @@ func (h *Handler) handleGlobalCommand(args []string) error {
 
 	case "stop":
 		fmt.Println(utils.Colorize("[STOPPING]", utils.ColorYellow) + " Stopping global services...")
+		// With Caddy down no share can be served, so end them rather than
+		// leave tunnels up that status would report as live.
+		h.stopAllSharesQuietly()
 		if err := h.services.Stop(); err != nil {
 			return fmt.Errorf("failed to stop services: %w", err)
 		}
@@ -419,6 +422,10 @@ func (h *Handler) handleUninstall() error {
 	}
 
 	fmt.Println("🗑 Uninstalling Alios...")
+
+	// Shares first: the named tunnel restarts with Docker and would keep
+	// the Cloudflare connection open with no alios left to stop it.
+	h.stopAllSharesQuietly()
 
 	// Stop all services
 	h.services.Stop()
@@ -731,7 +738,12 @@ func (h *Handler) handleRestart() error {
 	if err := h.stopProject(false); err != nil {
 		return err
 	}
-	return h.handleStart()
+	if err := h.handleStart(); err != nil {
+		// The share was kept for the project coming back; it didn't.
+		h.stopShareQuietly(h.currentProjectName())
+		return err
+	}
+	return nil
 }
 
 // handleRebuild forces the current project's container to be recreated from
