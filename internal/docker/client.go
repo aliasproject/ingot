@@ -157,6 +157,23 @@ func (c *Client) RunWithOutput(args ...string) (string, error) {
 	return strings.TrimSpace(string(output)), nil
 }
 
+// RunWithInput executes a docker command with input on its stdin and returns
+// its output. Use it for secrets, which would show in `ps` as arguments.
+func (c *Client) RunWithInput(input string, args ...string) (string, error) {
+	if err := c.CheckAvailability(); err != nil {
+		return "", err
+	}
+
+	cmd := exec.Command(c.dockerPath, args...)
+	cmd.Stdin = strings.NewReader(input)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("docker %s failed: %w\nOutput: %s", args[0], err, string(output))
+	}
+
+	return strings.TrimSpace(string(output)), nil
+}
+
 // RunInteractive executes a docker command with stdin/stdout/stderr attached
 func (c *Client) RunInteractive(args ...string) error {
 	if err := c.CheckAvailability(); err != nil {
@@ -765,6 +782,36 @@ func (c *Client) ReadFileFromVolume(volumeName, filePath string) (string, error)
 	}
 
 	return output, nil
+}
+
+// ListVolumeFiles returns the names of files at the root of a named Docker
+// volume whose names match a shell glob (e.g. "*.share.caddyfile"), using a
+// throwaway container. A glob with no matches returns an empty slice.
+func (c *Client) ListVolumeFiles(volumeName, glob string) ([]string, error) {
+	output, err := c.RunWithOutput("run", "--rm",
+		"-v", volumeName+":/state",
+		"alpine:latest",
+		"sh", "-c", fmt.Sprintf("cd /state && for f in %s; do [ -f \"$f\" ] && echo \"$f\"; done; true", glob),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	if output == "" {
+		return []string{}, nil
+	}
+
+	return strings.Split(output, "\n"), nil
+}
+
+// RemoveFileFromVolume deletes a file from inside a named Docker volume, using
+// a throwaway container. A file that doesn't exist is not an error.
+func (c *Client) RemoveFileFromVolume(volumeName, filePath string) error {
+	return c.Run("run", "--rm",
+		"-v", volumeName+":/state",
+		"alpine:latest",
+		"rm", "-f", "/state/"+filePath,
+	)
 }
 
 // Errors

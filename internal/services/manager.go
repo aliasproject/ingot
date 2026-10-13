@@ -359,6 +359,13 @@ func (m *Manager) ListManagedContainers() ([]string, error) {
 		if name == "" {
 			continue
 		}
+		// Share tunnels (alios_share, alios_share_<project>) aren't global
+		// services: restarting a quick tunnel gives it a new public URL, which
+		// would leave its vhost pointing at a host nothing routes to. They're
+		// ended by `alios pause` and `alios share stop` instead.
+		if strings.HasPrefix(name, "alios_share") {
+			continue
+		}
 		if globalServiceNames[name] || (strings.HasPrefix(name, "alios_") && !strings.HasPrefix(name, "alios_php_")) {
 			managed = append(managed, name)
 		}

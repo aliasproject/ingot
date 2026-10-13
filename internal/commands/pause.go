@@ -14,6 +14,13 @@ import (
 func (h *Handler) handlePause() error {
 	fmt.Println(utils.Colorize("[STOPPING]", utils.ColorYellow) + " Pausing alios...")
 
+	// Shares aren't restored on resume: a quick tunnel would come back at a
+	// different URL anyway, so end them rather than leave stale vhosts.
+	stoppedShares, err := h.share.StopAll()
+	if err != nil {
+		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Failed to stop shares: %v\n", err)
+	}
+
 	stoppedProjects, err := h.projects.StopAll()
 	if err != nil {
 		return fmt.Errorf("failed to stop project containers: %w", err)
@@ -38,6 +45,9 @@ func (h *Handler) handlePause() error {
 	fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Alios paused")
 	fmt.Printf("  %d project container(s) stopped\n", len(stoppedProjects))
 	fmt.Printf("  %d global service container(s) stopped\n", len(stoppedServices))
+	if len(stoppedShares) > 0 {
+		fmt.Printf("  %d share(s) ended (run 'alios share' again after resuming)\n", len(stoppedShares))
+	}
 	fmt.Println("\nRun 'alios resume' when you're ready to start working again")
 
 	return nil
