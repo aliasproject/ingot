@@ -13,10 +13,10 @@ import (
 // equals signs. Like every other per-project setting, this lives on the
 // container itself, not in a file on disk (see CLAUDE.md's "no persisted
 // config files" invariant).
-const envLabel = "alios.project.env"
+const envLabel = "ingot.project.env"
 
 // reservedEnvKeys are the infra vars createContainer always sets itself, last,
-// so a user var can never override what alios needs to route traffic to the
+// so a user var can never override what ingot needs to route traffic to the
 // container. Rejected up front by SetEnv rather than silently clobbered.
 var reservedEnvKeys = map[string]bool{
 	"SERVER_NAME": true,
@@ -25,7 +25,7 @@ var reservedEnvKeys = map[string]bool{
 	"PORT":        true,
 }
 
-// IsReservedEnvKey reports whether key is one of alios's own infra vars.
+// IsReservedEnvKey reports whether key is one of ingot's own infra vars.
 func IsReservedEnvKey(key string) bool {
 	return reservedEnvKeys[key]
 }

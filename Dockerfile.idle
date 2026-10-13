@@ -1,17 +1,17 @@
-# The alios_idle global service (cmd/alios-idle). Published as
-# ghcr.io/aliasproject/alios-idle:<version> by scripts/release.sh, tagged with
+# The ingot_idle global service (cmd/ingot-idle). Published as
+# ghcr.io/aliasproject/ingot-idle:<version> by scripts/release.sh, tagged with
 # the CLI version so a CLI always runs the service it was built against.
 FROM golang:1.23-alpine AS build
 WORKDIR /src
 COPY go.mod ./
-COPY cmd/alios-idle ./cmd/alios-idle
+COPY cmd/ingot-idle ./cmd/ingot-idle
 COPY internal/idle ./internal/idle
 ARG TARGETOS TARGETARCH
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
-    go build -trimpath -ldflags="-s -w" -o /alios-idle ./cmd/alios-idle
+    go build -trimpath -ldflags="-s -w" -o /ingot-idle ./cmd/ingot-idle
 
 FROM scratch
-COPY --from=build /alios-idle /alios-idle
+COPY --from=build /ingot-idle /ingot-idle
 EXPOSE 8080
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s CMD ["/alios-idle", "healthcheck"]
-ENTRYPOINT ["/alios-idle"]
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s CMD ["/ingot-idle", "healthcheck"]
+ENTRYPOINT ["/ingot-idle"]

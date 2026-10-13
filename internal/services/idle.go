@@ -3,28 +3,28 @@ package services
 import (
 	"fmt"
 
-	"github.com/aliasproject/alios-cli/internal/config"
-	"github.com/aliasproject/alios-cli/internal/docker"
+	"github.com/aliasproject/ingot/internal/config"
+	"github.com/aliasproject/ingot/internal/docker"
 )
 
-// IdleContainer is the alios_idle service, which stops idle projects and
-// wakes them on the next request (cmd/alios-idle, internal/idle).
+// IdleContainer is the ingot_idle service, which stops idle projects and
+// wakes them on the next request (cmd/ingot-idle, internal/idle).
 //
 // It's run with `docker run` rather than in the compose group: it's
 // optional, and compose aborts the whole `up` when one image can't be
-// pulled, so an unpublished or unreachable alios-idle image would otherwise
+// pulled, so an unpublished or unreachable ingot-idle image would otherwise
 // take every global service down with it.
-const IdleContainer = "alios_idle"
+const IdleContainer = "ingot_idle"
 
-// idleTimeoutLabel records the ALIOS_IDLE_TIMEOUT the running service was
+// idleTimeoutLabel records the INGOT_IDLE_TIMEOUT the running service was
 // started with, so status output can report the service's real setting
 // rather than whatever the current shell happens to have.
-const idleTimeoutLabel = "alios.idle.timeout"
+const idleTimeoutLabel = "ingot.idle.timeout"
 
-// startIdle makes sure alios_idle is running the image this CLI expects.
+// startIdle makes sure ingot_idle is running the image this CLI expects.
 //
-// The timeout is only changed when ALIOS_IDLE_TIMEOUT is set in this
-// shell. Global services also start implicitly (`alios start` calls
+// The timeout is only changed when INGOT_IDLE_TIMEOUT is set in this
+// shell. Global services also start implicitly (`ingot start` calls
 // EnsureRunning), and a terminal without the variable mustn't silently
 // reset a timeout chosen in another.
 func (m *Manager) startIdle() error {
@@ -74,12 +74,12 @@ func (m *Manager) startIdle() error {
 		// Docker Desktop maps this path to its VM's socket on macOS and
 		// Windows too. Rootless Docker isn't supported yet.
 		Volumes:     []string{"/var/run/docker.sock:/var/run/docker.sock"},
-		Environment: map[string]string{"ALIOS_IDLE_TIMEOUT": timeout},
+		Environment: map[string]string{"INGOT_IDLE_TIMEOUT": timeout},
 		Labels:      map[string]string{idleTimeoutLabel: timeout},
 	})
 }
 
-// StopIdle stops alios_idle if it's running and returns its name, so a pause
+// StopIdle stops ingot_idle if it's running and returns its name, so a pause
 // can stop it before the projects (otherwise a request arriving mid-pause
 // wakes a project that was just stopped) and still resume it afterwards.
 func (m *Manager) StopIdle() []string {
@@ -92,7 +92,7 @@ func (m *Manager) StopIdle() []string {
 	return []string{IdleContainer}
 }
 
-// IdleTimeoutSetting returns the ALIOS_IDLE_TIMEOUT alios_idle was started
+// IdleTimeoutSetting returns the INGOT_IDLE_TIMEOUT ingot_idle was started
 // with ("" for its default), and whether the service is running.
 func (m *Manager) IdleTimeoutSetting() (string, bool) {
 	info, err := m.docker.InspectContainer(IdleContainer)

@@ -1,11 +1,10 @@
-# Alios CLI
+# Ingot
 
-Alios CLI (`alios`) is a single-binary local development environment manager
-for PHP projects. It's the local-dev companion to
-[Alios](https://alios.app), the cloud infrastructure and
-application management platform — local environments are built to mirror
-production as closely as possible: the same Caddy reverse proxy, the same
-prebuilt-vs-custom-Dockerfile image model, the same config-injection pattern.
+Ingot (`ingot`) is a single-binary local development environment manager
+for PHP projects. Every project gets its own production-like container
+(FrankenPHP behind a shared Caddy reverse proxy) with real, locally-trusted
+HTTPS on a `*.test` domain, and projects nobody is using sleep until the
+next visit.
 
 No server component, no config files. Every command shells out to Docker on
 your machine; all state lives in environment variables or Docker container
@@ -37,18 +36,18 @@ saves that silently as if it succeeded unless you pass `-f`). Use the
 authentication for you - e.g. for Linux/amd64:
 
 ```bash
-gh release download --repo aliasproject/alios-cli -p alios-linux-amd64 -O alios
-chmod +x alios
-./alios
+gh release download --repo aliasproject/ingot -p ingot-linux-amd64 -O ingot
+chmod +x ingot
+./ingot
 ```
 
-Other platforms: swap `alios-linux-amd64` for `alios-linux-arm64`,
-`alios-darwin-amd64`, `alios-darwin-arm64`, or `alios-windows-amd64.exe`.
+Other platforms: swap `ingot-linux-amd64` for `ingot-linux-arm64`,
+`ingot-darwin-amd64`, `ingot-darwin-arm64`, or `ingot-windows-amd64.exe`.
 
-On first run, `alios` installs itself to `/usr/local/bin/alios` and walks
+On first run, `ingot` installs itself to `/usr/local/bin/ingot` and walks
 you through database configuration and GitHub authentication (needed to pull
 private images from GHCR). If it's interrupted partway through, just run
-`alios install` again — every step is safe to repeat, so it picks up from
+`ingot install` again — every step is safe to repeat, so it picks up from
 wherever it left off rather than starting over.
 
 ### Requirements
@@ -61,13 +60,13 @@ wherever it left off rather than starting over.
 
 ```bash
 cd /path/to/your/project
-alios start
+ingot start
 ```
 
-On the first `alios start` for a project you'll be asked:
+On the first `ingot start` for a project you'll be asked:
 
 1. **How to build the image** — only if a `Dockerfile` is found in the
-   project root: use it, use the prebuilt Alios image, or pull a different
+   project root: use it, use the prebuilt Ingot image, or pull a different
    image entirely. No Dockerfile → straight to prebuilt.
 2. **PHP version** — only for the prebuilt path; a custom Dockerfile or
    pulled image brings its own PHP version.
@@ -81,34 +80,34 @@ container labels. Your project is then available at `https://<name>.test`.
 ### Project lifecycle
 
 ```
-alios start [version]    Start (or create) the project container
-alios stop               Stop the project container
-alios restart            Restart the project container
-alios remove / rm        Remove the project container
-alios status             Show detailed status for this project
-alios list / ls          List every project
+ingot start [version]    Start (or create) the project container
+ingot stop               Stop the project container
+ingot restart            Restart the project container
+ingot remove / rm        Remove the project container
+ingot status             Show detailed status for this project
+ingot list / ls          List every project
 ```
 
 ### Changing configuration
 
 ```
-alios php [version]         Change PHP version (prebuilt projects only)
-alios server-root [path]    Change the server root directory
-alios image [mode]          Switch image mode without recreating from scratch
+ingot php [version]         Change PHP version (prebuilt projects only)
+ingot server-root [path]    Change the server root directory
+ingot image [mode]          Switch image mode without recreating from scratch
 ```
 
-`alios image` takes `prebuilt`, `dockerfile`, or `pull` (with a second arg
+`ingot image` takes `prebuilt`, `dockerfile`, or `pull` (with a second arg
 for the image to pull), or run it bare for an interactive prompt. Useful for
-going back and forth while testing — e.g. `alios image dockerfile` to try
-your production build, `alios image prebuilt` to switch back.
+going back and forth while testing — e.g. `ingot image dockerfile` to try
+your production build, `ingot image prebuilt` to switch back.
 
 ### Logs, exec, and shell
 
 ```
-alios logs
-alios exec composer install
-alios shell                # shell as your host user
-alios shell --user=root    # shell as root
+ingot logs
+ingot exec composer install
+ingot shell                # shell as your host user
+ingot shell --user=root    # shell as root
 ```
 
 ### Global services
@@ -117,25 +116,25 @@ DNS, Caddy, MailHog, and any configured databases are shared across every
 project:
 
 ```
-alios global start
-alios global stop
-alios global restart
-alios global status
+ingot global start
+ingot global stop
+ingot global restart
+ingot global status
 ```
 
 ### Scale to zero
 
-Projects nobody is using are stopped after 30 minutes (`ALIOS_IDLE_TIMEOUT`),
+Projects nobody is using are stopped after 30 minutes (`INGOT_IDLE_TIMEOUT`),
 and the next request to one starts it again. The first page load takes a
 second or two longer. `exec`, `shell` and `share` start a sleeping project
-too. A project stopped with `alios stop` stays down until `alios start`. See
+too. A project stopped with `ingot stop` stays down until `ingot start`. See
 [docs/IDLE.md](docs/IDLE.md) for how idle is detected.
 
 ```
-alios idle            # show this project's setting
-alios idle off        # never stop it (e.g. it runs a queue worker)
-alios idle 2h         # its own timeout
-alios idle on         # back to ALIOS_IDLE_TIMEOUT
+ingot idle            # show this project's setting
+ingot idle off        # never stop it (e.g. it runs a queue worker)
+ingot idle 2h         # its own timeout
+ingot idle on         # back to INGOT_IDLE_TIMEOUT
 ```
 
 ### Pause & resume
@@ -144,44 +143,44 @@ Stop everything at once to free up CPU/RAM, then bring back exactly what was
 running:
 
 ```
-alios pause
-alios resume
+ingot pause
+ingot resume
 ```
 
 ### Databases
 
 ```
-alios database add
-alios database remove
-alios database list
+ingot database add
+ingot database remove
+ingot database list
 ```
 
 MySQL databases get an empty root password. PostgreSQL databases get user
-`alios`, password `alios`, database `alios`.
+`ingot`, password `ingot`, database `ingot`.
 
 ### SSL
 
 ```
-alios cert install    # Install the CA into your system trust store
-alios cert verify     # Check whether it's installed
-alios cert debug      # Detailed certificate/Caddy diagnostics
-alios cert repair     # Regenerate vhosts and restart Caddy
+ingot cert install    # Install the CA into your system trust store
+ingot cert verify     # Check whether it's installed
+ingot cert debug      # Detailed certificate/Caddy diagnostics
+ingot cert repair     # Regenerate vhosts and restart Caddy
 ```
 
 ### Everything else
 
 ```
-alios status          Full system status (services, network, install)
-alios github-auth     (Re-)authenticate with GitHub
-alios update          Update to the latest version
-alios check-update    Check for an available update
-alios uninstall       Uninstall Alios CLI
-alios help            Show all commands
+ingot status          Full system status (services, network, install)
+ingot github-auth     (Re-)authenticate with GitHub
+ingot update          Update to the latest version
+ingot check-update    Check for an available update
+ingot uninstall       Uninstall Ingot
+ingot help            Show all commands
 ```
 
 ## Image selection
 
-`alios` mirrors production's own model for how a project's container image
+`ingot` mirrors production's own model for how a project's container image
 is built:
 
 - **Prebuilt** (default) — `ghcr.io/aliasproject/php:<version>-frankenphp-dev`,
@@ -193,7 +192,7 @@ is built:
   nothing is silently reused from your GitHub auth or anything else.
 - **Custom pull** — pulls a specific image you name.
 
-Switch between them any time with `alios image <mode>` — no need to remove
+Switch between them any time with `ingot image <mode>` — no need to remove
 and recreate the project.
 
 ## Env vars
@@ -203,9 +202,9 @@ production supplies a site's config as plain environment variables — set
 them explicitly:
 
 ```
-alios env set APP_DEBUG=true DB_HOST=alios_mysql
-alios env unset APP_DEBUG
-alios env list
+ingot env set APP_DEBUG=true DB_HOST=ingot_mysql
+ingot env unset APP_DEBUG
+ingot env list
 ```
 
 Values live in the container's labels, not in a file, and `set`/`unset`
@@ -213,29 +212,29 @@ recreate the container so the change takes effect immediately (Docker has no
 way to update a running container's environment in place, and neither does
 production). A stopped project stays stopped.
 
-Alios CLI deliberately does **not** read your project's `.env`. The project
+Ingot deliberately does **not** read your project's `.env`. The project
 directory is bind-mounted, so a framework that reads `.env` itself (Laravel,
 for example) already sees every edit instantly with no restart. Injecting
 those same keys as real env vars would only shadow the file with a stale
 copy.
 
-`SERVER_NAME`, `SERVER_ROOT`, `HTTPS`, and `PORT` are reserved for Alios CLI
-itself and can't be set with `alios env set`.
+`SERVER_NAME`, `SERVER_ROOT`, `HTTPS`, and `PORT` are reserved for Ingot
+itself and can't be set with `ingot env set`.
 
 ## Environment variables
 
-Alios CLI has no config file — these are the only settings, read from your
+Ingot has no config file — these are the only settings, read from your
 shell environment:
 
 ```
 GITHUB_TOKEN                 GitHub token for pulling private images
-ALIOS_DEFAULT_PHP_VERSION    Default PHP version for new projects
-ALIOS_HOST_IP                Override auto-detected host IP
-ALIOS_DNS_PORT               DNS listener port (default: 53)
-ALIOS_ENABLE_SSL             Enable/disable SSL setup (default: true)
-ALIOS_ENABLE_DNS             Enable/disable DNS setup (default: true)
-ALIOS_AUTO_START_GLOBAL      Auto-start global services (default: true)
-ALIOS_IDLE_TIMEOUT           Stop projects idle this long, e.g. 30m, 2h, or
+INGOT_DEFAULT_PHP_VERSION    Default PHP version for new projects
+INGOT_HOST_IP                Override auto-detected host IP
+INGOT_DNS_PORT               DNS listener port (default: 53)
+INGOT_ENABLE_SSL             Enable/disable SSL setup (default: true)
+INGOT_ENABLE_DNS             Enable/disable DNS setup (default: true)
+INGOT_AUTO_START_GLOBAL      Auto-start global services (default: true)
+INGOT_IDLE_TIMEOUT           Stop projects idle this long, e.g. 30m, 2h, or
                              off (default: 30m; applied by 'global restart',
                              kept when unset)
 ```
@@ -249,9 +248,9 @@ ALIOS_IDLE_TIMEOUT           Stop projects idle this long, e.g. 30m, 2h, or
 ## Building from source
 
 ```bash
-git clone git@github.com:aliasproject/alios-cli.git
-cd alios-cli
-go build -o alios ./cmd    # build the binary
+git clone git@github.com:aliasproject/ingot.git
+cd ingot
+go build -o ingot ./cmd    # build the binary
 go run ./cmd status        # or run directly without building
 go vet ./...               # static checks
 ```
@@ -264,12 +263,12 @@ on the CLI itself.
 
 **`Error: Docker is not installed or not running`** — start Docker first.
 
-**SSL warnings in the browser** — `alios cert verify`, then `alios cert
+**SSL warnings in the browser** — `ingot cert verify`, then `ingot cert
 repair` if the CA isn't installed.
 
-**`alios install` seems stuck partway through** — just run it again; every
+**`ingot install` seems stuck partway through** — just run it again; every
 step is safe to repeat and picks up from where it stopped.
 
-**Container pull denied** — re-authenticate with `alios github-auth`, or if
+**Container pull denied** — re-authenticate with `ingot github-auth`, or if
 you're on a fresh `gh` CLI login, make sure it has `read:packages` scope
 (`gh auth refresh -h github.com -s read:packages`).

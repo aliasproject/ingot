@@ -1,3 +1,3 @@
-module github.com/aliasproject/alios-cli
+module github.com/aliasproject/ingot
 
 go 1.23.1

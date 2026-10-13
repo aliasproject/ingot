@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aliasproject/alios-cli/internal/config"
-	"github.com/aliasproject/alios-cli/internal/utils"
+	"github.com/aliasproject/ingot/internal/config"
+	"github.com/aliasproject/ingot/internal/utils"
 )
 
 // Client handles GitHub authentication and API operations

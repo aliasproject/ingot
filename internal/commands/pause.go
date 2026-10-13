@@ -3,16 +3,16 @@ package commands
 import (
 	"fmt"
 
-	"github.com/aliasproject/alios-cli/internal/state"
-	"github.com/aliasproject/alios-cli/internal/utils"
+	"github.com/aliasproject/ingot/internal/state"
+	"github.com/aliasproject/ingot/internal/utils"
 )
 
-// handlePause stops every alios-managed container on the machine - all project
+// handlePause stops every ingot-managed container on the machine - all project
 // containers across all project directories, plus the shared global services
 // (dns, caddy, mail, databases) - and remembers exactly what was running so that
 // handleResume can bring back only that set.
 func (h *Handler) handlePause() error {
-	fmt.Println(utils.Colorize("[STOPPING]", utils.ColorYellow) + " Pausing alios...")
+	fmt.Println(utils.Colorize("[STOPPING]", utils.ColorYellow) + " Pausing ingot...")
 
 	// Shares aren't restored on resume: a quick tunnel would come back at a
 	// different URL anyway, so end them rather than leave stale vhosts.
@@ -44,22 +44,22 @@ func (h *Handler) handlePause() error {
 	store := state.NewStore(h.docker)
 	if err := store.SavePauseState(stoppedProjects, stoppedServices); err != nil {
 		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Failed to save pause state: %v\n", err)
-		fmt.Println("   'alios resume' won't know what to bring back. Run 'alios global start' and start each project manually.")
+		fmt.Println("   'ingot resume' won't know what to bring back. Run 'ingot global start' and start each project manually.")
 	}
 
-	fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Alios paused")
+	fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Ingot paused")
 	fmt.Printf("  %d project container(s) stopped\n", len(stoppedProjects))
 	fmt.Printf("  %d global service container(s) stopped\n", len(stoppedServices))
 	if len(stoppedShares) > 0 {
-		fmt.Printf("  %d share(s) ended (run 'alios share' again after resuming)\n", len(stoppedShares))
+		fmt.Printf("  %d share(s) ended (run 'ingot share' again after resuming)\n", len(stoppedShares))
 	}
-	fmt.Println("\nRun 'alios resume' when you're ready to start working again")
+	fmt.Println("\nRun 'ingot resume' when you're ready to start working again")
 
 	return nil
 }
 
 // handleResume restores exactly the containers that were running at the last
-// alios pause.
+// ingot pause.
 func (h *Handler) handleResume() error {
 	store := state.NewStore(h.docker)
 	ps, err := store.LoadPauseState()
@@ -68,11 +68,11 @@ func (h *Handler) handleResume() error {
 	}
 
 	if ps == nil || (len(ps.Projects) == 0 && len(ps.Services) == 0) {
-		fmt.Println(utils.Colorize("[INFO]", utils.ColorBlue) + " No paused alios session found")
+		fmt.Println(utils.Colorize("[INFO]", utils.ColorBlue) + " No paused ingot session found")
 		return nil
 	}
 
-	fmt.Println(utils.Colorize("[STARTING]", utils.ColorCyan) + " Resuming alios...")
+	fmt.Println(utils.Colorize("[STARTING]", utils.ColorCyan) + " Resuming ingot...")
 
 	if err := h.services.Resume(ps.Services); err != nil {
 		return fmt.Errorf("failed to resume global services: %w", err)
@@ -87,7 +87,7 @@ func (h *Handler) handleResume() error {
 		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Failed to clear pause state: %v\n", err)
 	}
 
-	fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Alios resumed")
+	fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Ingot resumed")
 	fmt.Printf("  %d global service container(s) started\n", len(ps.Services))
 	fmt.Printf("  %d project container(s) started\n", len(startedProjects))
 

@@ -185,15 +185,15 @@ func cleanupDNSLinux() error {
 	// Remove systemd-resolved configuration if it exists
 	if CommandExists("resolvectl") || CommandExists("systemd-resolve") {
 		// Remove the DNS configuration drop-in file
-		exec.Command("sudo", "rm", "-f", "/etc/systemd/resolved.conf.d/alios.conf").Run()
+		exec.Command("sudo", "rm", "-f", "/etc/systemd/resolved.conf.d/ingot.conf").Run()
 
 		// Restart systemd-resolved
 		exec.Command("sudo", "systemctl", "restart", "systemd-resolved").Run()
 	}
 
 	// Remove dnsmasq configuration if it exists
-	if FileExists("/etc/dnsmasq.d/alios.conf") {
-		exec.Command("sudo", "rm", "-f", "/etc/dnsmasq.d/alios.conf").Run()
+	if FileExists("/etc/dnsmasq.d/ingot.conf") {
+		exec.Command("sudo", "rm", "-f", "/etc/dnsmasq.d/ingot.conf").Run()
 		if CommandExists("systemctl") {
 			exec.Command("sudo", "systemctl", "restart", "dnsmasq").Run()
 		} else {
@@ -212,7 +212,7 @@ func cleanupDNSLinux() error {
 }
 
 // TestDomainResolverStatus reports whether the host's resolver has been
-// pointed at alios_dns for .test (the counterpart of SetupTestDomainResolver)
+// pointed at ingot_dns for .test (the counterpart of SetupTestDomainResolver)
 // and which config file does it. On platforms the setup doesn't handle it
 // returns configured=false with an explanatory detail.
 func TestDomainResolverStatus() (configured bool, detail string) {
@@ -223,12 +223,12 @@ func TestDomainResolverStatus() (configured bool, detail string) {
 		}
 		return false, "/etc/resolver/test missing"
 	case "linux":
-		for _, path := range []string{"/etc/systemd/resolved.conf.d/alios.conf", "/etc/dnsmasq.d/alios.conf"} {
+		for _, path := range []string{"/etc/systemd/resolved.conf.d/ingot.conf", "/etc/dnsmasq.d/ingot.conf"} {
 			if FileExists(path) {
 				return true, path
 			}
 		}
-		return false, "no alios.conf under /etc/systemd/resolved.conf.d or /etc/dnsmasq.d"
+		return false, "no ingot.conf under /etc/systemd/resolved.conf.d or /etc/dnsmasq.d"
 	default:
 		return false, "automatic resolver setup is not supported on " + runtime.GOOS
 	}
@@ -310,7 +310,7 @@ Domains=~test
 `
 
 	// Write configuration file
-	cmd := exec.Command("sudo", "tee", "/etc/systemd/resolved.conf.d/alios.conf")
+	cmd := exec.Command("sudo", "tee", "/etc/systemd/resolved.conf.d/ingot.conf")
 	cmd.Stdin = strings.NewReader(config)
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to write resolved configuration: %w", err)
@@ -342,7 +342,7 @@ func setupDnsmasq() error {
 	config := "server=/test/127.0.0.1#5354\n"
 
 	// Write configuration file
-	cmd := exec.Command("sudo", "tee", "/etc/dnsmasq.d/alios.conf")
+	cmd := exec.Command("sudo", "tee", "/etc/dnsmasq.d/ingot.conf")
 	cmd.Stdin = strings.NewReader(config)
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to write dnsmasq configuration: %w", err)

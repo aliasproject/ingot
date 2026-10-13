@@ -5,7 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/aliasproject/alios-cli/internal/utils"
+	"github.com/aliasproject/ingot/internal/utils"
 	"io"
 	"net/http"
 	"os"
@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aliasproject/alios-cli/internal/config"
+	"github.com/aliasproject/ingot/internal/config"
 )
 
 // Release contains minimal update information
@@ -60,9 +60,9 @@ type Updater struct {
 // New creates a new updater instance
 func New() *Updater {
 	// Get GitHub configuration
-	githubRepo := os.Getenv("ALIOS_GITHUB_REPO")
+	githubRepo := os.Getenv("INGOT_GITHUB_REPO")
 	if githubRepo == "" {
-		githubRepo = "aliasproject/alios-cli" // default repo
+		githubRepo = "aliasproject/ingot" // default repo
 	}
 
 	return &Updater{
@@ -246,9 +246,9 @@ func (u *Updater) detectPlatformFromAssetName(filename string) string {
 		return "windows_amd64"
 	}
 
-	// If filename is just "alios" or similar generic name, return empty
+	// If filename is just "ingot" or similar generic name, return empty
 	// The caller will handle this case by using it as fallback for current platform
-	if filename == "alios" || filename == original {
+	if filename == "ingot" || filename == original {
 		return ""
 	}
 
@@ -258,7 +258,7 @@ func (u *Updater) detectPlatformFromAssetName(filename string) string {
 // performUpdate downloads and replaces the binary
 func (u *Updater) performUpdate(binary *Binary) error {
 	// Create temp file
-	tmpFile, err := os.CreateTemp("", "alios-update-*")
+	tmpFile, err := os.CreateTemp("", "ingot-update-*")
 	if err != nil {
 		return fmt.Errorf("failed to create temp file: %w", err)
 	}
@@ -319,12 +319,12 @@ func (u *Updater) replaceBinary(tmpPath, realPath string) error {
 	// permission error if we can't write there at all - then rename that
 	// over realPath, which is guaranteed same-filesystem and therefore safe
 	// even though realPath may still be executing.
-	stagedPath := filepath.Join(filepath.Dir(realPath), ".alios-update-staged")
+	stagedPath := filepath.Join(filepath.Dir(realPath), ".ingot-update-staged")
 	defer os.Remove(stagedPath) // no-op once the rename below succeeds
 
 	if err := copyFile(tmpPath, stagedPath); err != nil {
 		if os.IsPermission(err) && u.isSystemInstall(realPath) {
-			fmt.Printf(utils.Colorize("[AUTH]", utils.ColorBlue)+" Alios is installed system-wide at %s\n", realPath)
+			fmt.Printf(utils.Colorize("[AUTH]", utils.ColorBlue)+" Ingot is installed system-wide at %s\n", realPath)
 			fmt.Printf("   Requesting administrator privileges to update...\n")
 
 			return u.updateWithSudo(tmpPath, realPath)
@@ -362,7 +362,7 @@ func (u *Updater) updateWithSudo(tmpPath, realPath string) error {
 		return u.updateWithWindowsElevation(tmpPath, realPath)
 	}
 
-	stagedPath := filepath.Join(filepath.Dir(realPath), ".alios-update-staged")
+	stagedPath := filepath.Join(filepath.Dir(realPath), ".ingot-update-staged")
 
 	cmd := exec.Command("sudo", "cp", tmpPath, stagedPath)
 	cmd.Stdout = os.Stdout
@@ -422,7 +422,7 @@ func (u *Updater) downloadFile(url string, dest *os.File, expectedSHA256 string)
 		// For GitHub API asset downloads
 		req.Header.Set("Authorization", "token "+u.githubToken)
 		req.Header.Set("Accept", "application/octet-stream")
-		req.Header.Set("User-Agent", "alios-cli-updater")
+		req.Header.Set("User-Agent", "ingot-updater")
 	}
 
 	resp, err := u.httpClient.Do(req)

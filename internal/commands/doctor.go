@@ -13,15 +13,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aliasproject/alios-cli/internal/config"
-	"github.com/aliasproject/alios-cli/internal/github"
-	"github.com/aliasproject/alios-cli/internal/project"
-	"github.com/aliasproject/alios-cli/internal/services"
-	"github.com/aliasproject/alios-cli/internal/utils"
+	"github.com/aliasproject/ingot/internal/config"
+	"github.com/aliasproject/ingot/internal/github"
+	"github.com/aliasproject/ingot/internal/project"
+	"github.com/aliasproject/ingot/internal/services"
+	"github.com/aliasproject/ingot/internal/utils"
 )
 
 // doctorProbeImage is the image used to test registry read access. It's the
-// smallest image alios always needs, so if this can't be read nothing else
+// smallest image ingot always needs, so if this can't be read nothing else
 // from ghcr.io/aliasproject can either.
 const doctorProbeImage = "ghcr.io/aliasproject/dns:latest"
 
@@ -70,7 +70,7 @@ func (r *doctorReport) summary() error {
 		return fmt.Errorf("%d check(s) failed", r.failed)
 	}
 	if r.warned > 0 {
-		fmt.Println(utils.Colorize("[INFO]", utils.ColorBlue) + " Warnings won't stop alios from working but may explain odd behaviour")
+		fmt.Println(utils.Colorize("[INFO]", utils.ColorBlue) + " Warnings won't stop ingot from working but may explain odd behaviour")
 	} else {
 		fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Everything looks healthy")
 	}
@@ -78,7 +78,7 @@ func (r *doctorReport) summary() error {
 }
 
 func doctorHeader() {
-	fmt.Printf("Alios v%s - Doctor\n", config.Version)
+	fmt.Printf("Ingot v%s - Doctor\n", config.Version)
 	fmt.Println(strings.Repeat("=", 50))
 }
 
@@ -108,7 +108,7 @@ func dockerFix() string {
 	}
 }
 
-// handleDoctor runs every environment check alios depends on and prints a
+// handleDoctor runs every environment check ingot depends on and prints a
 // pass/warn/fail line for each, with a fix for anything that isn't OK.
 // It's read-only: nothing is started, pulled, or changed.
 func (h *Handler) handleDoctor() error {
@@ -150,22 +150,22 @@ func (h *Handler) doctorInstall(r *doctorReport) {
 	r.section("INSTALL")
 
 	if h.config.IsInstalled() {
-		r.ok("Binary installed at %s", config.AliosBinary)
+		r.ok("Binary installed at %s", config.IngotBinary)
 	} else {
-		r.fail(fmt.Sprintf("Binary not installed at %s", config.AliosBinary), "alios install")
+		r.fail(fmt.Sprintf("Binary not installed at %s", config.IngotBinary), "ingot install")
 	}
 
 	if exe, err := os.Executable(); err == nil {
 		if resolved, err := filepath.EvalSymlinks(exe); err == nil {
 			exe = resolved
 		}
-		if exe != config.AliosBinary {
+		if exe != config.IngotBinary {
 			r.info("Running %s rather than the installed binary", exe)
 		}
 	}
 
-	if _, err := exec.LookPath("alios"); err != nil {
-		r.warn("'alios' is not on your PATH", fmt.Sprintf("add %s to PATH", filepath.Dir(config.AliosBinary)))
+	if _, err := exec.LookPath("ingot"); err != nil {
+		r.warn("'ingot' is not on your PATH", fmt.Sprintf("add %s to PATH", filepath.Dir(config.IngotBinary)))
 	}
 }
 
@@ -178,13 +178,13 @@ func (h *Handler) doctorGitHub(r *doctorReport) bool {
 	token, source := h.github.FindToken()
 	if token == "" {
 		r.fail("No GitHub token found (checked GITHUB_TOKEN and 'gh auth token')",
-			"alios github-auth, or export GITHUB_TOKEN=<token with repo + read:packages>")
+			"ingot github-auth, or export GITHUB_TOKEN=<token with repo + read:packages>")
 		return false
 	}
 	r.ok("Token found via %s", source)
 
 	if err := h.github.ValidateToken(token); err != nil {
-		r.fail(fmt.Sprintf("Token rejected by GitHub: %v", err), "alios github-auth (or 'gh auth login' again)")
+		r.fail(fmt.Sprintf("Token rejected by GitHub: %v", err), "ingot github-auth (or 'gh auth login' again)")
 		return false
 	}
 	r.ok("Token valid for GitHub user %s", h.github.Username(token))
@@ -207,13 +207,13 @@ func (h *Handler) doctorGitHub(r *doctorReport) bool {
 	if dockerLoggedIntoGHCR() {
 		r.ok("Docker has stored credentials for ghcr.io")
 	} else {
-		r.fail("Docker is not logged into ghcr.io", "alios github-auth (runs 'docker login ghcr.io' with your token)")
+		r.fail("Docker is not logged into ghcr.io", "ingot github-auth (runs 'docker login ghcr.io' with your token)")
 	}
 
 	if err := h.docker.CheckRegistryAccess(doctorProbeImage); err != nil {
-		fix := "alios github-auth"
+		fix := "ingot github-auth"
 		if !scopeOK {
-			fix = "grant read:packages (see above), then alios github-auth to re-login docker"
+			fix = "grant read:packages (see above), then ingot github-auth to re-login docker"
 		} else if strings.Contains(strings.ToLower(err.Error()), "denied") {
 			fix = "the token's owner may need access to the aliasproject packages, or SSO authorization for the org"
 		}
@@ -250,7 +250,7 @@ func (h *Handler) doctorNetwork(r *doctorReport) {
 	if h.docker.NetworkExists(bridge) {
 		r.ok("Docker network %s exists", bridge)
 	} else {
-		r.fail(fmt.Sprintf("Docker network %s missing", bridge), "alios global start (recreates it)")
+		r.fail(fmt.Sprintf("Docker network %s missing", bridge), "ingot global start (recreates it)")
 	}
 
 	if hostIP, err := services.GetHostIP(); err == nil {
@@ -260,29 +260,29 @@ func (h *Handler) doctorNetwork(r *doctorReport) {
 	}
 
 	if configured, detail := utils.TestDomainResolverStatus(); configured {
-		r.ok("Host resolver routes .test to alios_dns (%s)", detail)
+		r.ok("Host resolver routes .test to ingot_dns (%s)", detail)
 	} else {
-		r.fail("Host resolver not configured for .test ("+detail+")", "alios dns-setup")
+		r.fail("Host resolver not configured for .test ("+detail+")", "ingot dns-setup")
 	}
 
-	probe := "alios-doctor-probe.test"
+	probe := "ingot-doctor-probe.test"
 	if addrs, err := lookupVia(probe, "127.0.0.1:5354"); err == nil && len(addrs) > 0 {
-		r.ok("alios_dns answers for .test on 127.0.0.1:5354 (%s -> %s)", probe, addrs[0])
+		r.ok("ingot_dns answers for .test on 127.0.0.1:5354 (%s -> %s)", probe, addrs[0])
 	} else {
-		r.fail("alios_dns is not answering on 127.0.0.1:5354", "alios global restart")
+		r.fail("ingot_dns is not answering on 127.0.0.1:5354", "ingot global restart")
 	}
 
 	if addrs, err := lookupVia(probe, ""); err == nil && len(addrs) > 0 {
 		r.ok("System resolver resolves .test (%s -> %s)", probe, addrs[0])
 	} else {
 		r.fail("System resolver does not resolve .test domains (browsers won't reach https://<project>.test)",
-			"alios dns-setup, then restart the resolver (systemd-resolved/dnsmasq)")
+			"ingot dns-setup, then restart the resolver (systemd-resolved/dnsmasq)")
 	}
 }
 
 // lookupVia resolves a name either through the system resolver (empty
 // server) or by sending the query straight to one nameserver, so the report
-// can tell "alios_dns is down" apart from "the host isn't asking it".
+// can tell "ingot_dns is down" apart from "the host isn't asking it".
 func lookupVia(name, server string) ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -305,7 +305,7 @@ func (h *Handler) doctorServices(r *doctorReport) {
 
 	svcs, err := h.services.Status()
 	if err != nil {
-		r.fail(fmt.Sprintf("Could not inspect global services: %v", err), "alios global start")
+		r.fail(fmt.Sprintf("Could not inspect global services: %v", err), "ingot global start")
 		return
 	}
 	for _, svc := range svcs {
@@ -316,14 +316,14 @@ func (h *Handler) doctorServices(r *doctorReport) {
 			r.ok("%s running (%s)", svc.Name, svc.Container)
 			continue
 		}
-		r.fail(fmt.Sprintf("%s is %s (%s)", svc.Name, svc.Status, svc.Container), "alios global start")
+		r.fail(fmt.Sprintf("%s is %s (%s)", svc.Name, svc.Status, svc.Container), "ingot global start")
 	}
 
-	for _, volume := range []string{"alios_certs", "alios_vhosts"} {
+	for _, volume := range []string{"ingot_certs", "ingot_vhosts"} {
 		if h.docker.VolumeExists(volume) {
 			r.ok("Volume %s exists", volume)
 		} else {
-			r.fail(fmt.Sprintf("Volume %s missing", volume), "alios global start")
+			r.fail(fmt.Sprintf("Volume %s missing", volume), "ingot global start")
 		}
 	}
 }
@@ -332,34 +332,34 @@ func (h *Handler) doctorSSL(r *doctorReport) {
 	r.section("SSL")
 
 	if h.ssl.CAExists() {
-		r.ok("CA certificate present in alios_certs")
+		r.ok("CA certificate present in ingot_certs")
 	} else {
-		r.fail("CA certificate missing from alios_certs", "alios cert install (generates the CA first)")
+		r.fail("CA certificate missing from ingot_certs", "ingot cert install (generates the CA first)")
 		return
 	}
 
 	if h.ssl.IsCertificateInstalled() {
 		r.ok("CA trusted by the system certificate store")
 	} else {
-		r.fail("CA not trusted by the system certificate store (browsers will warn on https://*.test)", "alios cert install")
+		r.fail("CA not trusted by the system certificate store (browsers will warn on https://*.test)", "ingot cert install")
 	}
 
 	if present, checkable, installed := h.ssl.ChromeNSSDBStatus(); present {
 		switch {
 		case !checkable:
 			r.warn("Chrome's NSS database (~/.pki/nssdb) exists but certutil isn't installed, so its trust can't be checked or set",
-				"install the 'nss' package (provides certutil), then alios cert install")
+				"install the 'nss' package (provides certutil), then ingot cert install")
 		case installed:
 			r.ok("CA trusted in Chrome's NSS database (~/.pki/nssdb)")
 		default:
 			r.warn("CA missing from Chrome's NSS database (~/.pki/nssdb) - Chrome/Chromium ignore the system store on Linux",
-				"alios cert install, then fully quit and reopen Chrome")
+				"ingot cert install, then fully quit and reopen Chrome")
 		}
 	}
 }
 
 // doctorProject checks the project in the current directory. For an
-// uninitialized one it pre-flights what `alios start` would do - which
+// uninitialized one it pre-flights what `ingot start` would do - which
 // image it would use and whether that image is reachable - since that's
 // exactly the failure that's hardest to read from init's own output.
 func (h *Handler) doctorProject(r *doctorReport, registryOK bool) {
@@ -380,15 +380,15 @@ func (h *Handler) doctorProject(r *doctorReport, registryOK bool) {
 			r.ok("Detected framework: %s", proj.Framework)
 		}
 		image := h.projects.ImageReference(proj)
-		h.doctorImage(r, image, registryOK, "alios start would use")
-		r.info("Run 'alios start' to create it")
+		h.doctorImage(r, image, registryOK, "ingot start would use")
+		r.info("Run 'ingot start' to create it")
 		return
 	}
 
 	if proj.Status == "running" {
 		r.ok("Container %s running (PHP %s)", proj.Container, proj.PHPVersion)
 	} else {
-		r.warn(fmt.Sprintf("Container %s is %s", proj.Container, proj.Status), "alios start")
+		r.warn(fmt.Sprintf("Container %s is %s", proj.Container, proj.Status), "ingot start")
 	}
 
 	image := h.projects.ImageReference(proj)
@@ -396,7 +396,7 @@ func (h *Handler) doctorProject(r *doctorReport, registryOK bool) {
 		if h.docker.ImageExists(image) {
 			r.ok("Locally built image %s present", image)
 		} else {
-			r.fail(fmt.Sprintf("Locally built image %s missing", image), "alios rebuild")
+			r.fail(fmt.Sprintf("Locally built image %s missing", image), "ingot rebuild")
 		}
 	} else {
 		h.doctorImage(r, image, registryOK, "project uses")
@@ -407,35 +407,35 @@ func (h *Handler) doctorProject(r *doctorReport, registryOK bool) {
 		if utils.StringSliceContains(info.Networks, bridge) {
 			r.ok("Container attached to %s", bridge)
 		} else {
-			r.fail(fmt.Sprintf("Container not on %s (Caddy can't reach it)", bridge), "alios rebuild")
+			r.fail(fmt.Sprintf("Container not on %s (Caddy can't reach it)", bridge), "ingot rebuild")
 		}
 	}
 
 	domain := proj.Name + ".test"
-	if vhost, err := h.docker.ReadFileFromVolume("alios_vhosts", proj.Name+".caddyfile"); err == nil {
+	if vhost, err := h.docker.ReadFileFromVolume("ingot_vhosts", proj.Name+".caddyfile"); err == nil {
 		r.ok("Caddy vhost %s.caddyfile present", proj.Name)
 		switch {
-		case strings.Contains(vhost, "import alios_stopped"):
-			r.info("Stopped with 'alios stop': visits won't start it until 'alios start'")
-		case !strings.Contains(vhost, "import alios_wake"):
+		case strings.Contains(vhost, "import ingot_stopped"):
+			r.info("Stopped with 'ingot stop': visits won't start it until 'ingot start'")
+		case !strings.Contains(vhost, "import ingot_wake"):
 			r.warn("Vhost predates scale to zero, so visiting the project while it's asleep won't start it",
-				"alios cert repair")
+				"ingot cert repair")
 		}
 	} else {
-		r.fail("Caddy vhost missing (https://"+domain+" will hit the 'No project here' page)", "alios cert repair")
+		r.fail("Caddy vhost missing (https://"+domain+" will hit the 'No project here' page)", "ingot cert repair")
 	}
 
 	if h.ssl.CertificateExists(domain) {
 		r.ok("Certificate for %s present", domain)
 	} else {
-		r.fail("Certificate for "+domain+" missing", "alios cert repair")
+		r.fail("Certificate for "+domain+" missing", "ingot cert repair")
 	}
 
 	if proj.Status == "running" {
 		if code, err := probeHTTPS(proj.URL); err != nil {
-			r.fail(fmt.Sprintf("%s unreachable: %v", proj.URL, err), "alios global restart, then alios restart")
+			r.fail(fmt.Sprintf("%s unreachable: %v", proj.URL, err), "ingot global restart, then ingot restart")
 		} else if code >= 500 {
-			r.warn(fmt.Sprintf("%s responded %d (Caddy is up but the app errored)", proj.URL, code), "alios logs")
+			r.warn(fmt.Sprintf("%s responded %d (Caddy is up but the app errored)", proj.URL, code), "ingot logs")
 		} else {
 			r.ok("%s responded %d", proj.URL, code)
 		}
@@ -452,7 +452,7 @@ func (h *Handler) doctorImage(r *doctorReport, image string, registryOK bool, ve
 	if !registryOK {
 		if !local {
 			r.fail(fmt.Sprintf("Image %s is not cached locally and registry access failed (%s)", image, verb),
-				"fix the GITHUB section above; alios can't pull this image until then")
+				"fix the GITHUB section above; ingot can't pull this image until then")
 		}
 		return
 	}
@@ -496,15 +496,15 @@ func (h *Handler) doctorShare(r *doctorReport) {
 	token, domain := h.config.ShareTunnelToken != "", h.config.ShareDomain != ""
 	switch {
 	case token && domain && !h.config.ShareDomainValid():
-		r.fail(fmt.Sprintf("ALIOS_SHARE_DOMAIN %q isn't a valid domain, so Caddy will reject named shares", h.config.ShareDomain),
+		r.fail(fmt.Sprintf("INGOT_SHARE_DOMAIN %q isn't a valid domain, so Caddy will reject named shares", h.config.ShareDomain),
 			"set it to the bare domain, e.g. acme-dev.com")
 	case token && domain:
 		r.ok("Named tunnel configured (https://<project>.%s)", h.config.ShareDomain)
 	case token != domain:
-		r.warn("Only one of ALIOS_SHARE_TUNNEL_TOKEN / ALIOS_SHARE_DOMAIN is set, so shares use quick tunnels",
+		r.warn("Only one of INGOT_SHARE_TUNNEL_TOKEN / INGOT_SHARE_DOMAIN is set, so shares use quick tunnels",
 			"set both for stable named-tunnel URLs, or unset the other (see docs/SHARING.md)")
 	default:
-		r.info("Using quick tunnels (set ALIOS_SHARE_TUNNEL_TOKEN and ALIOS_SHARE_DOMAIN for stable URLs)")
+		r.info("Using quick tunnels (set INGOT_SHARE_TUNNEL_TOKEN and INGOT_SHARE_DOMAIN for stable URLs)")
 	}
 
 	shares, err := h.share.List()
@@ -521,7 +521,7 @@ func (h *Handler) doctorShare(r *doctorReport) {
 			r.ok("%s shared at %s", sh.Project, sh.URL)
 		} else {
 			r.warn(fmt.Sprintf("%s has a share vhost but its tunnel isn't running", sh.Project),
-				fmt.Sprintf("cd into %s and run 'alios share stop' (then 'alios share' to reshare)", sh.Project))
+				fmt.Sprintf("cd into %s and run 'ingot share stop' (then 'ingot share' to reshare)", sh.Project))
 		}
 	}
 }

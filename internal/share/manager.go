@@ -1,19 +1,19 @@
 // Package share exposes running projects to the internet through Cloudflare
-// Tunnels (alios share).
+// Tunnels (ingot share).
 //
-// Traffic path: cloudflared (a container on alios_internal) -> Caddy
-// (http://alios-reverse-proxy:80) -> alios_php_<project>:80. Each share is one
-// <project>.share.caddyfile vhost in the alios_vhosts volume, matched on the
+// Traffic path: cloudflared (a container on ingot_internal) -> Caddy
+// (http://ingot_proxy:80) -> ingot_php_<project>:80. Each share is one
+// <project>.share.caddyfile vhost in the ingot_vhosts volume, matched on the
 // exact public hostname so it wins over the base Caddyfile's http:// redirect
 // catch-all. That vhost file is the only record of a share: status, list and
 // stop all read it back, so there's no other state to keep in sync.
 //
 // Two modes:
-//   - quick (default): one alios_share_<project> container running a
+//   - quick (default): one ingot_share_<project> container running a
 //     trycloudflare.com quick tunnel. No account needed; the URL is random and
 //     changes every time the tunnel starts.
-//   - named (ALIOS_SHARE_TUNNEL_TOKEN + ALIOS_SHARE_DOMAIN): one shared
-//     alios_share container running a remotely-managed tunnel whose
+//   - named (INGOT_SHARE_TUNNEL_TOKEN + INGOT_SHARE_DOMAIN): one shared
+//     ingot_share container running a remotely-managed tunnel whose
 //     `*.<domain>` public hostname points at Caddy, giving each project a
 //     stable https://<project>.<domain> URL.
 package share
@@ -28,9 +28,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aliasproject/alios-cli/internal/config"
-	"github.com/aliasproject/alios-cli/internal/docker"
-	"github.com/aliasproject/alios-cli/internal/ssl"
+	"github.com/aliasproject/ingot/internal/config"
+	"github.com/aliasproject/ingot/internal/docker"
+	"github.com/aliasproject/ingot/internal/ssl"
 )
 
 const (
@@ -39,19 +39,19 @@ const (
 	Image = "cloudflare/cloudflared:2026.9.3"
 
 	// NamedContainer is the single shared container used in named mode.
-	NamedContainer = "alios_share"
+	NamedContainer = "ingot_share"
 
 	// ModeQuick and ModeNamed identify how a share is tunnelled.
 	ModeQuick = "quick"
 	ModeNamed = "named"
 
-	vhostVolume     = "alios_vhosts"
+	vhostVolume     = "ingot_vhosts"
 	vhostSuffix     = ".share.caddyfile"
-	proxyContainer  = "alios-reverse-proxy"
+	proxyContainer  = "ingot_proxy"
 	proxyOrigin     = "http://" + proxyContainer + ":80"
-	projectLabel    = "alios.share.project"
-	modeLabel       = "alios.share.mode"
-	tokenLabel      = "alios.share.token_sha256"
+	projectLabel    = "ingot.share.project"
+	modeLabel       = "ingot.share.mode"
+	tokenLabel      = "ingot.share.token_sha256"
 	quickURLTimeout = 30 * time.Second
 )
 
@@ -109,7 +109,7 @@ func NewManager(dockerClient *docker.Client, cfg *config.Config, sslManager *ssl
 
 // QuickContainer is the tunnel container name for a quick-mode share.
 func QuickContainer(projectName string) string {
-	return "alios_share_" + projectName
+	return "ingot_share_" + projectName
 }
 
 // Get returns the project's active share, or nil if it isn't shared.
@@ -174,7 +174,7 @@ func (m *Manager) Start(projectName string, auth *Credentials) (share *Share, st
 	}
 
 	if !m.docker.IsContainerRunning(proxyContainer) {
-		return nil, false, fmt.Errorf("reverse proxy is not running. Run 'alios global start' first")
+		return nil, false, fmt.Errorf("reverse proxy is not running. Run 'ingot global start' first")
 	}
 
 	// Hash before starting a tunnel so a bad password never leaves a
@@ -242,7 +242,7 @@ func (m *Manager) Stop(projectName string) (bool, error) {
 		// stay public. Report that rather than claiming the share ended.
 		if err := m.reloadCaddy(); err != nil {
 			m.teardownTunnel(projectName, share.Mode)
-			return false, fmt.Errorf("removed the share vhost but Caddy failed to reload, so it may still be served; run 'alios global restart': %w", err)
+			return false, fmt.Errorf("removed the share vhost but Caddy failed to reload, so it may still be served; run 'ingot global restart': %w", err)
 		}
 	}
 
@@ -390,7 +390,7 @@ func (m *Manager) startQuickTunnel(projectName string) (string, error) {
 }
 
 // ensureNamedTunnel makes sure the shared named-tunnel container is running.
-// A container started with a different ALIOS_SHARE_TUNNEL_TOKEN (rotated
+// A container started with a different INGOT_SHARE_TUNNEL_TOKEN (rotated
 // since) is replaced rather than reused.
 func (m *Manager) ensureNamedTunnel() error {
 	fingerprint := tokenFingerprint(m.config.ShareTunnelToken)
@@ -437,7 +437,7 @@ func (m *Manager) checkNamedTunnelUp() error {
 	if !m.docker.IsContainerRunning(NamedContainer) {
 		logs, _ := m.docker.RunWithOutput("logs", NamedContainer)
 		m.docker.RemoveContainer(NamedContainer, true)
-		return fmt.Errorf("named tunnel exited on startup (check ALIOS_SHARE_TUNNEL_TOKEN). Last output:\n%s", lastLines(logs, 10))
+		return fmt.Errorf("named tunnel exited on startup (check INGOT_SHARE_TUNNEL_TOKEN). Last output:\n%s", lastLines(logs, 10))
 	}
 
 	return nil
@@ -466,9 +466,9 @@ func (m *Manager) teardownTunnel(projectName, mode string) {
 }
 
 func (m *Manager) writeVhost(projectName, host, mode, authLine string) error {
-	vhost := fmt.Sprintf(`# alios share: mode=%s
+	vhost := fmt.Sprintf(`# ingot share: mode=%s
 http://%s {
-%s    reverse_proxy alios_php_%s:80 {
+%s    reverse_proxy ingot_php_%s:80 {
         header_up Host {host}
         header_up X-Forwarded-Host {host}
         header_up X-Forwarded-Proto https
@@ -476,12 +476,12 @@ http://%s {
         header_up X-Forwarded-For {header.Cf-Connecting-Ip}
         # Tells the image or app that the request came through a share.
         # Set here, so visitors can't forge or strip it.
-        header_up X-Alios-Share 1
+        header_up X-Ingot-Share 1
     }
 
     # Wakes the project if it's asleep. The snippet only handles upstream
     # failures, so basic_auth's 401 and its challenge pass through.
-    import alios_wake %s
+    import ingot_wake %s
 }
 `, mode, host, authLine, projectName, projectName)
 
@@ -508,7 +508,7 @@ func (m *Manager) reloadCaddy() error {
 }
 
 // hashPassword bcrypt-hashes a basic-auth password with Caddy's own tool, so
-// alios doesn't need a bcrypt dependency.
+// ingot doesn't need a bcrypt dependency.
 func (m *Manager) hashPassword(password string) (string, error) {
 	// Sent on stdin rather than --plaintext, so it never shows in `ps`.
 	output, err := m.docker.RunWithInput(password+"\n", "exec", "-i", proxyContainer, "caddy", "hash-password")
@@ -529,7 +529,7 @@ func parseVhost(projectName, content string) *Share {
 	for _, line := range strings.Split(content, "\n") {
 		line = strings.TrimSpace(line)
 		switch {
-		case strings.HasPrefix(line, "# alios share:") && strings.Contains(line, "mode="+ModeNamed):
+		case strings.HasPrefix(line, "# ingot share:") && strings.Contains(line, "mode="+ModeNamed):
 			share.Mode = ModeNamed
 		case strings.HasPrefix(line, "http://") && share.URL == "":
 			host := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(line, "http://"), "{"))

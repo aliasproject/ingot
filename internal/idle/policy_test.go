@@ -80,7 +80,7 @@ func TestSingleExecBlipIsIgnored(t *testing.T) {
 }
 
 func TestShellOpenFromTheStartKeepsItAwake(t *testing.T) {
-	// `alios shell` on a sleeping project starts the container and execs a
+	// `ingot shell` on a sleeping project starts the container and execs a
 	// shell before the watcher's first sample. An idle shell uses no CPU or
 	// container network; it must still count for as long as it's open.
 	b := base()
@@ -128,7 +128,7 @@ func TestForgetDropsRemovedContainers(t *testing.T) {
 }
 
 func TestIdleShellIsNotBusyWithoutTraffic(t *testing.T) {
-	// An open `alios shell` keeps the project awake, but it isn't a stuck
+	// An open `ingot shell` keeps the project awake, but it isn't a stuck
 	// job: it must not trigger busy warnings.
 	steps := []func(*Sample){}
 	for i := 0; i < 10; i++ {

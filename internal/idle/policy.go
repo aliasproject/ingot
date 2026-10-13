@@ -1,7 +1,7 @@
-// Package idle is the alios_idle service: it stops project containers that
+// Package idle is the ingot_idle service: it stops project containers that
 // have gone quiet and starts them again when a request arrives for them.
 //
-// It runs as its own container (cmd/alios-idle) next to the other global
+// It runs as its own container (cmd/ingot-idle) next to the other global
 // services, and talks to the Docker Engine API over the mounted socket
 // directly rather than through internal/docker.Client: that client shells out
 // to the docker CLI, which the service's image doesn't ship.
@@ -15,7 +15,7 @@ import (
 // Sample is one reading of a container's raw counters. CPU and network are
 // cumulative since the container started. ExecProcs counts processes that
 // don't descend from the container's main process: `docker exec` sessions
-// (alios exec, alios shell) and health checks.
+// (ingot exec, ingot shell) and health checks.
 type Sample struct {
 	At        time.Time
 	CPUNanos  uint64
@@ -35,7 +35,7 @@ type Thresholds struct {
 	NetBytesPerMinute uint64
 }
 
-// DefaultThresholds are tuned against idle alios_php_* containers, which use
+// DefaultThresholds are tuned against idle ingot_php_* containers, which use
 // about 0.1% of a core and a few hundred bytes of traffic an hour.
 var DefaultThresholds = Thresholds{
 	CPUFraction:       0.01,
@@ -108,7 +108,7 @@ func (t *Tracker) Observe(id, startedAt string, s Sample) Activity {
 	// An exec'd process counts only when seen twice in a row, so a health
 	// check that happens to be running at the moment of a sample doesn't
 	// reset the timer. Real work that short shows up as CPU anyway. An idle
-	// `alios shell` uses no CPU or container network, so this is the only
+	// `ingot shell` uses no CPU or container network, so this is the only
 	// signal that keeps a project with an open shell awake.
 	if exec && inst.execBefore {
 		reasons = append(reasons, "exec")

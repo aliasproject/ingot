@@ -5,36 +5,36 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aliasproject/alios-cli/internal/idle"
-	"github.com/aliasproject/alios-cli/internal/project"
-	"github.com/aliasproject/alios-cli/internal/services"
-	"github.com/aliasproject/alios-cli/internal/utils"
+	"github.com/aliasproject/ingot/internal/idle"
+	"github.com/aliasproject/ingot/internal/project"
+	"github.com/aliasproject/ingot/internal/services"
+	"github.com/aliasproject/ingot/internal/utils"
 )
 
 // handleIdle shows or changes the current project's scale-to-zero setting:
 //
-//	alios idle            show it
-//	alios idle off        never stop this project (e.g. it runs a queue worker)
-//	alios idle on         use the global ALIOS_IDLE_TIMEOUT again
-//	alios idle 2h         stop it after its own idle timeout
+//	ingot idle            show it
+//	ingot idle off        never stop this project (e.g. it runs a queue worker)
+//	ingot idle on         use the global INGOT_IDLE_TIMEOUT again
+//	ingot idle 2h         stop it after its own idle timeout
 func (h *Handler) handleIdle(args []string) error {
 	proj, err := h.projects.GetCurrentProject()
 	if err != nil {
 		return err
 	}
 	if proj.Status == "not initialized" {
-		return fmt.Errorf("project not initialized. Run 'alios start' first")
+		return fmt.Errorf("project not initialized. Run 'ingot start' first")
 	}
 
 	if len(args) == 0 {
 		fmt.Printf("%s: %s\n", proj.Name, h.describeIdle(proj.Idle))
 		if !h.docker.IsContainerRunning(services.IdleContainer) {
-			fmt.Println(utils.Colorize("[WARNING]", utils.ColorYellow) + " alios_idle isn't running, so nothing is stopped or woken. Run 'alios global start'.")
+			fmt.Println(utils.Colorize("[WARNING]", utils.ColorYellow) + " ingot_idle isn't running, so nothing is stopped or woken. Run 'ingot global start'.")
 		}
 		return nil
 	}
 	if len(args) > 1 {
-		return fmt.Errorf("usage: alios idle [on|off|<duration>]")
+		return fmt.Errorf("usage: ingot idle [on|off|<duration>]")
 	}
 
 	setting := strings.TrimSpace(args[0])
@@ -56,7 +56,7 @@ func (h *Handler) handleIdle(args []string) error {
 
 // wakeForCommand starts the current project if it's asleep, for commands
 // that need its container running: exec, shell, share. A project stopped
-// with `alios stop` stays stopped.
+// with `ingot stop` stays stopped.
 func (h *Handler) wakeForCommand() error {
 	proj, err := h.projects.GetCurrentProject()
 	if err != nil {
@@ -66,7 +66,7 @@ func (h *Handler) wakeForCommand() error {
 	// it: the command was asked for explicitly.
 	if proj.Status == "stopped" {
 		if stopped, err := h.ssl.StoppedProjects(); err == nil && stopped[proj.Name] {
-			return fmt.Errorf("project is stopped. Run 'alios start' first")
+			return fmt.Errorf("project is stopped. Run 'ingot start' first")
 		}
 	}
 	woke, err := h.projects.Wake()
@@ -77,15 +77,15 @@ func (h *Handler) wakeForCommand() error {
 }
 
 // describeIdle explains a project setting against the timeout the running
-// alios_idle service actually uses, not this shell's ALIOS_IDLE_TIMEOUT.
+// ingot_idle service actually uses, not this shell's INGOT_IDLE_TIMEOUT.
 func (h *Handler) describeIdle(setting string) string {
 	global, _ := h.services.IdleTimeoutSetting()
 	return project.DescribeIdle(setting, global)
 }
 
-// markStopped records an `alios stop` (or clears it) in the project's vhost.
+// markStopped records an `ingot stop` (or clears it) in the project's vhost.
 // The base Caddyfile is rewritten first so the snippet the vhost will import
-// exists even if services were started by an older alios.
+// exists even if services were started by an older ingot.
 func (h *Handler) markStopped(name string, stopped bool) error {
 	if err := h.services.WriteBaseConfig(); err != nil {
 		return err
@@ -94,7 +94,7 @@ func (h *Handler) markStopped(name string, stopped bool) error {
 }
 
 // clearStopped makes a project wake on visits again, for commands that start
-// it other than `alios start` (rebuild, php, image).
+// it other than `ingot start` (rebuild, php, image).
 func (h *Handler) clearStopped(name string) {
 	if err := h.markStopped(name, false); err != nil {
 		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Failed to re-enable waking for the project: %v\n", err)
@@ -102,7 +102,7 @@ func (h *Handler) clearStopped(name string) {
 }
 
 // projectAsleep reports whether a stopped project starts again on the next
-// visit: alios_idle is running and the project wasn't stopped with `alios
+// visit: ingot_idle is running and the project wasn't stopped with `ingot
 // stop`.
 func (h *Handler) projectAsleep(name, status string) bool {
 	if status != "stopped" || !h.docker.IsContainerRunning(services.IdleContainer) {
@@ -123,16 +123,16 @@ func (h *Handler) formatProjectStatus(status string, asleep bool) string {
 
 // hintVhostsWithoutWake points out project vhosts written before scale to
 // zero, which don't start a stopped project on a visit. Each is rewritten on
-// that project's next `alios start`; `alios cert repair` does them all.
+// that project's next `ingot start`; `ingot cert repair` does them all.
 func (h *Handler) hintVhostsWithoutWake() {
-	output, err := h.docker.RunWithOutput("run", "--rm", "-v", "alios_vhosts:/vhosts:ro", "alpine:latest",
-		"sh", "-c", "cd /vhosts && grep -LE 'import alios_(wake|stopped)' *.caddyfile 2>/dev/null; true")
+	output, err := h.docker.RunWithOutput("run", "--rm", "-v", "ingot_vhosts:/vhosts:ro", "alpine:latest",
+		"sh", "-c", "cd /vhosts && grep -LE 'import ingot_(wake|stopped)' *.caddyfile 2>/dev/null; true")
 	if err != nil {
 		return
 	}
 	// Output can include docker's own pull messages, so count only file
 	// names. Share vhosts are skipped: cert repair doesn't rewrite them (the
-	// next `alios share` does), so counting them would repeat the hint.
+	// next `ingot share` does), so counting them would repeat the hint.
 	n := 0
 	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
@@ -143,7 +143,7 @@ func (h *Handler) hintVhostsWithoutWake() {
 	if n == 0 {
 		return
 	}
-	fmt.Printf(utils.Colorize("[INFO]", utils.ColorBlue)+" %d vhost(s) predate scale to zero, so those projects won't start on a visit. Run 'alios cert repair' to update them.\n", n)
+	fmt.Printf(utils.Colorize("[INFO]", utils.ColorBlue)+" %d vhost(s) predate scale to zero, so those projects won't start on a visit. Run 'ingot cert repair' to update them.\n", n)
 }
 
 // doctorIdle checks the scale-to-zero service and reports projects it has
@@ -152,25 +152,25 @@ func (h *Handler) doctorIdle(r *doctorReport) {
 	r.section("SCALE TO ZERO")
 
 	if _, err := idle.ParseTimeout(h.config.IdleTimeout, idle.DefaultTimeout); err != nil {
-		r.fail(fmt.Sprintf("ALIOS_IDLE_TIMEOUT=%q isn't a duration", h.config.IdleTimeout),
-			"set it to e.g. 30m or 2h, or off, then run 'alios global restart'")
+		r.fail(fmt.Sprintf("INGOT_IDLE_TIMEOUT=%q isn't a duration", h.config.IdleTimeout),
+			"set it to e.g. 30m or 2h, or off, then run 'ingot global restart'")
 	}
 
 	running, ok := h.services.IdleTimeoutSetting()
 	if !ok {
-		r.fail("alios_idle isn't running: idle projects aren't stopped, and stopped ones aren't started on a visit",
-			"alios global start (its output says why it couldn't start, e.g. the image couldn't be pulled)")
+		r.fail("ingot_idle isn't running: idle projects aren't stopped, and stopped ones aren't started on a visit",
+			"ingot global start (its output says why it couldn't start, e.g. the image couldn't be pulled)")
 		return
 	}
 	if h.config.IdleTimeout != "" && h.config.IdleTimeout != running {
-		r.warn(fmt.Sprintf("ALIOS_IDLE_TIMEOUT is %q here but alios_idle runs with %q", h.config.IdleTimeout, running),
-			"alios global restart, to apply this shell's value")
+		r.warn(fmt.Sprintf("INGOT_IDLE_TIMEOUT is %q here but ingot_idle runs with %q", h.config.IdleTimeout, running),
+			"ingot global restart, to apply this shell's value")
 	}
-	r.ok("alios_idle running (%s)", strings.TrimPrefix(h.describeIdle(""), "stops "))
+	r.ok("ingot_idle running (%s)", strings.TrimPrefix(h.describeIdle(""), "stops "))
 
 	logs, err := h.docker.RunWithOutput("logs", "--since", "24h", services.IdleContainer)
 	if err != nil {
-		r.warn(fmt.Sprintf("Could not read alios_idle logs: %v", err), "")
+		r.warn(fmt.Sprintf("Could not read ingot_idle logs: %v", err), "")
 		return
 	}
 	busy := 0

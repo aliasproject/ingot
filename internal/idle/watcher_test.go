@@ -10,7 +10,7 @@ import (
 )
 
 func project(name, idle string) Container {
-	return Container{ID: "id-" + name, Name: "alios_php_" + name, Project: name, Idle: idle, Running: true, StartedAt: "run1"}
+	return Container{ID: "id-" + name, Name: "ingot_php_" + name, Project: name, Idle: idle, Running: true, StartedAt: "run1"}
 }
 
 // quietSamples returns n samples 30s apart with background-noise deltas.

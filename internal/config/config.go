@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	// Version is the current version of Alios CLI
+	// Version is the current version of Ingot
 	Version = "1.3.0"
 
 	// ClientID is the GitHub OAuth application client ID
@@ -16,12 +16,12 @@ const (
 	// DefaultPHPVersion is the default PHP version for new projects
 	DefaultPHPVersion = "8.4"
 
-	// AliosBinary is the installation path for the alios binary
-	AliosBinary = "/usr/local/bin/alios"
+	// IngotBinary is the installation path for the ingot binary
+	IngotBinary = "/usr/local/bin/ingot"
 
-	// IdleImage is the alios_idle service's image, tagged with the CLI
+	// IdleImage is the ingot_idle service's image, tagged with the CLI
 	// version so each CLI runs the service built from the same source.
-	IdleImage = "ghcr.io/aliasproject/alios-idle:" + Version
+	IdleImage = "ghcr.io/aliasproject/ingot-idle:" + Version
 )
 
 // Config holds the application configuration
@@ -42,20 +42,20 @@ type Config struct {
 	EnableSSL bool
 	EnableDNS bool
 
-	// Sharing (alios share). When both are set, shares use a named Cloudflare
+	// Sharing (ingot share). When both are set, shares use a named Cloudflare
 	// Tunnel with stable <project>.<ShareDomain> hostnames instead of a
 	// throwaway trycloudflare.com quick tunnel.
 	ShareTunnelToken string
 	ShareDomain      string
 
-	// IdleTimeout is how long a project may sit idle before alios_idle stops
-	// it (ALIOS_IDLE_TIMEOUT: a Go duration such as "30m", or "off"). Empty
+	// IdleTimeout is how long a project may sit idle before ingot_idle stops
+	// it (INGOT_IDLE_TIMEOUT: a Go duration such as "30m", or "off"). Empty
 	// means the service's own default. Passed through to the service as-is;
 	// it validates the value.
 	IdleTimeout string
 }
 
-// ShareNamedMode reports whether alios share should use a named tunnel.
+// ShareNamedMode reports whether ingot share should use a named tunnel.
 func (c *Config) ShareNamedMode() bool {
 	return c.ShareTunnelToken != "" && c.ShareDomain != ""
 }
@@ -92,7 +92,7 @@ func (c *Config) initialize() {
 	c.Databases = make(map[string]DatabaseConfig)
 
 	// Network detection - use default or environment variable
-	if hostIP := os.Getenv("ALIOS_HOST_IP"); hostIP != "" {
+	if hostIP := os.Getenv("INGOT_HOST_IP"); hostIP != "" {
 		c.HostIP = hostIP
 	} else {
 		c.HostIP = "127.0.0.1" // default
@@ -164,39 +164,39 @@ func (c *Config) RemoveDatabase(name string) error {
 // loadFromEnvironment loads configuration from environment variables
 func (c *Config) loadFromEnvironment() {
 	// Default PHP version
-	if version := os.Getenv("ALIOS_DEFAULT_PHP_VERSION"); version != "" {
+	if version := os.Getenv("INGOT_DEFAULT_PHP_VERSION"); version != "" {
 		c.DefaultPHPVersion = version
 	}
 
 	// Network settings
-	if hostIP := os.Getenv("ALIOS_HOST_IP"); hostIP != "" {
+	if hostIP := os.Getenv("INGOT_HOST_IP"); hostIP != "" {
 		c.HostIP = hostIP
 	}
 
-	if dnsPort := os.Getenv("ALIOS_DNS_PORT"); dnsPort != "" {
+	if dnsPort := os.Getenv("INGOT_DNS_PORT"); dnsPort != "" {
 		c.DNSPort = dnsPort
 	}
 
 	// Feature flags
-	if enableSSL := os.Getenv("ALIOS_ENABLE_SSL"); enableSSL != "" {
+	if enableSSL := os.Getenv("INGOT_ENABLE_SSL"); enableSSL != "" {
 		c.EnableSSL = enableSSL == "true" || enableSSL == "1"
 	}
 
-	if enableDNS := os.Getenv("ALIOS_ENABLE_DNS"); enableDNS != "" {
+	if enableDNS := os.Getenv("INGOT_ENABLE_DNS"); enableDNS != "" {
 		c.EnableDNS = enableDNS == "true" || enableDNS == "1"
 	}
 
 	// Auto start global services
-	if autoStart := os.Getenv("ALIOS_AUTO_START_GLOBAL"); autoStart != "" {
+	if autoStart := os.Getenv("INGOT_AUTO_START_GLOBAL"); autoStart != "" {
 		c.AutoStartGlobal = autoStart == "true" || autoStart == "1"
 	}
 
 	// Named-tunnel sharing
-	c.ShareTunnelToken = os.Getenv("ALIOS_SHARE_TUNNEL_TOKEN")
-	c.ShareDomain = normalizeShareDomain(os.Getenv("ALIOS_SHARE_DOMAIN"))
+	c.ShareTunnelToken = os.Getenv("INGOT_SHARE_TUNNEL_TOKEN")
+	c.ShareDomain = normalizeShareDomain(os.Getenv("INGOT_SHARE_DOMAIN"))
 
 	// Scale to zero
-	c.IdleTimeout = strings.TrimSpace(os.Getenv("ALIOS_IDLE_TIMEOUT"))
+	c.IdleTimeout = strings.TrimSpace(os.Getenv("INGOT_IDLE_TIMEOUT"))
 }
 
 // normalizeShareDomain accepts the forms people paste - "*.acme-dev.com" (the
@@ -241,9 +241,9 @@ func (c *Config) GetDatabases() map[string]DatabaseConfig {
 	return databases
 }
 
-// IsInstalled checks if Alios is installed
+// IsInstalled checks if Ingot is installed
 func (c *Config) IsInstalled() bool {
-	_, err := os.Stat(AliosBinary)
+	_, err := os.Stat(IngotBinary)
 	return err == nil
 }
 
@@ -261,7 +261,7 @@ type NetworkConfig struct {
 // GetNetworkConfig returns the default network configuration
 func GetNetworkConfig() *NetworkConfig {
 	return &NetworkConfig{
-		BridgeName:  "alios_internal",
-		InternalNet: "alios_internal",
+		BridgeName:  "ingot_internal",
+		InternalNet: "ingot_internal",
 	}
 }

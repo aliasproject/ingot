@@ -9,10 +9,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/aliasproject/alios-cli/internal/config"
-	"github.com/aliasproject/alios-cli/internal/docker"
-	"github.com/aliasproject/alios-cli/internal/idle"
-	"github.com/aliasproject/alios-cli/internal/utils"
+	"github.com/aliasproject/ingot/internal/config"
+	"github.com/aliasproject/ingot/internal/docker"
+	"github.com/aliasproject/ingot/internal/idle"
+	"github.com/aliasproject/ingot/internal/utils"
 )
 
 // Manager handles project operations
@@ -30,7 +30,7 @@ func NewManager(dockerClient *docker.Client) *Manager {
 	}
 }
 
-// Project represents a Alios project
+// Project represents a Ingot project
 type Project struct {
 	Name       string
 	Path       string
@@ -55,11 +55,11 @@ type Project struct {
 	Framework      string            // "" or "wordpress"; detected from the project directory
 
 	// Env holds user-supplied env vars for the container, managed with
-	// `alios env set/unset` and stored in the alios.project.env label. This
+	// `ingot env set/unset` and stored in the ingot.project.env label. This
 	// is how a project gets config into its container the same way
 	// production supplies it (plain KEY=VALUE vars on `docker run`, see
 	// RunDockerContainer's buildEnvironmentVariables in the Alios platform
-	// repo). Alios deliberately does not read the project's own .env: the
+	// repo). Ingot deliberately does not read the project's own .env: the
 	// project directory is bind-mounted, so an app that reads .env itself
 	// (Laravel, etc.) already sees edits instantly, and injecting the same
 	// keys as real env vars would only shadow the file with a stale copy
@@ -67,8 +67,8 @@ type Project struct {
 	Env map[string]string
 
 	// Idle is the project's scale-to-zero setting, from the
-	// alios.project.idle label (`alios idle`): "" for the global
-	// ALIOS_IDLE_TIMEOUT, "off" to never stop it, or its own timeout.
+	// ingot.project.idle label (`ingot idle`): "" for the global
+	// INGOT_IDLE_TIMEOUT, "off" to never stop it, or its own timeout.
 	Idle string
 }
 
@@ -118,32 +118,32 @@ func (m *Manager) GetCurrentProject() (*Project, error) {
 	}
 
 	// Get configuration from Docker labels
-	phpVersion := info.Labels["alios.project.php_version"]
+	phpVersion := info.Labels["ingot.project.php_version"]
 	if phpVersion == "" {
 		phpVersion = config.DefaultPHPVersion
 	}
 
-	serverRoot := info.Labels["alios.project.server_root"]
+	serverRoot := info.Labels["ingot.project.server_root"]
 	if serverRoot == "" {
 		serverRoot = "public" // default
 	}
 
-	imageType := info.Labels["alios.project.image_type"]
+	imageType := info.Labels["ingot.project.image_type"]
 	if imageType == "" {
 		imageType = "prebuilt"
 	}
 
-	dockerfilePath := info.Labels["alios.project.dockerfile_path"]
+	dockerfilePath := info.Labels["ingot.project.dockerfile_path"]
 	if dockerfilePath == "" {
 		dockerfilePath = "Dockerfile"
 	}
 
-	buildContext := info.Labels["alios.project.build_context"]
+	buildContext := info.Labels["ingot.project.build_context"]
 	if buildContext == "" {
 		buildContext = "."
 	}
 
-	buildArgs := parseBuildArgs(info.Labels["alios.project.build_args"])
+	buildArgs := parseBuildArgs(info.Labels["ingot.project.build_args"])
 	env := parseEnv(info.Labels[envLabel])
 
 	status := "stopped"
@@ -162,12 +162,12 @@ func (m *Manager) GetCurrentProject() (*Project, error) {
 		CreatedAt:      info.CreatedAt,
 		UpdatedAt:      info.StartedAt,
 		ImageType:      imageType,
-		ImageSource:    info.Labels["alios.project.image_source"],
-		ImageURL:       info.Labels["alios.project.image_url"],
+		ImageSource:    info.Labels["ingot.project.image_source"],
+		ImageURL:       info.Labels["ingot.project.image_url"],
 		DockerfilePath: dockerfilePath,
 		BuildContext:   buildContext,
 		BuildArgs:      buildArgs,
-		Framework:      info.Labels["alios.project.framework"],
+		Framework:      info.Labels["ingot.project.framework"],
 		Env:            env,
 		Idle:           info.Labels[idle.IdleLabel],
 	}, nil
@@ -280,12 +280,12 @@ func (m *Manager) Start(phpVersion string, imageChoice ImageChoice, serverRoot .
 	// Check if container exists
 	if m.docker.ContainerExists(project.Container) {
 		// Check if the existing container's PHP version is still current.
-		// Env var changes never surface here: `alios env set/unset` recreates
+		// Env var changes never surface here: `ingot env set/unset` recreates
 		// the container itself (Docker has no way to patch env vars into a
 		// running one, and neither does production's RunAndSwapContainer).
 		info, err := m.docker.InspectContainer(project.Container)
 		if err == nil {
-			existingVersion := info.Labels["alios.project.php_version"]
+			existingVersion := info.Labels["ingot.project.php_version"]
 			versionChanged := existingVersion != "" && existingVersion != desiredPHPVersion
 
 			// Only worth a registry round-trip when nothing else already
@@ -531,7 +531,7 @@ func (m *Manager) ChangeServerRoot(newServerRoot string) error {
 func (m *Manager) SetEnv(vars map[string]string) error {
 	for key := range vars {
 		if IsReservedEnvKey(key) {
-			return fmt.Errorf("%s is set by alios itself and cannot be overridden", key)
+			return fmt.Errorf("%s is set by ingot itself and cannot be overridden", key)
 		}
 	}
 
@@ -607,9 +607,9 @@ func (m *Manager) recreate(project *Project) error {
 	return nil
 }
 
-// List returns all Alios projects
+// List returns all Ingot projects
 func (m *Manager) List() ([]*Project, error) {
-	containers, err := m.docker.ListContainers("label=alios.project.name")
+	containers, err := m.docker.ListContainers("label=ingot.project.name")
 	if err != nil {
 		return nil, fmt.Errorf("failed to list containers: %w", err)
 	}
@@ -626,12 +626,12 @@ func (m *Manager) List() ([]*Project, error) {
 			continue
 		}
 
-		name := info.Labels["alios.project.name"]
+		name := info.Labels["ingot.project.name"]
 		if name == "" {
-			name = strings.TrimPrefix(containerName, "alios_php_")
+			name = strings.TrimPrefix(containerName, "ingot_php_")
 		}
 
-		phpVersion := info.Labels["alios.project.php_version"]
+		phpVersion := info.Labels["ingot.project.php_version"]
 		if phpVersion == "" {
 			phpVersion = config.DefaultPHPVersion
 		}
@@ -643,7 +643,7 @@ func (m *Manager) List() ([]*Project, error) {
 
 		projects = append(projects, &Project{
 			Name:       name,
-			Path:       info.Labels["alios.project.path"],
+			Path:       info.Labels["ingot.project.path"],
 			PHPVersion: phpVersion,
 			Status:     status,
 			Container:  containerName,
@@ -656,7 +656,7 @@ func (m *Manager) List() ([]*Project, error) {
 	return projects, nil
 }
 
-// ListRunning returns all Alios project containers that are currently running,
+// ListRunning returns all Ingot project containers that are currently running,
 // system-wide (not just the one for the current working directory).
 func (m *Manager) ListRunning() ([]*Project, error) {
 	projects, err := m.List()
@@ -737,7 +737,7 @@ func (m *Manager) Exec(command []string, interactive bool) error {
 			if len(command) > 0 {
 				cmdName = command[0]
 			}
-			return fmt.Errorf("command '%s' not found in container. Try 'alios shell' to explore available commands", cmdName)
+			return fmt.Errorf("command '%s' not found in container. Try 'ingot shell' to explore available commands", cmdName)
 		}
 		if strings.Contains(errStr, "OCI runtime exec failed") {
 			// Extract just the useful part of the error
@@ -886,7 +886,7 @@ func (m *Manager) resolveImage(project *Project) (string, error) {
 
 // ImageReference returns the image a project's container runs, without
 // pulling or building anything. This is the pure half of resolveImage, so
-// `alios doctor` can report (and probe registry access for) the exact tag
+// `ingot doctor` can report (and probe registry access for) the exact tag
 // a not-yet-initialized project would use.
 func (m *Manager) ImageReference(project *Project) string {
 	if project.ImageType == "custom" {
@@ -929,11 +929,11 @@ func (m *Manager) pullOrUseLocal(image string) error {
 		msg += "\n  The registry refused access. Your GitHub token is probably missing the 'read:packages' scope" +
 			"\n  (docker login accepts any valid token, but GHCR only serves private images to one with read:packages)." +
 			"\n  Fix: gh auth refresh -h github.com -s read:packages   (or export GITHUB_TOKEN with read:packages)" +
-			"\n  Then run 'alios doctor' to confirm registry access."
+			"\n  Then run 'ingot doctor' to confirm registry access."
 	} else if strings.Contains(lower, "not found") || strings.Contains(lower, "manifest unknown") {
-		msg += "\n  The registry has no such tag. Run 'alios doctor' to see which image this project resolves to."
+		msg += "\n  The registry has no such tag. Run 'ingot doctor' to see which image this project resolves to."
 	} else {
-		msg += "\n  Run 'alios doctor' to check Docker, GitHub, and registry access."
+		msg += "\n  Run 'ingot doctor' to check Docker, GitHub, and registry access."
 	}
 	return fmt.Errorf("%s", msg)
 }
@@ -1000,17 +1000,17 @@ func (m *Manager) createContainer(project *Project) error {
 	// Resolve the DNS container's live IP on the internal network rather than
 	// relying on a hardcoded address that may belong to a different container.
 	dnsServers := []string{"1.1.1.1", "8.8.8.8"} // fallback to public resolvers
-	if dnsIP, err := m.docker.GetContainerIP("alios_dns", networkConfig.BridgeName); err == nil && dnsIP != "" {
+	if dnsIP, err := m.docker.GetContainerIP("ingot_dns", networkConfig.BridgeName); err == nil && dnsIP != "" {
 		dnsServers = []string{dnsIP, "1.1.1.1", "8.8.8.8"}
 	} else {
-		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Could not resolve alios_dns IP (%v); falling back to public DNS. .test domains will not resolve.\n", err)
+		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Could not resolve ingot_dns IP (%v); falling back to public DNS. .test domains will not resolve.\n", err)
 	}
 
-	// Inject the project's user env vars (`alios env set`) the same way
+	// Inject the project's user env vars (`ingot env set`) the same way
 	// production supplies a site's config: plain KEY=VALUE env vars on the
 	// container (see RunDockerContainer's buildEnvironmentVariables in the
 	// Alios platform repo), just sourced from the container label instead of
-	// a database-backed setting. Alios's own infra vars are set after them
+	// a database-backed setting. Ingot's own infra vars are set after them
 	// so they always win - mirrors production setting SERVER_ROOT last,
 	// specifically so a stray env var can never silently override it (SetEnv
 	// also rejects these keys up front). PORT matters beyond the prebuilt
@@ -1042,17 +1042,17 @@ func (m *Manager) createContainer(project *Project) error {
 		},
 		Environment: envVars,
 		Labels: map[string]string{
-			"alios.project.name":            project.Name,
-			"alios.project.path":            project.Path,
-			"alios.project.php_version":     project.PHPVersion,
-			"alios.project.server_root":     project.ServerRoot,
-			"alios.project.image_type":      project.ImageType,
-			"alios.project.image_source":    project.ImageSource,
-			"alios.project.image_url":       project.ImageURL,
-			"alios.project.dockerfile_path": project.DockerfilePath,
-			"alios.project.build_context":   project.BuildContext,
-			"alios.project.build_args":      serializeBuildArgs(project.BuildArgs),
-			"alios.project.framework":       project.Framework,
+			"ingot.project.name":            project.Name,
+			"ingot.project.path":            project.Path,
+			"ingot.project.php_version":     project.PHPVersion,
+			"ingot.project.server_root":     project.ServerRoot,
+			"ingot.project.image_type":      project.ImageType,
+			"ingot.project.image_source":    project.ImageSource,
+			"ingot.project.image_url":       project.ImageURL,
+			"ingot.project.dockerfile_path": project.DockerfilePath,
+			"ingot.project.build_context":   project.BuildContext,
+			"ingot.project.build_args":      serializeBuildArgs(project.BuildArgs),
+			"ingot.project.framework":       project.Framework,
 			envLabel:                        serializeEnv(project.Env),
 			idle.IdleLabel:                  project.Idle,
 		},
@@ -1086,7 +1086,7 @@ func hostUser() string {
 
 // getContainerName returns the container name for a project
 func (m *Manager) getContainerName(projectName string) string {
-	return fmt.Sprintf("alios_php_%s", projectName)
+	return fmt.Sprintf("ingot_php_%s", projectName)
 }
 
 // ValidatePHPVersion checks if a PHP version is valid
@@ -1107,16 +1107,16 @@ func GetAvailablePHPVersions() []string {
 
 // getRunningDatabases returns a list of currently running database services
 func (m *Manager) getRunningDatabases() ([]string, error) {
-	containers, err := m.docker.ListContainers("label=alios.service.type=database")
+	containers, err := m.docker.ListContainers("label=ingot.service.type=database")
 	if err != nil {
 		return nil, err
 	}
 
 	var databases []string
 	for _, container := range containers {
-		// Extract database name from container name (alios_mysql -> mysql)
-		if strings.HasPrefix(container, "alios_") && !strings.Contains(container, "_caddy") && !strings.Contains(container, "_mailhog") {
-			dbName := strings.TrimPrefix(container, "alios_")
+		// Extract database name from container name (ingot_mysql -> mysql)
+		if strings.HasPrefix(container, "ingot_") && !strings.Contains(container, "_caddy") && !strings.Contains(container, "_mailhog") {
+			dbName := strings.TrimPrefix(container, "ingot_")
 			databases = append(databases, dbName)
 		}
 	}

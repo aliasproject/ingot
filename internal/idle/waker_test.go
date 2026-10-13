@@ -14,7 +14,7 @@ import (
 
 // shop is a project container that, if running, has been up for an hour.
 func shop(running bool) Container {
-	return Container{ID: "id-shop", Name: "alios_php_shop", Project: "shop", Running: running,
+	return Container{ID: "id-shop", Name: "ingot_php_shop", Project: "shop", Running: running,
 		StartedAt: time.Now().Add(-time.Hour).UTC().Format(time.RFC3339Nano)}
 }
 
@@ -52,7 +52,7 @@ func TestWakeStartsContainerAndRedirectsToSameURL(t *testing.T) {
 	if loc := rw.Header().Get("Location"); loc != "/cart/add?id=7" {
 		t.Fatalf("Location = %q, want the original path and query", loc)
 	}
-	if f.starts != 1 || !f.containers["alios_php_shop"].Running {
+	if f.starts != 1 || !f.containers["ingot_php_shop"].Running {
 		t.Fatal("container wasn't started")
 	}
 }
@@ -73,8 +73,8 @@ func TestRunningButUnreachableDoesNotRedirectLoop(t *testing.T) {
 }
 
 func TestOnlyStartsContainersOfTheNamedProject(t *testing.T) {
-	// alios_php_shop exists but belongs to some other project label - never
-	// start a container alios didn't create for this project.
+	// ingot_php_shop exists but belongs to some other project label - never
+	// start a container ingot didn't create for this project.
 	other := shop(false)
 	other.Project = "not-shop"
 	cases := map[string]*fakeEngine{
@@ -185,7 +185,7 @@ func TestRequestJustAfterAWakeIsRetriedNotFailed(t *testing.T) {
 }
 
 func TestRequestJustAfterAnotherStartIsRetried(t *testing.T) {
-	// Started a moment ago by `alios start` or `alios exec`, not by the
+	// Started a moment ago by `ingot start` or `ingot exec`, not by the
 	// waker: a request Caddy failed while it was down is still retried.
 	c := shop(true)
 	c.StartedAt = time.Now().Add(-2 * time.Second).UTC().Format(time.RFC3339Nano)
@@ -221,7 +221,7 @@ func TestRedirectNeverLeavesTheSite(t *testing.T) {
 }
 
 func TestWakeDuringAStopStartsItOnceTheStopFinishes(t *testing.T) {
-	// The watcher (or `alios stop`) is stopping the container when the
+	// The watcher (or `ingot stop`) is stopping the container when the
 	// request arrives: it still counts as running, so the first Start is a
 	// no-op. Once it has exited, the waker must start it again rather than
 	// wait for a port that will never open.
@@ -234,11 +234,11 @@ func TestWakeDuringAStopStartsItOnceTheStopFinishes(t *testing.T) {
 	go func() {
 		time.Sleep(300 * time.Millisecond)
 		f.mu.Lock()
-		f.containers["alios_php_shop"].Running = false // the stop completes
+		f.containers["ingot_php_shop"].Running = false // the stop completes
 		f.mu.Unlock()
 		for {
 			f.mu.Lock()
-			up := f.containers["alios_php_shop"].Running
+			up := f.containers["ingot_php_shop"].Running
 			f.mu.Unlock()
 			if up {
 				ready.Store(true)
