@@ -241,6 +241,14 @@ func (m *Manager) RemoveProjectVhost(projectName string) error {
 
 // updateVhostToHTTP updates a project's vhost configuration to use HTTP instead of HTTPS
 func (m *Manager) updateVhostToHTTP(projectName string) error {
+	// Keep an `alios stop`: removing the certificate shouldn't make a visit
+	// start the project again.
+	ending := wakeImport
+	if current, err := m.docker.ReadFileFromVolume("alios_vhosts", projectName+".caddyfile"); err == nil &&
+		strings.Contains(current, stoppedImport+projectName) {
+		ending = stoppedImport
+	}
+
 	// Create HTTP-only vhost configuration - no tls directive, so Caddy serves
 	// this site block in plaintext instead of attempting automatic HTTPS (which
 	// can't work for .test domains anyway; see createCaddyVhost).
@@ -251,7 +259,7 @@ func (m *Manager) updateVhostToHTTP(projectName string) error {
         header_up X-Forwarded-For {remote}
         header_up X-Forwarded-Proto {scheme}
     }
-    `+wakeImport+`%s
+    `+ending+`%s
 }
 `, projectName, projectName, projectName)
 
@@ -556,7 +564,12 @@ func (m *Manager) SetProjectStopped(projectName string, stopped bool) error {
 		return err
 	}
 	if m.docker.IsContainerRunning("alios-reverse-proxy") {
-		return m.reloadCaddy()
+		if err := m.reloadCaddy(); err != nil {
+			// Caddy keeps its old config, but the file it would load on
+			// its next start is the one it just rejected: put it back.
+			m.docker.WriteFileToVolume("alios_vhosts", file, []byte(content+"\n"))
+			return fmt.Errorf("Caddy rejected the change: %w", err)
+		}
 	}
 	return nil
 }

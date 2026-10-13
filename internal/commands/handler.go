@@ -577,12 +577,17 @@ func (h *Handler) handleStart(args ...string) error {
 		return fmt.Errorf("failed to start project: %w", err)
 	}
 
+	// The vhost written below imports snippets from the base Caddyfile, and
+	// EnsureRunning skips rewriting it when services are already up - after
+	// an alios update that would leave Caddy unable to load the new vhost.
+	if err := h.services.WriteBaseConfig(); err != nil {
+		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Failed to update the base Caddyfile: %v\n", err)
+	}
+
 	// The SSL setup below rewrites the vhost, which also clears an `alios
 	// stop`; without SSL, clear it directly.
 	if !h.config.EnableSSL {
-		if err := h.ssl.SetProjectStopped(proj.Name, false); err != nil {
-			fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Failed to re-enable waking for the project: %v\n", err)
-		}
+		h.clearStopped(proj.Name)
 	}
 
 	// Setup SSL for project
@@ -716,6 +721,7 @@ func (h *Handler) handleImage(args []string) error {
 		return fmt.Errorf("failed to switch image: %w", err)
 	}
 
+	h.clearStopped(proj.Name)
 	fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Image switched successfully")
 	updated, err := h.projects.GetCurrentProject()
 	if err != nil {
@@ -743,19 +749,25 @@ func (h *Handler) stopProject(manual bool) error {
 
 	fmt.Printf(utils.Colorize("[STOPPING]", utils.ColorYellow)+" Stopping project '%s'...\n", project.Name)
 
+	// Mark the vhost stopped before stopping the container: while the app
+	// shuts down Caddy's requests fail, and with the wake snippet still in
+	// place a polling tab would have the waker start it straight back up.
+	marked := false
+	if manual {
+		h.stopShareQuietly(project.Name)
+		if err := h.markStopped(project.Name, true); err != nil {
+			fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Failed to mark the project stopped, so a visit may start it again: %v\n", err)
+		} else {
+			marked = true
+		}
+	}
+
 	if err := h.projects.Stop(); err != nil {
 		return fmt.Errorf("failed to stop project: %w", err)
 	}
 
-	if manual {
-		h.stopShareQuietly(project.Name)
-		if err := h.ssl.SetProjectStopped(project.Name, true); err != nil {
-			fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Failed to mark the project stopped, so a visit may start it again: %v\n", err)
-		}
-	}
-
 	fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Project stopped")
-	if manual {
+	if marked {
 		fmt.Println("  It stays stopped until 'alios start'.")
 	}
 	return nil
@@ -789,6 +801,7 @@ func (h *Handler) handleRebuild() error {
 		return fmt.Errorf("failed to rebuild project: %w", err)
 	}
 
+	h.clearStopped(project.Name)
 	fmt.Printf(utils.Colorize("[SUCCESS]", utils.ColorGreen)+" '%s' rebuilt and running\n", project.Name)
 	return nil
 }
@@ -850,8 +863,21 @@ func (h *Handler) handleList() error {
 		return nil
 	}
 
-	waking := h.docker.IsContainerRunning(services.IdleContainer)
-	stopped, _ := h.ssl.StoppedProjects()
+	// Telling asleep from stopped costs a throwaway container, so only look
+	// when some project is down and alios_idle could wake it. If the vhosts
+	// can't be read, call none of them asleep rather than all of them.
+	waking := false
+	var stopped map[string]bool
+	if h.docker.IsContainerRunning(services.IdleContainer) {
+		for _, proj := range projects {
+			if proj.Status == "stopped" {
+				if s, err := h.ssl.StoppedProjects(); err == nil {
+					waking, stopped = true, s
+				}
+				break
+			}
+		}
+	}
 	fmt.Printf("Found %d project(s):\n\n", len(projects))
 	for _, proj := range projects {
 		asleep := waking && !stopped[proj.Name]
@@ -910,6 +936,7 @@ func (h *Handler) handlePHPVersion(args []string) error {
 		return fmt.Errorf("failed to change PHP version: %w", err)
 	}
 
+	h.clearStopped(proj.Name)
 	fmt.Printf(utils.Colorize("[SUCCESS]", utils.ColorGreen)+" PHP version changed to %s\n", newVersion)
 	fmt.Println("Run 'alios start' to start with the new version")
 	return nil

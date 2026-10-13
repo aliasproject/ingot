@@ -73,8 +73,9 @@ keeps polling the project can't undo the stop.
 
 The difference is recorded in the project's vhost: `alios stop` swaps its
 `import alios_wake <project>` line for `import alios_stopped <project>`, and
-`alios start` swaps it back. `alios restart` and `alios pause`/`resume` don't
-change it, and `alios cert repair` keeps it.
+`alios start` swaps it back, and so do the other commands that start the
+container (`restart`, `rebuild`, `php`, `image`). `alios pause`/`resume`,
+`alios cert repair` and `alios cert remove` keep it.
 
 ## Busy without traffic
 

@@ -62,8 +62,12 @@ func (h *Handler) wakeForCommand() error {
 	if err != nil {
 		return err
 	}
-	if proj.Status == "stopped" && !h.projectAsleep(proj.Name, proj.Status) {
-		return fmt.Errorf("project is stopped. Run 'alios start' first")
+	// Only a stop by hand is respected. If the vhosts can't be read, wake
+	// it: the command was asked for explicitly.
+	if proj.Status == "stopped" {
+		if stopped, err := h.ssl.StoppedProjects(); err == nil && stopped[proj.Name] {
+			return fmt.Errorf("project is stopped. Run 'alios start' first")
+		}
 	}
 	woke, err := h.projects.Wake()
 	if woke {
@@ -77,6 +81,24 @@ func (h *Handler) wakeForCommand() error {
 func (h *Handler) describeIdle(setting string) string {
 	global, _ := h.services.IdleTimeoutSetting()
 	return project.DescribeIdle(setting, global)
+}
+
+// markStopped records an `alios stop` (or clears it) in the project's vhost.
+// The base Caddyfile is rewritten first so the snippet the vhost will import
+// exists even if services were started by an older alios.
+func (h *Handler) markStopped(name string, stopped bool) error {
+	if err := h.services.WriteBaseConfig(); err != nil {
+		return err
+	}
+	return h.ssl.SetProjectStopped(name, stopped)
+}
+
+// clearStopped makes a project wake on visits again, for commands that start
+// it other than `alios start` (rebuild, php, image).
+func (h *Handler) clearStopped(name string) {
+	if err := h.markStopped(name, false); err != nil {
+		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Failed to re-enable waking for the project: %v\n", err)
+	}
 }
 
 // projectAsleep reports whether a stopped project starts again on the next
