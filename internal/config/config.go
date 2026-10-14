@@ -8,7 +8,7 @@ import (
 
 const (
 	// Version is the current version of Ingot
-	Version = "1.3.0"
+	Version = "2.0.0"
 
 	// ClientID is the GitHub OAuth application client ID
 	ClientID = "178c6fc778ccc68e1d6a"
