@@ -18,7 +18,7 @@ go vet ./...                         # static checks
 
 `go test ./...` covers only a few pure functions so far; there's no linter/Makefile. Most changes are verified with `go build`/`go vet` and by running the CLI.
 
-Releases are cut with `scripts/release.sh <version> [notes]`, which patches `internal/config.Version` via `sed`, cross-compiles for darwin/linux/windows, and generates `manifest.json` for the self-updater (see `docs/UPDATES.md` for the full update-distribution design).
+Releases are cut with `scripts/release.sh <version> [notes]`, which patches `internal/config.Version` via `sed`, cross-compiles for darwin/linux/windows, and publishes the binaries as a GitHub release, which is what the self-updater reads. (`docs/UPDATES.md` still describes an older manifest-based design.)
 
 ## Architecture
 

@@ -252,7 +252,8 @@ go run ./cmd status        # or run directly without building
 go vet ./...               # static checks
 ```
 
-Tests are sparse (`go test ./...` covers the updater); `go build`/`go vet` are the main verification.
+`go test ./...` covers a few packages (config, idle, share, ssl, updater); most
+changes are verified with `go build`/`go vet` and by running the CLI.
 See [`CLAUDE.md`](CLAUDE.md) for an architecture overview if you're working
 on the CLI itself.
 
