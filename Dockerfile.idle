@@ -1,7 +1,9 @@
 # The ingot_idle global service (cmd/ingot-idle). Published as
 # ghcr.io/aliasproject/ingot-idle:<version> by scripts/release.sh, tagged with
 # the CLI version so a CLI always runs the service it was built against.
-FROM golang:1.23-alpine AS build
+# Build on the host platform and cross-compile with GOOS/GOARCH, so an
+# arm64 image builds without emulation (QEMU) on an amd64 machine.
+FROM --platform=$BUILDPLATFORM golang:1.23-alpine AS build
 WORKDIR /src
 COPY go.mod ./
 COPY cmd/ingot-idle ./cmd/ingot-idle
