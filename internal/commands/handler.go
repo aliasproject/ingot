@@ -7,15 +7,15 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/aliasproject/alios-cli/internal/config"
-	"github.com/aliasproject/alios-cli/internal/docker"
-	"github.com/aliasproject/alios-cli/internal/github"
-	"github.com/aliasproject/alios-cli/internal/project"
-	"github.com/aliasproject/alios-cli/internal/services"
-	"github.com/aliasproject/alios-cli/internal/share"
-	"github.com/aliasproject/alios-cli/internal/ssl"
-	"github.com/aliasproject/alios-cli/internal/updater"
-	"github.com/aliasproject/alios-cli/internal/utils"
+	"github.com/aliasproject/ingot/internal/config"
+	"github.com/aliasproject/ingot/internal/docker"
+	"github.com/aliasproject/ingot/internal/github"
+	"github.com/aliasproject/ingot/internal/project"
+	"github.com/aliasproject/ingot/internal/services"
+	"github.com/aliasproject/ingot/internal/share"
+	"github.com/aliasproject/ingot/internal/ssl"
+	"github.com/aliasproject/ingot/internal/updater"
+	"github.com/aliasproject/ingot/internal/utils"
 )
 
 // Handler manages command execution
@@ -176,8 +176,8 @@ func (h *Handler) handleDefaultCommand() error {
 		return h.showProjectStatus(project)
 	}
 
-	fmt.Println(utils.Colorize("[INFO]", utils.ColorBlue) + " No alios project found in this directory")
-	fmt.Println("Run 'alios start' to set up a project here, or 'alios help' for more information")
+	fmt.Println(utils.Colorize("[INFO]", utils.ColorBlue) + " No ingot project found in this directory")
+	fmt.Println("Run 'ingot start' to set up a project here, or 'ingot help' for more information")
 	return nil
 }
 
@@ -316,8 +316,8 @@ func (h *Handler) handleCertRepair() error {
 
 	fmt.Printf(utils.Colorize("[RESTARTING]", utils.ColorCyan)+" Repairing SSL/vhost configuration for %d project(s)...\n", len(names))
 
-	// The vhosts import the alios_wake snippet from the base Caddyfile;
-	// rewrite it first, or a base file from an older alios would leave Caddy
+	// The vhosts import the ingot_wake snippet from the base Caddyfile;
+	// rewrite it first, or a base file from an older ingot would leave Caddy
 	// unable to start on the new vhosts.
 	if err := h.services.WriteBaseConfig(); err != nil {
 		return fmt.Errorf("failed to write the base Caddyfile: %w", err)
@@ -337,10 +337,10 @@ func (h *Handler) handleCertRepair() error {
 	return nil
 }
 
-// handleInstall installs Alios
+// handleInstall installs Ingot
 func (h *Handler) handleInstall() error {
 	if h.isFullySetUp() {
-		fmt.Printf(utils.Colorize("[SUCCESS]", utils.ColorGreen)+" Alios is already installed (v%s)\n", config.Version)
+		fmt.Printf(utils.Colorize("[SUCCESS]", utils.ColorGreen)+" Ingot is already installed (v%s)\n", config.Version)
 		return h.showStatus()
 	}
 
@@ -381,7 +381,7 @@ func (h *Handler) ensureUpdaterAuthenticated() {
 	fmt.Println("🔍 Checking for updates...")
 	if err := h.github.EnsureAuthenticated(); err != nil {
 		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow) + " Warning: No GitHub authentication available.\n")
-		fmt.Printf("   Run 'alios github-auth' to authenticate for access to releases.\n\n")
+		fmt.Printf("   Run 'ingot github-auth' to authenticate for access to releases.\n\n")
 		return
 	}
 
@@ -391,7 +391,7 @@ func (h *Handler) ensureUpdaterAuthenticated() {
 	}
 }
 
-// handleUpdate updates Alios to the latest version
+// handleUpdate updates Ingot to the latest version
 func (h *Handler) handleUpdate() error {
 	h.ensureUpdaterAuthenticated()
 
@@ -420,22 +420,22 @@ func (h *Handler) handleCheckUpdate() error {
 	if release.Notes != "" {
 		fmt.Printf("\nRelease notes:\n%s\n", release.Notes)
 	}
-	fmt.Printf("\nRun 'alios update' to install the latest version.\n")
+	fmt.Printf("\nRun 'ingot update' to install the latest version.\n")
 
 	return nil
 }
 
-// handleUninstall uninstalls Alios
+// handleUninstall uninstalls Ingot
 func (h *Handler) handleUninstall() error {
-	if !utils.PromptYesNo("Are you sure you want to uninstall Alios?") {
+	if !utils.PromptYesNo("Are you sure you want to uninstall Ingot?") {
 		fmt.Println("Uninstall cancelled")
 		return nil
 	}
 
-	fmt.Println("🗑 Uninstalling Alios...")
+	fmt.Println("🗑 Uninstalling Ingot...")
 
 	// Shares first: the named tunnel restarts with Docker and would keep
-	// the Cloudflare connection open with no alios left to stop it.
+	// the Cloudflare connection open with no ingot left to stop it.
 	h.stopAllSharesQuietly()
 
 	// Stop all services
@@ -452,19 +452,19 @@ func (h *Handler) handleUninstall() error {
 	utils.CleanupDNS()
 
 	// Remove binary
-	os.Remove(config.AliosBinary)
+	os.Remove(config.IngotBinary)
 
 	// No local configuration directory to remove since we use environment variables only
 	fmt.Println(utils.Colorize("[INFO]", utils.ColorBlue) + " Configuration is stored in environment variables and project directories only")
 
-	fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Alios uninstalled")
+	fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Ingot uninstalled")
 	return nil
 }
 
 // handleInit initializes a new project
 func (h *Handler) handleInit(args []string) error {
 	// Init is now just an alias for start with PHP version selection
-	fmt.Println(utils.Colorize("[INFO]", utils.ColorBlue) + " 'alios init' is deprecated. Using 'alios start' instead...")
+	fmt.Println(utils.Colorize("[INFO]", utils.ColorBlue) + " 'ingot init' is deprecated. Using 'ingot start' instead...")
 	return h.handleStart(args...)
 }
 
@@ -490,7 +490,7 @@ func (h *Handler) handleStart(args ...string) error {
 		if project.HasDockerfile(proj.Path) {
 			choice := utils.SelectOption("A Dockerfile was found in this project. How should it be used?", []string{
 				"Use this project's Dockerfile",
-				"Use a prebuilt Alios image",
+				"Use a prebuilt image",
 				"Pull a different image",
 			})
 			switch choice {
@@ -541,7 +541,7 @@ func (h *Handler) handleStart(args ...string) error {
 	// Setup cleanup function that will be called on any failure
 	cleanupOnFailure := func(reason string) {
 		fmt.Printf(utils.Colorize("[CLEANUP]", utils.ColorCyan)+" Cleaning up after failure: %s\n", reason)
-		containerName := fmt.Sprintf("alios_php_%s", proj.Name)
+		containerName := fmt.Sprintf("ingot_php_%s", proj.Name)
 
 		// Try to stop the container first
 		if stopErr := h.docker.Run("stop", containerName); stopErr != nil {
@@ -579,12 +579,12 @@ func (h *Handler) handleStart(args ...string) error {
 
 	// The vhost written below imports snippets from the base Caddyfile, and
 	// EnsureRunning skips rewriting it when services are already up - after
-	// an alios update that would leave Caddy unable to load the new vhost.
+	// an ingot update that would leave Caddy unable to load the new vhost.
 	if err := h.services.WriteBaseConfig(); err != nil {
 		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Failed to update the base Caddyfile: %v\n", err)
 	}
 
-	// The SSL setup below rewrites the vhost, which also clears an `alios
+	// The SSL setup below rewrites the vhost, which also clears an `ingot
 	// stop`; without SSL, clear it directly (the base config was just
 	// written, so skip clearStopped's rewrite).
 	if !h.config.EnableSSL {
@@ -601,21 +601,21 @@ func (h *Handler) handleStart(args ...string) error {
 			cleanupOnFailure("SSL certificate setup failed")
 
 			return fmt.Errorf("project startup failed due to SSL certificate error. Please check:\n"+
-				"  1. Caddy container is running (alios global status)\n"+
-				"  2. CA certificate exists (alios cert verify)\n"+
-				"  3. Try running: alios global restart\n"+
+				"  1. Caddy container is running (ingot global status)\n"+
+				"  2. CA certificate exists (ingot cert verify)\n"+
+				"  3. Try running: ingot global restart\n"+
 				"Error details: %w", err)
 		}
 
 		// The certificate just generated is only valid in the browser if the
 		// CA that signed it is trusted on this host - that's a separate,
-		// one-time step (`alios cert install`) that can be skipped or
+		// one-time step (`ingot cert install`) that can be skipped or
 		// interrupted independently of SSL setup succeeding here. Surface it
 		// now rather than let the user discover it as a silent "Not Secure"
 		// warning in Chrome.
 		if !h.ssl.IsCertificateInstalled() {
 			fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow) + " The CA certificate isn't trusted on this machine yet - your browser will show this site as untrusted.\n")
-			fmt.Println("   Run 'alios cert install' to trust it, then restart your browser.")
+			fmt.Println("   Run 'ingot cert install' to trust it, then restart your browser.")
 		}
 	}
 
@@ -635,7 +635,7 @@ func (h *Handler) handleStart(args ...string) error {
 
 	// Something went wrong if we get here
 	cleanupOnFailure("project started but status is unclear")
-	return fmt.Errorf("project started but status is unclear. Run 'alios status' to check")
+	return fmt.Errorf("project started but status is unclear. Run 'ingot status' to check")
 }
 
 // promptForBuildArgs asks for a value for each ARG a Dockerfile declares
@@ -672,7 +672,7 @@ func (h *Handler) handleImage(args []string) error {
 	}
 
 	if proj.Status == "not initialized" {
-		return fmt.Errorf("project not initialized. Run 'alios start' first")
+		return fmt.Errorf("project not initialized. Run 'ingot start' first")
 	}
 
 	mode := ""
@@ -733,7 +733,7 @@ func (h *Handler) handleImage(args []string) error {
 	return h.showProjectStatus(updated)
 }
 
-// handleStop stops the current project until the next `alios start`: it
+// handleStop stops the current project until the next `ingot start`: it
 // ends the share and marks the vhost stopped, so a visit doesn't start it
 // again the way it would a project that went to sleep for being idle.
 func (h *Handler) handleStop() error {
@@ -776,7 +776,7 @@ func (h *Handler) stopProject(manual bool) error {
 
 	fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Project stopped")
 	if marked {
-		fmt.Println("  It stays stopped until 'alios start'.")
+		fmt.Println("  It stays stopped until 'ingot start'.")
 	}
 	return nil
 }
@@ -872,7 +872,7 @@ func (h *Handler) handleList() error {
 	}
 
 	// Telling asleep from stopped costs a throwaway container, so only look
-	// when some project is down and alios_idle could wake it. If the vhosts
+	// when some project is down and ingot_idle could wake it. If the vhosts
 	// can't be read, call none of them asleep rather than all of them.
 	waking := false
 	var stopped map[string]bool
@@ -909,7 +909,7 @@ func (h *Handler) handlePHPVersion(args []string) error {
 	}
 
 	if proj.Status == "not initialized" {
-		return fmt.Errorf("project not initialized. Run 'alios start' first")
+		return fmt.Errorf("project not initialized. Run 'ingot start' first")
 	}
 
 	// PHP version only means anything on the prebuilt path - it's just the
@@ -918,8 +918,8 @@ func (h *Handler) handlePHPVersion(args []string) error {
 	// actually change anything running; better to say so plainly than let
 	// someone pick a version and wonder why nothing happened.
 	if proj.ImageType == "custom" {
-		fmt.Printf(utils.Colorize("[INFO]", utils.ColorBlue)+" '%s' is running a custom image (%s), not the prebuilt PHP image - PHP version isn't something alios-cli controls here.\n", proj.Name, proj.ImageSource)
-		fmt.Println("Run 'alios image prebuilt' first if you want to switch back and manage the PHP version through alios-cli.")
+		fmt.Printf(utils.Colorize("[INFO]", utils.ColorBlue)+" '%s' is running a custom image (%s), not the prebuilt PHP image - PHP version isn't something ingot controls here.\n", proj.Name, proj.ImageSource)
+		fmt.Println("Run 'ingot image prebuilt' first if you want to switch back and manage the PHP version through ingot.")
 		return nil
 	}
 
@@ -946,7 +946,7 @@ func (h *Handler) handlePHPVersion(args []string) error {
 
 	h.clearStopped(proj.Name)
 	fmt.Printf(utils.Colorize("[SUCCESS]", utils.ColorGreen)+" PHP version changed to %s\n", newVersion)
-	fmt.Println("Run 'alios start' to start with the new version")
+	fmt.Println("Run 'ingot start' to start with the new version")
 	return nil
 }
 
@@ -958,7 +958,7 @@ func (h *Handler) handleServerRoot(args []string) error {
 	}
 
 	if proj.Status == "not initialized" {
-		return fmt.Errorf("project not initialized. Run 'alios start' first")
+		return fmt.Errorf("project not initialized. Run 'ingot start' first")
 	}
 
 	// Get current server root from config
@@ -1000,18 +1000,18 @@ func (h *Handler) handleServerRoot(args []string) error {
 			return fmt.Errorf("failed to restart container: %w", err)
 		}
 	} else {
-		fmt.Println("Run 'alios start' to start with the new server root")
+		fmt.Println("Run 'ingot start' to start with the new server root")
 	}
 	return nil
 }
 
 // handleEnv manages the env vars injected into the project container:
 //
-//	alios env list
-//	alios env set KEY=VALUE [KEY2=VALUE2 ...]
-//	alios env unset KEY [KEY2 ...]
+//	ingot env list
+//	ingot env set KEY=VALUE [KEY2=VALUE2 ...]
+//	ingot env unset KEY [KEY2 ...]
 //
-// Values persist in the container's alios.project.env label; set/unset
+// Values persist in the container's ingot.project.env label; set/unset
 // recreate the container so the change takes effect immediately.
 func (h *Handler) handleEnv(args []string) error {
 	if len(args) == 0 {
@@ -1024,13 +1024,13 @@ func (h *Handler) handleEnv(args []string) error {
 	}
 
 	if proj.Status == "not initialized" {
-		return fmt.Errorf("project not initialized. Run 'alios start' first")
+		return fmt.Errorf("project not initialized. Run 'ingot start' first")
 	}
 
 	switch args[0] {
 	case "list", "ls":
 		if len(proj.Env) == 0 {
-			fmt.Println("No env vars set. Use 'alios env set KEY=VALUE' to add one")
+			fmt.Println("No env vars set. Use 'ingot env set KEY=VALUE' to add one")
 			return nil
 		}
 		for _, key := range project.SortedEnvKeys(proj.Env) {
@@ -1102,7 +1102,7 @@ func (h *Handler) printEnvApplied(proj *project.Project) {
 	if proj.Status == "running" {
 		fmt.Println(utils.Colorize("[RESTARTING]", utils.ColorCyan) + " Container recreated to apply the change")
 	} else {
-		fmt.Println("Run 'alios start' to start with the new env vars")
+		fmt.Println("Run 'ingot start' to start with the new env vars")
 	}
 }
 
@@ -1127,7 +1127,7 @@ func (h *Handler) handleContainerExec(command string, args []string) error {
 	if err != nil {
 		// If the error indicates the command wasn't found, provide a helpful message
 		if strings.Contains(err.Error(), "not found") {
-			return fmt.Errorf("'%s' is not an alios command or available in the container\nTry 'alios help' for available commands or 'alios shell' to explore the container", command)
+			return fmt.Errorf("'%s' is not an ingot command or available in the container\nTry 'ingot help' for available commands or 'ingot shell' to explore the container", command)
 		}
 	}
 	return err
@@ -1136,7 +1136,7 @@ func (h *Handler) handleContainerExec(command string, args []string) error {
 // handleExec explicitly executes a command in the project container
 func (h *Handler) handleExec(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("no command specified. Usage: alios exec <command> [args...]")
+		return fmt.Errorf("no command specified. Usage: ingot exec <command> [args...]")
 	}
 
 	project, err := h.projects.GetCurrentProject()
@@ -1145,7 +1145,7 @@ func (h *Handler) handleExec(args []string) error {
 	}
 
 	if project.Status == "not initialized" {
-		return fmt.Errorf("project not initialized. Run 'alios start' first")
+		return fmt.Errorf("project not initialized. Run 'ingot start' first")
 	}
 
 	if err := h.wakeForCommand(); err != nil {
@@ -1176,7 +1176,7 @@ func (h *Handler) handleShell(args []string) error {
 	}
 
 	if project.Status == "not initialized" {
-		return fmt.Errorf("project not initialized. Run 'alios start' first")
+		return fmt.Errorf("project not initialized. Run 'ingot start' first")
 	}
 
 	if err := h.wakeForCommand(); err != nil {
@@ -1213,8 +1213,8 @@ func (h *Handler) handleLogs(args []string) error {
 
 	// Show specific container logs
 	container := args[0]
-	if !strings.HasPrefix(container, "alios_") {
-		container = "alios_" + container
+	if !strings.HasPrefix(container, "ingot_") {
+		container = "ingot_" + container
 	}
 
 	return h.docker.StreamOutput(
@@ -1280,7 +1280,7 @@ func (h *Handler) handleGitHubVerify() error {
 	token := h.config.GetGithubToken()
 	if token == "" {
 		fmt.Println(utils.Colorize("[ERROR]", utils.ColorRed) + " No GitHub token found")
-		fmt.Println("\nRun 'alios github-auth' to authenticate")
+		fmt.Println("\nRun 'ingot github-auth' to authenticate")
 		return fmt.Errorf("not authenticated")
 	}
 
@@ -1298,7 +1298,7 @@ func (h *Handler) handleGitHubVerify() error {
 		fmt.Println("\n[INFO] Troubleshooting:")
 		fmt.Println("   1. Verify Docker login: docker login ghcr.io")
 		fmt.Println("   2. Check token permissions: needs 'read:packages' scope")
-		fmt.Println("   3. Try re-authenticating: alios github-auth")
+		fmt.Println("   3. Try re-authenticating: ingot github-auth")
 		return fmt.Errorf("ghcr.io access failed")
 	}
 
@@ -1341,7 +1341,7 @@ func (h *Handler) handleDatabaseAdd() error {
 	if dbType == "mysql" {
 		fmt.Println(utils.Colorize("[USER]", utils.ColorCyan) + " User: root (no password)")
 	} else {
-		fmt.Println(utils.Colorize("[USER]", utils.ColorCyan) + " User: alios, Password: alios, Database: alios")
+		fmt.Println(utils.Colorize("[USER]", utils.ColorCyan) + " User: ingot, Password: ingot, Database: ingot")
 	}
 
 	return nil
@@ -1403,7 +1403,7 @@ func (h *Handler) handleDatabaseList() error {
 
 	if len(databases) == 0 {
 		fmt.Println("No databases configured")
-		fmt.Println("\nUse 'alios database add' to add a database")
+		fmt.Println("\nUse 'ingot database add' to add a database")
 		return nil
 	}
 
@@ -1434,7 +1434,7 @@ func (h *Handler) handleDatabaseList() error {
 // Helper methods for displaying information
 
 func (h *Handler) showVersion() error {
-	fmt.Printf("Alios v%s\n", config.Version)
+	fmt.Printf("Ingot v%s\n", config.Version)
 	return nil
 }
 
@@ -1444,12 +1444,12 @@ func (h *Handler) showHelp() error {
 }
 
 func (h *Handler) showStatus() error {
-	fmt.Printf("Alios v%s - System Status\n", config.Version)
+	fmt.Printf("Ingot v%s - System Status\n", config.Version)
 	fmt.Println(strings.Repeat("=", 50))
 
 	// Installation status
 	fmt.Printf("\n" + utils.Colorize("[PACKAGE]", utils.ColorCyan) + " Installation:\n")
-	fmt.Printf("  Binary: %s %s\n", config.AliosBinary, utils.BoolStatus(h.config.IsInstalled()))
+	fmt.Printf("  Binary: %s %s\n", config.IngotBinary, utils.BoolStatus(h.config.IsInstalled()))
 	fmt.Printf("  Config: Environment variables %s\n", utils.BoolStatus(h.config.GetGithubToken() != ""))
 
 	// Global services status
@@ -1543,10 +1543,10 @@ func (h *Handler) showServicesStatus() error {
 
 // ShowHelp displays the help message
 func ShowHelp() {
-	fmt.Printf(`Alios v%s - Development Environment Manager
+	fmt.Printf(`Ingot v%s - Development Environment Manager
 
 USAGE:
-  alios [command] [options]
+  ingot [command] [options]
 
 COMMANDS:
   Project Management:
@@ -1568,10 +1568,10 @@ COMMANDS:
     share stop         Stop sharing the current project
     share list         List every active share
     idle               Show when the project is stopped for being idle
-    idle off|on|<dur>  Never stop it / use ALIOS_IDLE_TIMEOUT / own timeout
+    idle off|on|<dur>  Never stop it / use INGOT_IDLE_TIMEOUT / own timeout
 
   Machine Lifecycle:
-    pause              Stop every alios container (projects + global services)
+    pause              Stop every ingot container (projects + global services)
     resume             Restart exactly what was paused
 
   Container Commands:
@@ -1600,32 +1600,32 @@ COMMANDS:
   System:
     doctor             Check Docker, GitHub/GHCR access, DNS, services, SSL,
                         and the current project, with a fix for each failure
-    install            Install Alios
+    install            Install Ingot
     update             Update to latest version
     check-update       Check for available updates
-    uninstall          Uninstall Alios
+    uninstall          Uninstall Ingot
 
 EXAMPLES:
-  alios start              # Start project with default/saved PHP version
-  alios start 8.2          # Start project with PHP 8.2
-  alios server-root public # Change server root to 'public' directory
-  alios image prebuilt     # Switch back to the prebuilt image
-  alios image dockerfile   # Switch to building from the project's Dockerfile
-  alios env set APP_DEBUG=true DB_HOST=alios_mysql  # Inject env vars
-  alios env unset APP_DEBUG # Remove an env var
-  alios share              # Get a public URL for the current project
-  alios share --auth demo:secret  # Same, behind a username/password
-  alios idle off           # Keep a project with a queue worker running
-  alios doctor             # Diagnose why something isn't working
-  alios check-update       # Check for available updates
-  alios update             # Update to latest version
-  alios pause              # Stop everything, free up all CPU/RAM
-  alios resume             # Bring back exactly what was paused
-  alios exec composer install  # Run composer install in container
-  alios exec npm run dev   # Run npm dev script in container
-  alios shell              # Open shell as your host user
-  alios shell --user=root  # Open shell as root
-  alios logs              # View container logs
+  ingot start              # Start project with default/saved PHP version
+  ingot start 8.2          # Start project with PHP 8.2
+  ingot server-root public # Change server root to 'public' directory
+  ingot image prebuilt     # Switch back to the prebuilt image
+  ingot image dockerfile   # Switch to building from the project's Dockerfile
+  ingot env set APP_DEBUG=true DB_HOST=ingot_mysql  # Inject env vars
+  ingot env unset APP_DEBUG # Remove an env var
+  ingot share              # Get a public URL for the current project
+  ingot share --auth demo:secret  # Same, behind a username/password
+  ingot idle off           # Keep a project with a queue worker running
+  ingot doctor             # Diagnose why something isn't working
+  ingot check-update       # Check for available updates
+  ingot update             # Update to latest version
+  ingot pause              # Stop everything, free up all CPU/RAM
+  ingot resume             # Bring back exactly what was paused
+  ingot exec composer install  # Run composer install in container
+  ingot exec npm run dev   # Run npm dev script in container
+  ingot shell              # Open shell as your host user
+  ingot shell --user=root  # Open shell as root
+  ingot logs              # View container logs
     version            Show version information
     help               Show this help message
 
@@ -1643,17 +1643,17 @@ EXAMPLES:
 
 QUICK START:
   1. Navigate to your project directory
-  2. Run 'alios start' to set it up and launch it (first run asks for
+  2. Run 'ingot start' to set it up and launch it (first run asks for
      PHP version, server root, and image)
   3. Access at https://[project-name].test
 
 EXAMPLES:
-  alios start 8.4          # First start with PHP 8.4
-  alios start              # Start current project
-  alios global start       # Start global services
-  alios database add       # Add a database
-  alios php 8.2           # Change to PHP 8.2
+  ingot start 8.4          # First start with PHP 8.4
+  ingot start              # Start current project
+  ingot global start       # Start global services
+  ingot database add       # Add a database
+  ingot php 8.2           # Change to PHP 8.2
 
-For more information, visit: https://alios.app
+For more information, visit: https://github.com/aliasproject/ingot
 `, config.Version)
 }

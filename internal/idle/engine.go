@@ -12,12 +12,12 @@ import (
 	"time"
 )
 
-// ProjectLabel marks a container as an alios project; IdleLabel holds its
+// ProjectLabel marks a container as an ingot project; IdleLabel holds its
 // per-project setting ("off", or a timeout such as "2h"). Both are written by
 // project.Manager.createContainer.
 const (
-	ProjectLabel = "alios.project.name"
-	IdleLabel    = "alios.project.idle"
+	ProjectLabel = "ingot.project.name"
+	IdleLabel    = "ingot.project.idle"
 )
 
 // Container is the part of a container's state the service needs.
@@ -94,7 +94,7 @@ func (e *SocketEngine) do(ctx context.Context, method, path string, out any) (in
 	return resp.StatusCode, nil
 }
 
-// ListProjects returns every alios project container, running or not.
+// ListProjects returns every ingot project container, running or not.
 func (e *SocketEngine) ListProjects(ctx context.Context) ([]Container, error) {
 	filters := url.QueryEscape(fmt.Sprintf(`{"label":[%q]}`, ProjectLabel))
 	var list []struct {

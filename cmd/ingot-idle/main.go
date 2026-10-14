@@ -1,4 +1,4 @@
-// Command alios-idle is the alios_idle global service: it stops project
+// Command ingot-idle is the ingot_idle global service: it stops project
 // containers that have gone idle and wakes them on the next request. It runs
 // in its own container (see Dockerfile.idle); the CLI starts it with the other
 // global services and configures it through environment variables.
@@ -13,12 +13,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/aliasproject/alios-cli/internal/idle"
+	"github.com/aliasproject/ingot/internal/idle"
 )
 
 func main() {
 	logger := log.New(os.Stdout, "", log.LstdFlags)
-	listen := envOr("ALIOS_IDLE_LISTEN", ":8080")
+	listen := envOr("INGOT_IDLE_LISTEN", ":8080")
 
 	// The image has no shell or wget for a Docker healthcheck, so the binary
 	// checks itself.
@@ -30,8 +30,8 @@ func main() {
 		return
 	}
 
-	timeout := duration(logger, "ALIOS_IDLE_TIMEOUT", idle.DefaultTimeout)
-	engine := idle.NewSocketEngine(envOr("ALIOS_IDLE_DOCKER_SOCKET", "/var/run/docker.sock"))
+	timeout := duration(logger, "INGOT_IDLE_TIMEOUT", idle.DefaultTimeout)
+	engine := idle.NewSocketEngine(envOr("INGOT_IDLE_DOCKER_SOCKET", "/var/run/docker.sock"))
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer stop()
@@ -39,9 +39,9 @@ func main() {
 	watcher := &idle.Watcher{
 		Engine:        engine,
 		Tracker:       idle.NewTracker(idle.DefaultThresholds),
-		Interval:      duration(logger, "ALIOS_IDLE_INTERVAL", 30*time.Second),
+		Interval:      duration(logger, "INGOT_IDLE_INTERVAL", 30*time.Second),
 		Timeout:       timeout,
-		BusyWarnAfter: duration(logger, "ALIOS_IDLE_BUSY_WARN", 2*time.Hour),
+		BusyWarnAfter: duration(logger, "INGOT_IDLE_BUSY_WARN", 2*time.Hour),
 		Log:           logger,
 	}
 	if watcher.Interval <= 0 {
@@ -53,7 +53,7 @@ func main() {
 		Addr: listen,
 		Handler: &idle.Waker{
 			Engine:      engine,
-			WakeTimeout: duration(logger, "ALIOS_IDLE_WAKE_TIMEOUT", 60*time.Second),
+			WakeTimeout: duration(logger, "INGOT_IDLE_WAKE_TIMEOUT", 60*time.Second),
 			Log:         logger,
 		},
 		ReadHeaderTimeout: 10 * time.Second,

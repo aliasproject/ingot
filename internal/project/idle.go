@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/aliasproject/alios-cli/internal/idle"
+	"github.com/aliasproject/ingot/internal/idle"
 )
 
 // SetIdle changes the current project's scale-to-zero setting and recreates
-// the container to store it: "" uses the global ALIOS_IDLE_TIMEOUT, "off"
+// the container to store it: "" uses the global INGOT_IDLE_TIMEOUT, "off"
 // keeps the project running, a duration ("2h") is its own idle timeout.
 func (m *Manager) SetIdle(setting string) error {
 	if setting != "" && setting != "off" {
@@ -42,7 +42,7 @@ func (m *Manager) Wake() (woke bool, err error) {
 		return false, err
 	}
 	if project.Status == "not initialized" {
-		return false, fmt.Errorf("project not initialized. Run 'alios start' first")
+		return false, fmt.Errorf("project not initialized. Run 'ingot start' first")
 	}
 	if project.Status == "running" {
 		return false, nil
@@ -56,21 +56,21 @@ func (m *Manager) Wake() (woke bool, err error) {
 			return true, nil
 		}
 	}
-	return false, fmt.Errorf("project container didn't start; check 'alios logs'")
+	return false, fmt.Errorf("project container didn't start; check 'ingot logs'")
 }
 
 // DescribeIdle explains a project's idle setting for status output.
 func DescribeIdle(setting, globalTimeout string) string {
 	switch setting {
 	case "off":
-		return "never stopped (alios idle off)"
+		return "never stopped (ingot idle off)"
 	case "":
 		timeout, err := idle.ParseTimeout(globalTimeout, idle.DefaultTimeout)
 		if err != nil {
-			return "stops when idle (invalid ALIOS_IDLE_TIMEOUT, using the default)"
+			return "stops when idle (invalid INGOT_IDLE_TIMEOUT, using the default)"
 		}
 		if timeout == 0 {
-			return "never stopped (ALIOS_IDLE_TIMEOUT=off)"
+			return "never stopped (INGOT_IDLE_TIMEOUT=off)"
 		}
 		return fmt.Sprintf("stops after %s idle", timeout)
 	}

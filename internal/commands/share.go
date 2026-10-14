@@ -5,16 +5,16 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/aliasproject/alios-cli/internal/share"
-	"github.com/aliasproject/alios-cli/internal/utils"
+	"github.com/aliasproject/ingot/internal/share"
+	"github.com/aliasproject/ingot/internal/utils"
 )
 
 // handleShare exposes the current project at a public URL through a
 // Cloudflare Tunnel:
 //
-//	alios share [--auth user:pass]
-//	alios share stop
-//	alios share list
+//	ingot share [--auth user:pass]
+//	ingot share stop
+//	ingot share list
 func (h *Handler) handleShare(args []string) error {
 	if len(args) > 0 {
 		switch args[0] {
@@ -49,7 +49,7 @@ func (h *Handler) handleShare(args []string) error {
 		return err
 	}
 	if project.Status == "not initialized" {
-		return fmt.Errorf("project not initialized. Run 'alios start' first")
+		return fmt.Errorf("project not initialized. Run 'ingot start' first")
 	}
 	if err := h.wakeForCommand(); err != nil {
 		return err
@@ -69,7 +69,7 @@ func (h *Handler) handleShare(args []string) error {
 	if !started {
 		fmt.Println(utils.Colorize("[INFO]", utils.ColorBlue) + " Already shared")
 		if creds != nil {
-			fmt.Println("  --auth ignored for an existing share. Run 'alios share stop' first to change it")
+			fmt.Println("  --auth ignored for an existing share. Run 'ingot share stop' first to change it")
 		}
 	} else {
 		fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Project shared")
@@ -81,12 +81,12 @@ func (h *Handler) handleShare(args []string) error {
 		fmt.Println(utils.Colorize("[WARNING]", utils.ColorYellow) + " This URL is reachable from the internet (protected by basic auth)")
 	} else {
 		fmt.Println(utils.Colorize("[WARNING]", utils.ColorYellow) + " Anyone with this URL can reach your dev site, including debug pages")
-		fmt.Println("  Use 'alios share --auth user:pass' to require a login")
+		fmt.Println("  Use 'ingot share --auth user:pass' to require a login")
 	}
 	if sh.Mode == share.ModeQuick {
 		fmt.Println("  Quick tunnel URLs change each time you share")
 	}
-	fmt.Println("  Run 'alios share stop' to stop sharing")
+	fmt.Println("  Run 'ingot share stop' to stop sharing")
 
 	return nil
 }
@@ -117,7 +117,7 @@ func (h *Handler) handleShareList() error {
 	}
 
 	if len(shares) == 0 {
-		fmt.Println("No projects are shared. Run 'alios share' in a project to share it")
+		fmt.Println("No projects are shared. Run 'ingot share' in a project to share it")
 		return nil
 	}
 
@@ -172,7 +172,7 @@ func formatShare(sh *share.Share, tunnelRunning bool) string {
 	}
 	line += ")"
 	if !tunnelRunning {
-		line += " " + utils.Colorize("[STALE]", utils.ColorRed) + " tunnel not running, run 'alios share stop'"
+		line += " " + utils.Colorize("[STALE]", utils.ColorRed) + " tunnel not running, run 'ingot share stop'"
 	}
 	return line
 }

@@ -15,9 +15,9 @@ import (
 )
 
 // ProjectHeader names the project a woken request is for. The vhost's
-// alios_wake snippet sets it (see services.baseCaddyfile), so the waker never
+// ingot_wake snippet sets it (see services.baseCaddyfile), so the waker never
 // has to guess the project from a Host that might be a share's public name.
-const ProjectHeader = "X-Alios-Project"
+const ProjectHeader = "X-Ingot-Project"
 
 var validProject = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
 
@@ -40,7 +40,7 @@ type Waker struct {
 // assumed to be one Caddy sent while it was down, rather than a running
 // project failing. Requests for a page's assets arrive in a burst, and the
 // later ones can reach the waker after the first one already woke it; a
-// visit right after `alios start` or `alios exec` started it is the same.
+// visit right after `ingot start` or `ingot exec` started it is the same.
 const recentStart = 15 * time.Second
 
 // wake is one start in progress. Concurrent requests for the same project
@@ -65,10 +65,10 @@ func (w *Waker) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	c, err := w.Engine.Inspect(ctx, "alios_php_"+project)
+	c, err := w.Engine.Inspect(ctx, "ingot_php_"+project)
 	if errors.Is(err, ErrNotFound) || (err == nil && c.Project != project) {
-		// Only ever start containers alios created for this project.
-		page(rw, http.StatusNotFound, "No project here", fmt.Sprintf("There's no container for %s. Run 'alios start' in the project.", project))
+		// Only ever start containers ingot created for this project.
+		page(rw, http.StatusNotFound, "No project here", fmt.Sprintf("There's no container for %s. Run 'ingot start' in the project.", project))
 		return
 	}
 	if err != nil {
@@ -82,7 +82,7 @@ func (w *Waker) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		if err := w.wakeOnce(c); err != nil {
 			w.Log.Printf("waking %s: %v", project, err)
 			page(rw, http.StatusGatewayTimeout, "Project didn't start",
-				fmt.Sprintf("%s: %v. Check 'alios logs'.", project, err))
+				fmt.Sprintf("%s: %v. Check 'ingot logs'.", project, err))
 			return
 		}
 	case !c.StartedWithin(recentStart, time.Now()):
@@ -90,7 +90,7 @@ func (w *Waker) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		// for a while, so starting it again won't help - and redirecting
 		// would loop.
 		page(rw, http.StatusBadGateway, "Project isn't responding",
-			fmt.Sprintf("%s is running but the request to it failed. Check 'alios logs'.", project))
+			fmt.Sprintf("%s is running but the request to it failed. Check 'ingot logs'.", project))
 		return
 	}
 	// Otherwise it's up because a wake just finished: retry as well.
@@ -162,7 +162,7 @@ func (w *Waker) start(ctx context.Context, c *Container) error {
 		case <-time.After(100 * time.Millisecond):
 		}
 		// A container that was being stopped when the request came in
-		// (by the watcher, or `alios stop`) still counted as running, so
+		// (by the watcher, or `ingot stop`) still counted as running, so
 		// Start was a no-op. Once the stop finishes, start it for real.
 		if i%10 == 0 {
 			if cur, err := w.Engine.Inspect(ctx, c.ID); err == nil && !cur.Running {

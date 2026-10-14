@@ -6,15 +6,15 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"github.com/aliasproject/alios-cli/internal/config"
-	"github.com/aliasproject/alios-cli/internal/docker"
-	"github.com/aliasproject/alios-cli/internal/github"
-	"github.com/aliasproject/alios-cli/internal/services"
-	"github.com/aliasproject/alios-cli/internal/ssl"
-	"github.com/aliasproject/alios-cli/internal/utils"
+	"github.com/aliasproject/ingot/internal/config"
+	"github.com/aliasproject/ingot/internal/docker"
+	"github.com/aliasproject/ingot/internal/github"
+	"github.com/aliasproject/ingot/internal/services"
+	"github.com/aliasproject/ingot/internal/ssl"
+	"github.com/aliasproject/ingot/internal/utils"
 )
 
-// Installer handles the Alios installation process
+// Installer handles the Ingot installation process
 type Installer struct {
 	docker   *docker.Client
 	config   *config.Config
@@ -34,7 +34,7 @@ func NewInstaller(dockerClient *docker.Client, cfg *config.Config, svc *services
 	}
 }
 
-// Install performs the Alios installation. Safe to call more than once: every
+// Install performs the Ingot installation. Safe to call more than once: every
 // step it runs skips work that's already done (or is a harmless no-op to
 // repeat), so if a previous attempt failed partway through, calling this
 // again resumes from wherever it left off instead of starting over.
@@ -43,7 +43,7 @@ func (i *Installer) Install() error {
 	if i.config.IsInstalled() {
 		verb = "Resuming setup for"
 	}
-	fmt.Println(utils.Colorize("[STARTING]", utils.ColorCyan) + " " + verb + " Alios Development Environment")
+	fmt.Println(utils.Colorize("[STARTING]", utils.ColorCyan) + " " + verb + " Ingot Development Environment")
 	fmt.Println("=" + utils.PadString("", 48))
 	fmt.Println()
 
@@ -156,7 +156,7 @@ func (i *Installer) configureDatabase() error {
 // setupGitHubAuth handles GitHub authentication setup
 func (i *Installer) setupGitHubAuth() error {
 	// Check for an existing, working token before asking anything - on a
-	// resumed install (or a re-run of `alios install`) this is almost always
+	// resumed install (or a re-run of `ingot install`) this is almost always
 	// already done, and re-prompting for something already finished is
 	// exactly the friction resuming is supposed to avoid.
 	if err := i.github.EnsureAuthenticated(); err == nil {
@@ -173,7 +173,7 @@ func (i *Installer) setupGitHubAuth() error {
 	return i.github.Authenticate()
 }
 
-// installBinary installs the alios binary
+// installBinary installs the ingot binary
 func (i *Installer) installBinary() error {
 	// Get current executable path
 	currentBinary, err := os.Executable()
@@ -188,17 +188,17 @@ func (i *Installer) installBinary() error {
 	}
 
 	// Check if already installed at target location
-	if currentBinary == config.AliosBinary {
-		fmt.Println("  Already installed at " + config.AliosBinary)
+	if currentBinary == config.IngotBinary {
+		fmt.Println("  Already installed at " + config.IngotBinary)
 		return nil
 	}
 
 	// Try to copy directly
-	if err := utils.CopyFile(currentBinary, config.AliosBinary); err != nil {
+	if err := utils.CopyFile(currentBinary, config.IngotBinary); err != nil {
 		// If copy fails, try with sudo
 		fmt.Println("  Administrator privileges required")
 
-		cmd := exec.Command("sudo", "cp", currentBinary, config.AliosBinary)
+		cmd := exec.Command("sudo", "cp", currentBinary, config.IngotBinary)
 		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -208,13 +208,13 @@ func (i *Installer) installBinary() error {
 		}
 
 		// Set permissions
-		exec.Command("sudo", "chmod", "755", config.AliosBinary).Run()
+		exec.Command("sudo", "chmod", "755", config.IngotBinary).Run()
 	} else {
 		// Set permissions
-		os.Chmod(config.AliosBinary, 0755)
+		os.Chmod(config.IngotBinary, 0755)
 	}
 
-	fmt.Printf("  "+utils.Colorize("[RUNNING]", utils.ColorGreen)+" Installed to %s\n", config.AliosBinary)
+	fmt.Printf("  "+utils.Colorize("[RUNNING]", utils.ColorGreen)+" Installed to %s\n", config.IngotBinary)
 
 	// Check if in PATH
 	if !i.isInPath() {
@@ -236,7 +236,7 @@ func (i *Installer) isInPath() bool {
 func (i *Installer) showSuccessMessage() {
 	fmt.Println()
 	fmt.Println("=" + utils.PadString("", 60))
-	utils.PrintSuccess("Alios installed successfully!")
+	utils.PrintSuccess("Ingot installed successfully!")
 	fmt.Println("=" + utils.PadString("", 60))
 	fmt.Println()
 
@@ -246,7 +246,7 @@ func (i *Installer) showSuccessMessage() {
 	fmt.Println("     cd /path/to/your/project")
 	fmt.Println()
 	fmt.Println("  2. Start the project (first run sets it up):")
-	fmt.Println("     alios start")
+	fmt.Println("     ingot start")
 	fmt.Println()
 	fmt.Println("  4. Access your project:")
 	fmt.Printf("     https://[project-name].test\n")
@@ -267,9 +267,9 @@ func (i *Installer) showSuccessMessage() {
 
 	fmt.Println()
 	fmt.Println(utils.Colorize("[DOCS]", utils.ColorCyan) + " For more information:")
-	fmt.Println("  alios help         - Show all commands")
-	fmt.Println("  alios status       - Show system status")
-	fmt.Println("  alios network-help - Network configuration help")
+	fmt.Println("  ingot help         - Show all commands")
+	fmt.Println("  ingot status       - Show system status")
+	fmt.Println("  ingot network-help - Network configuration help")
 	fmt.Println()
 
 	// Show network info
@@ -279,9 +279,9 @@ func (i *Installer) showSuccessMessage() {
 	}
 }
 
-// Uninstall performs the Alios uninstallation
+// Uninstall performs the Ingot uninstallation
 func (i *Installer) Uninstall(removeConfig bool) error {
-	fmt.Println("🗑 Uninstalling Alios...")
+	fmt.Println("🗑 Uninstalling Ingot...")
 
 	// Stop all services
 	fmt.Println("Stopping services...")
@@ -292,21 +292,21 @@ func (i *Installer) Uninstall(removeConfig bool) error {
 	utils.CleanupDNS()
 
 	// Remove binary
-	if utils.FileExists(config.AliosBinary) {
-		fmt.Printf("Removing binary from %s...\n", config.AliosBinary)
-		if err := os.Remove(config.AliosBinary); err != nil {
+	if utils.FileExists(config.IngotBinary) {
+		fmt.Printf("Removing binary from %s...\n", config.IngotBinary)
+		if err := os.Remove(config.IngotBinary); err != nil {
 			// Try with sudo
-			exec.Command("sudo", "rm", "-f", config.AliosBinary).Run()
+			exec.Command("sudo", "rm", "-f", config.IngotBinary).Run()
 		}
 	}
 
 	// No local configuration directory to remove since we use environment variables only
 	if removeConfig {
 		fmt.Println(utils.Colorize("[INFO]", utils.ColorBlue) + " Configuration is stored in environment variables and project directories only")
-		fmt.Println("   To completely remove alios configuration:")
+		fmt.Println("   To completely remove ingot configuration:")
 		fmt.Println("   - Unset GITHUB_TOKEN environment variable")
 	}
 
-	utils.PrintSuccess("Alios uninstalled")
+	utils.PrintSuccess("Ingot uninstalled")
 	return nil
 }

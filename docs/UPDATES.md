@@ -1,6 +1,6 @@
-# Alios CLI Update System
+# Ingot Update System
 
-A minimal, efficient auto-update system for distributing Alios CLI binaries.
+A minimal, efficient auto-update system for distributing Ingot binaries.
 
 ## Overview
 
@@ -16,17 +16,17 @@ The update system uses a simple architecture:
 #### Option A: AWS S3 (Most Common)
 ```bash
 # Create bucket
-aws s3 mb s3://alios-cli-updates
+aws s3 mb s3://ingot-updates
 
 # Make bucket public (for free downloads)
-aws s3api put-bucket-policy --bucket alios-cli-updates --policy '{
+aws s3api put-bucket-policy --bucket ingot-updates --policy '{
   "Version": "2012-10-17",
   "Statement": [{
     "Sid": "PublicRead",
     "Effect": "Allow",
     "Principal": "*",
     "Action": "s3:GetObject",
-    "Resource": "arn:aws:s3:::alios-cli-updates/*"
+    "Resource": "arn:aws:s3:::ingot-updates/*"
   }]
 }'
 ```
@@ -37,19 +37,19 @@ aws s3api put-bucket-policy --bucket alios-cli-updates --policy '{
 npm install -g wrangler
 
 # Create bucket
-wrangler r2 bucket create alios-cli-updates
+wrangler r2 bucket create ingot-updates
 
 # Enable public access via R2.dev subdomain
-wrangler r2 bucket update alios-cli-updates --public
+wrangler r2 bucket update ingot-updates --public
 ```
 
 #### Option C: Google Cloud Storage
 ```bash
 # Create bucket
-gsutil mb gs://alios-cli-updates
+gsutil mb gs://ingot-updates
 
 # Make public
-gsutil iam ch allUsers:objectViewer gs://alios-cli-updates
+gsutil iam ch allUsers:objectViewer gs://ingot-updates
 ```
 
 ### 2. Build and Release
@@ -71,13 +71,13 @@ Set the manifest URL in your environment:
 
 ```bash
 # AWS S3
-export ALIOS_UPDATE_URL="https://alios-cli-updates.s3.amazonaws.com/stable/manifest.json"
+export INGOT_UPDATE_URL="https://ingot-updates.s3.amazonaws.com/stable/manifest.json"
 
 # Cloudflare R2
-export ALIOS_UPDATE_URL="https://your-account.r2.dev/stable/manifest.json"
+export INGOT_UPDATE_URL="https://your-account.r2.dev/stable/manifest.json"
 
 # Custom domain
-export ALIOS_UPDATE_URL="https://updates.yourdomain.com/stable/manifest.json"
+export INGOT_UPDATE_URL="https://updates.yourdomain.com/stable/manifest.json"
 ```
 
 ## Manifest Structure
@@ -92,17 +92,17 @@ The `manifest.json` file contains all update information:
   "critical": false,
   "downloads": {
     "darwin_amd64": {
-      "url": "https://bucket.s3.amazonaws.com/stable/1.0.0/alios-darwin-amd64",
+      "url": "https://bucket.s3.amazonaws.com/stable/1.0.0/ingot-darwin-amd64",
       "sha256": "abc123...",
       "size": 15728640
     },
     "darwin_arm64": {
-      "url": "https://bucket.s3.amazonaws.com/stable/1.0.0/alios-darwin-arm64",
+      "url": "https://bucket.s3.amazonaws.com/stable/1.0.0/ingot-darwin-arm64",
       "sha256": "def456...",
       "size": 15728640
     },
     "linux_amd64": {
-      "url": "https://bucket.s3.amazonaws.com/stable/1.0.0/alios-linux-amd64",
+      "url": "https://bucket.s3.amazonaws.com/stable/1.0.0/ingot-linux-amd64",
       "sha256": "ghi789...",
       "size": 15728640
     }
@@ -116,10 +116,10 @@ Users can update with a simple command:
 
 ```bash
 # Check for updates and install if available
-alios update
+ingot update
 
 # Force reinstall current version
-alios update --force
+ingot update --force
 ```
 
 ## Security Features
@@ -153,10 +153,10 @@ cd build
 python3 -m http.server 8080
 
 # In another terminal, set update URL
-export ALIOS_UPDATE_URL="http://localhost:8080/manifest.json"
+export INGOT_UPDATE_URL="http://localhost:8080/manifest.json"
 
 # Test update
-alios update
+ingot update
 ```
 
 ## Monitoring

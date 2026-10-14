@@ -8,7 +8,7 @@ import (
 )
 
 // BusyWarning starts the log line the watcher writes when a container has
-// been busy for a long time with no traffic. `alios doctor` looks for it.
+// been busy for a long time with no traffic. `ingot doctor` looks for it.
 const BusyWarning = "busy-warning"
 
 // Watcher stops project containers once they've been idle for their timeout.
@@ -130,12 +130,12 @@ func (w *Watcher) warnIfBusy(c *Container, a Activity) {
 		return
 	}
 	w.warned[c.ID] = true
-	w.Log.Printf("%s %s: busy for %s with no traffic (%s); check it's not stuck with 'alios logs' or 'docker top %s'",
+	w.Log.Printf("%s %s: busy for %s with no traffic (%s); check it's not stuck with 'ingot logs' or 'docker top %s'",
 		BusyWarning, c.Project, a.BusyWithoutTrafficFor.Round(time.Minute), strings.Join(a.Reasons, ", "), c.Name)
 }
 
 // DefaultTimeout is how long a project may sit idle before it's stopped when
-// ALIOS_IDLE_TIMEOUT isn't set.
+// INGOT_IDLE_TIMEOUT isn't set.
 const DefaultTimeout = 30 * time.Minute
 
 // ParseTimeout reads a timeout setting: a Go duration, or "off"/"0" to

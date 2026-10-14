@@ -7,18 +7,18 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/aliasproject/alios-cli/internal/docker"
+	"github.com/aliasproject/ingot/internal/docker"
 )
 
 const (
-	// VolumeName is the Docker volume used to store alios runtime state.
-	VolumeName = "alios_state"
+	// VolumeName is the Docker volume used to store ingot runtime state.
+	VolumeName = "ingot_state"
 
 	// PauseFile is the file within VolumeName holding the pause snapshot.
 	PauseFile = "pause-state.json"
 )
 
-// PauseState records which containers were running at the moment `alios pause` ran.
+// PauseState records which containers were running at the moment `ingot pause` ran.
 type PauseState struct {
 	PausedAt time.Time `json:"paused_at"`
 	Services []string  `json:"services"`

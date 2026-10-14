@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Release script for Alios CLI: bumps the version, builds binaries for every
+# Release script for Ingot: bumps the version, builds binaries for every
 # platform, then commits + tags the bump and publishes a GitHub release with
 # the binaries attached. Releases are distributed via GitHub Releases
 # directly (internal/updater checks the GitHub API) -- there's no separate
@@ -34,7 +34,7 @@ if [ -n "$(git -C "$REPO_ROOT" status --porcelain)" ]; then
     exit 1
 fi
 
-echo -e "${GREEN}Building Alios v${VERSION}${NC}"
+echo -e "${GREEN}Building Ingot v${VERSION}${NC}"
 
 # Update version in code. Anchored to a line starting with "Version" (after
 # leading whitespace) specifically so it doesn't also match DefaultPHPVersion
@@ -58,7 +58,7 @@ echo -e "${YELLOW}Building binaries...${NC}"
 build_binary() {
     local GOOS=$1
     local GOARCH=$2
-    local OUTPUT="alios-${GOOS}-${GOARCH}"
+    local OUTPUT="ingot-${GOOS}-${GOARCH}"
 
     if [ "$GOOS" = "windows" ]; then
         OUTPUT="${OUTPUT}.exe"
@@ -67,7 +67,7 @@ build_binary() {
     echo "  → ${GOOS}/${GOARCH}"
 
     GOOS=$GOOS GOARCH=$GOARCH go build \
-        -ldflags="-s -w -X github.com/aliasproject/alios-cli/internal/config.Version=${VERSION}" \
+        -ldflags="-s -w -X github.com/aliasproject/ingot/internal/config.Version=${VERSION}" \
         -o "$BUILD_DIR/$OUTPUT" \
         ../cmd/main.go
 
@@ -84,14 +84,14 @@ build_binary "windows" "amd64"
 
 echo -e "${GREEN}✓ Build complete!${NC}"
 
-# The alios_idle service image. The CLI runs the tag matching its own
+# The ingot_idle service image. The CLI runs the tag matching its own
 # version (config.IdleImage), so it must be pushed before the release is
 # published. Needs `docker buildx` and a ghcr.io login with write:packages.
-echo -e "${YELLOW}Building and pushing ghcr.io/aliasproject/alios-idle:${VERSION}...${NC}"
+echo -e "${YELLOW}Building and pushing ghcr.io/aliasproject/ingot-idle:${VERSION}...${NC}"
 docker buildx build \
     --platform linux/amd64,linux/arm64 \
     -f "$REPO_ROOT/Dockerfile.idle" \
-    -t "ghcr.io/aliasproject/alios-idle:${VERSION}" \
+    -t "ghcr.io/aliasproject/ingot-idle:${VERSION}" \
     --push \
     "$REPO_ROOT"
 echo ""
@@ -106,14 +106,14 @@ git -C "$REPO_ROOT" tag "v${VERSION}"
 git -C "$REPO_ROOT" push origin "v${VERSION}"
 
 gh release create "v${VERSION}" \
-    "$BUILD_DIR"/alios-darwin-amd64 \
-    "$BUILD_DIR"/alios-darwin-arm64 \
-    "$BUILD_DIR"/alios-linux-amd64 \
-    "$BUILD_DIR"/alios-linux-arm64 \
-    "$BUILD_DIR"/alios-windows-amd64.exe \
-    --repo aliasproject/alios-cli \
+    "$BUILD_DIR"/ingot-darwin-amd64 \
+    "$BUILD_DIR"/ingot-darwin-arm64 \
+    "$BUILD_DIR"/ingot-linux-amd64 \
+    "$BUILD_DIR"/ingot-linux-arm64 \
+    "$BUILD_DIR"/ingot-windows-amd64.exe \
+    --repo aliasproject/ingot \
     --title "v${VERSION}" \
     --notes "$NOTES"
 
 echo ""
-echo -e "${GREEN}✓ Released v${VERSION}: https://github.com/aliasproject/alios-cli/releases/tag/v${VERSION}${NC}"
+echo -e "${GREEN}✓ Released v${VERSION}: https://github.com/aliasproject/ingot/releases/tag/v${VERSION}${NC}"

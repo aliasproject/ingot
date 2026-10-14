@@ -2,15 +2,15 @@ package ssl
 
 import (
 	"fmt"
-	"github.com/aliasproject/alios-cli/internal/utils"
+	"github.com/aliasproject/ingot/internal/utils"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 
-	"github.com/aliasproject/alios-cli/internal/config"
-	"github.com/aliasproject/alios-cli/internal/docker"
+	"github.com/aliasproject/ingot/internal/config"
+	"github.com/aliasproject/ingot/internal/docker"
 )
 
 // Manager handles SSL certificate operations
@@ -32,7 +32,7 @@ func (m *Manager) SetupSSL() error {
 	fmt.Println("🔒 Setting up SSL certificates...")
 
 	// Create certificates volume
-	if err := m.docker.CreateVolume("alios_certs"); err != nil {
+	if err := m.docker.CreateVolume("ingot_certs"); err != nil {
 		return fmt.Errorf("failed to create certificates volume: %w", err)
 	}
 
@@ -51,7 +51,7 @@ func (m *Manager) SetupSSL() error {
 	return nil
 }
 
-// CACertFile and CAKeyFile are the CA's filenames inside the alios_certs
+// CACertFile and CAKeyFile are the CA's filenames inside the ingot_certs
 // volume, as written by the openssl image's entrypoint.
 const (
 	CACertFile = "AliasProjectCASelfSigned.pem"
@@ -73,7 +73,7 @@ func (m *Manager) PrepareCAForCaddy() error {
 		}
 	}
 	return m.docker.Run("run", "--rm",
-		"-v", "alios_certs:/certificates",
+		"-v", "ingot_certs:/certificates",
 		"alpine:latest",
 		"sh", "-c", "chgrp 0 /certificates/"+CAKeyFile+" && chmod 640 /certificates/"+CAKeyFile,
 	)
@@ -87,21 +87,21 @@ func (m *Manager) SetupProjectSSL(projectName string) error {
 
 	// Check if CA certificate exists first
 	if !m.caExistsInVolume() {
-		return fmt.Errorf("CA certificate not found. Run 'alios cert install' first")
+		return fmt.Errorf("CA certificate not found. Run 'ingot cert install' first")
 	}
 
 	// Check if Caddy is running
-	if !m.docker.ContainerExists("alios-reverse-proxy") {
-		return fmt.Errorf("Caddy container not found. Run 'alios global start' first")
+	if !m.docker.ContainerExists("ingot_proxy") {
+		return fmt.Errorf("Caddy container not found. Run 'ingot global start' first")
 	}
 
 	// Check Caddy container is actually running
-	info, err := m.docker.InspectContainer("alios-reverse-proxy")
+	info, err := m.docker.InspectContainer("ingot_proxy")
 	if err != nil {
 		return fmt.Errorf("failed to inspect Caddy container: %w", err)
 	}
 	if info.State != "running" {
-		return fmt.Errorf("Caddy container is not running. Run 'alios global start' first")
+		return fmt.Errorf("Caddy container is not running. Run 'ingot global start' first")
 	}
 
 	// Generate certificate for domain
@@ -115,8 +115,8 @@ func (m *Manager) SetupProjectSSL(projectName string) error {
 	}
 
 	// Create Caddy vhost configuration
-	// Called by `alios start`, so the project wakes on visits again even if
-	// it was stopped with `alios stop`.
+	// Called by `ingot start`, so the project wakes on visits again even if
+	// it was stopped with `ingot stop`.
 	if err := m.createCaddyVhost(projectName, domain, false); err != nil {
 		return fmt.Errorf("failed to create Caddy vhost: %w", err)
 	}
@@ -140,10 +140,10 @@ func (m *Manager) SetupProjectSSL(projectName string) error {
 // successfully; per-project failures are collected but do not stop the rest.
 func (m *Manager) RepairVhosts(projectNames []string) (int, error) {
 	if !m.caExistsInVolume() {
-		return 0, fmt.Errorf("CA certificate not found. Run 'alios cert install' first")
+		return 0, fmt.Errorf("CA certificate not found. Run 'ingot cert install' first")
 	}
 
-	// Keep projects stopped with `alios stop` stopped: a repair only fixes
+	// Keep projects stopped with `ingot stop` stopped: a repair only fixes
 	// configuration, it shouldn't make a visit start them again.
 	stopped, err := m.StoppedProjects()
 	if err != nil {
@@ -188,7 +188,7 @@ func (m *Manager) RepairVhosts(projectNames []string) (int, error) {
 // changes even if it's currently crash-looping (unlike reloadCaddy, which
 // requires Caddy to already be in a running state to accept `docker exec`).
 func (m *Manager) RestartCaddy() error {
-	return m.docker.Run("restart", "alios-reverse-proxy")
+	return m.docker.Run("restart", "ingot_proxy")
 }
 
 // ReloadCaddy makes the running reverse proxy re-read /etc/caddy/Caddyfile
@@ -201,13 +201,13 @@ func (m *Manager) ReloadCaddy() error {
 func (m *Manager) RemoveProjectSSL(projectName string) error {
 	domain := projectName + ".test"
 
-	// Remove certificate files directly from alios_certs volume. Includes
+	// Remove certificate files directly from ingot_certs volume. Includes
 	// .csr alongside .crt/.key: the openssl image only (re)generates each of
 	// key/csr/crt when that specific file is missing, so leaving a stale
 	// .csr behind means a future generation reuses it as-is - signing it
 	// produces a .crt that doesn't match the freshly generated .key.
 	// This works regardless of Caddy container state
-	if err := m.docker.Run("run", "--rm", "-v", "alios_certs:/certs", "alpine:latest",
+	if err := m.docker.Run("run", "--rm", "-v", "ingot_certs:/certs", "alpine:latest",
 		"sh", "-c", fmt.Sprintf("rm -f /certs/%s.crt /certs/%s.key /certs/%s.csr", domain, domain, domain)); err != nil {
 		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Failed to remove certificate files: %v\n", err)
 	}
@@ -222,15 +222,15 @@ func (m *Manager) RemoveProjectSSL(projectName string) error {
 
 // RemoveProjectVhost removes the Caddy vhost configuration for a project
 func (m *Manager) RemoveProjectVhost(projectName string) error {
-	// Remove vhost file directly from alios_vhosts volume
+	// Remove vhost file directly from ingot_vhosts volume
 	// This works regardless of Caddy container state
-	if err := m.docker.Run("run", "--rm", "-v", "alios_vhosts:/vhosts", "alpine:latest",
+	if err := m.docker.Run("run", "--rm", "-v", "ingot_vhosts:/vhosts", "alpine:latest",
 		"rm", "-f", fmt.Sprintf("/vhosts/%s.caddyfile", projectName)); err != nil {
 		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Failed to remove vhost configuration: %v\n", err)
 	}
 
 	// Reload Caddy to apply configuration changes if it's running
-	if m.docker.ContainerExists("alios-reverse-proxy") && m.docker.IsContainerRunning("alios-reverse-proxy") {
+	if m.docker.ContainerExists("ingot_proxy") && m.docker.IsContainerRunning("ingot_proxy") {
 		if err := m.reloadCaddy(); err != nil {
 			fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Failed to reload Caddy: %v\n", err)
 		}
@@ -241,10 +241,10 @@ func (m *Manager) RemoveProjectVhost(projectName string) error {
 
 // updateVhostToHTTP updates a project's vhost configuration to use HTTP instead of HTTPS
 func (m *Manager) updateVhostToHTTP(projectName string) error {
-	// Keep an `alios stop`: removing the certificate shouldn't make a visit
+	// Keep an `ingot stop`: removing the certificate shouldn't make a visit
 	// start the project again.
 	ending := wakeImport
-	if current, err := m.docker.ReadFileFromVolume("alios_vhosts", projectName+".caddyfile"); err == nil &&
+	if current, err := m.docker.ReadFileFromVolume("ingot_vhosts", projectName+".caddyfile"); err == nil &&
 		strings.Contains(current, stoppedImport+projectName) {
 		ending = stoppedImport
 	}
@@ -253,7 +253,7 @@ func (m *Manager) updateVhostToHTTP(projectName string) error {
 	// this site block in plaintext instead of attempting automatic HTTPS (which
 	// can't work for .test domains anyway; see createCaddyVhost).
 	httpVhostConfig := fmt.Sprintf(`http://%s.test {
-    reverse_proxy alios_php_%s:80 {
+    reverse_proxy ingot_php_%s:80 {
         header_up Host {host}
         header_up X-Real-IP {remote}
         header_up X-Forwarded-For {remote}
@@ -264,12 +264,12 @@ func (m *Manager) updateVhostToHTTP(projectName string) error {
 `, projectName, projectName, projectName)
 
 	// Write HTTP vhost configuration to volume
-	if err := m.docker.WriteFileToVolume("alios_vhosts", projectName+".caddyfile", []byte(httpVhostConfig)); err != nil {
+	if err := m.docker.WriteFileToVolume("ingot_vhosts", projectName+".caddyfile", []byte(httpVhostConfig)); err != nil {
 		return fmt.Errorf("failed to write HTTP vhost configuration: %w", err)
 	}
 
 	// Reload Caddy to apply configuration changes if it's running
-	if m.docker.ContainerExists("alios-reverse-proxy") && m.docker.IsContainerRunning("alios-reverse-proxy") {
+	if m.docker.ContainerExists("ingot_proxy") && m.docker.IsContainerRunning("ingot_proxy") {
 		if err := m.reloadCaddy(); err != nil {
 			fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Failed to reload Caddy: %v\n", err)
 		}
@@ -283,7 +283,7 @@ func (m *Manager) GenerateCertificate(domain string) error {
 	// Run openssl container to generate certificate with output
 	cmd := exec.Command("docker", "run", "--rm",
 		"-e", "DOMAIN="+domain,
-		"-v", "alios_certs:/certificates",
+		"-v", "ingot_certs:/certificates",
 		"ghcr.io/aliasproject/openssl:latest")
 
 	output, err := cmd.CombinedOutput()
@@ -305,7 +305,7 @@ func (m *Manager) GenerateCertificate(domain string) error {
 // all when loading the tls directive.
 func (m *Manager) fixCertPermissions(domain string) error {
 	return m.docker.Run("run", "--rm",
-		"-v", "alios_certs:/certificates",
+		"-v", "ingot_certs:/certificates",
 		"alpine:latest",
 		"sh", "-c", fmt.Sprintf("chgrp 0 /certificates/%s.key && chmod 640 /certificates/%s.key", domain, domain),
 	)
@@ -314,7 +314,7 @@ func (m *Manager) fixCertPermissions(domain string) error {
 // InstallCertificate installs the CA certificate to the system
 func (m *Manager) InstallCertificate() error {
 	// Create temporary file for CA certificate
-	tmpFile, err := os.CreateTemp("", "alios-ca-*.pem")
+	tmpFile, err := os.CreateTemp("", "ingot-ca-*.pem")
 	if err != nil {
 		return fmt.Errorf("failed to create temp file: %w", err)
 	}
@@ -359,7 +359,7 @@ func (m *Manager) VerifyCertificate() error {
 		fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " CA certificate is installed in the system")
 	} else {
 		fmt.Println(utils.Colorize("[ERROR]", utils.ColorRed) + " CA certificate is not installed")
-		fmt.Println("Run 'alios cert install' to install it")
+		fmt.Println("Run 'ingot cert install' to install it")
 	}
 
 	// System trust (checked above) doesn't imply Chrome/Firefox trust it too
@@ -372,7 +372,7 @@ func (m *Manager) VerifyCertificate() error {
 			fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " CA certificate is trusted by Chrome/Chromium (NSS)")
 		} else {
 			fmt.Println(utils.Colorize("[ERROR]", utils.ColorRed) + " CA certificate is not trusted by Chrome/Chromium (NSS) - it may still show as untrusted in the browser even though the system trusts it")
-			fmt.Println("Run 'alios cert install' to fix it")
+			fmt.Println("Run 'ingot cert install' to fix it")
 		}
 	}
 
@@ -381,7 +381,7 @@ func (m *Manager) VerifyCertificate() error {
 		fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " CA certificate exists in Docker volume")
 	} else {
 		fmt.Println(utils.Colorize("[ERROR]", utils.ColorRed) + " CA certificate not found in Docker volume")
-		fmt.Println("Run 'alios global start' to generate it")
+		fmt.Println("Run 'ingot global start' to generate it")
 	}
 
 	return nil
@@ -419,11 +419,11 @@ func (m *Manager) DebugCertificate() error {
 
 	// Check Caddy container
 	fmt.Println("\nCaddy Container:")
-	if m.docker.IsContainerRunning("alios-reverse-proxy") {
+	if m.docker.IsContainerRunning("ingot_proxy") {
 		fmt.Println("  [SUCCESS] Running")
 
 		// List certificates in Caddy
-		output, err := m.docker.RunWithOutput("exec", "alios-reverse-proxy", "ls", "-la", "/etc/caddy/ssl/")
+		output, err := m.docker.RunWithOutput("exec", "ingot_proxy", "ls", "-la", "/etc/caddy/ssl/")
 		if err == nil {
 			fmt.Println("  Certificates:")
 			lines := strings.Split(output, "\n")
@@ -452,7 +452,7 @@ func (m *Manager) CAExists() bool {
 // caExistsInVolume checks if CA certificate exists in volume
 func (m *Manager) caExistsInVolume() bool {
 	err := m.docker.Run("run", "--rm",
-		"-v", "alios_certs:/certificates",
+		"-v", "ingot_certs:/certificates",
 		"alpine:latest",
 		"test", "-f", "/certificates/AliasProjectCASelfSigned.pem",
 	)
@@ -463,13 +463,13 @@ func (m *Manager) caExistsInVolume() bool {
 func (m *Manager) certificateExists(domain string) bool {
 	// Check for both certificate and key
 	certCheck := m.docker.Run("run", "--rm",
-		"-v", "alios_certs:/certificates",
+		"-v", "ingot_certs:/certificates",
 		"alpine:latest",
 		"test", "-f", fmt.Sprintf("/certificates/%s.crt", domain),
 	)
 
 	keyCheck := m.docker.Run("run", "--rm",
-		"-v", "alios_certs:/certificates",
+		"-v", "ingot_certs:/certificates",
 		"alpine:latest",
 		"test", "-f", fmt.Sprintf("/certificates/%s.key", domain),
 	)
@@ -480,7 +480,7 @@ func (m *Manager) certificateExists(domain string) bool {
 func (m *Manager) generateCA() error {
 	return m.docker.Run("run", "--rm",
 		"-e", "DOMAIN=init",
-		"-v", "alios_certs:/certificates",
+		"-v", "ingot_certs:/certificates",
 		"ghcr.io/aliasproject/openssl:latest",
 	)
 }
@@ -489,7 +489,7 @@ func (m *Manager) generateCA() error {
 func (m *Manager) copyCAToTempFile(tmpPath string) error {
 	// Copy CA from volume to temporary file
 	return m.docker.Run("run", "--rm",
-		"-v", "alios_certs:/source",
+		"-v", "ingot_certs:/source",
 		"-v", filepath.Dir(tmpPath)+":/dest",
 		"alpine:latest",
 		"cp", "/source/AliasProjectCASelfSigned.pem", "/dest/"+filepath.Base(tmpPath),
@@ -514,7 +514,7 @@ func (m *Manager) createCaddyVhost(projectName, domain string, stopped bool) err
 	vhostConfig := fmt.Sprintf(`%s {
     tls /etc/caddy/ssl/%s.crt /etc/caddy/ssl/%s.key
 
-    reverse_proxy alios_php_%s:80 {
+    reverse_proxy ingot_php_%s:80 {
         header_up Host {host}
         header_up X-Real-IP {remote}
         header_up X-Forwarded-For {remote}
@@ -525,30 +525,30 @@ func (m *Manager) createCaddyVhost(projectName, domain string, stopped bool) err
 }
 `, domain, domain, domain, projectName, projectName)
 
-	// Write directly to the alios_vhosts volume rather than docker exec-ing into
+	// Write directly to the ingot_vhosts volume rather than docker exec-ing into
 	// the Caddy container, so vhosts can be written/repaired even when Caddy isn't
 	// currently running (e.g. it's down because a stale vhost is crash-looping it).
 	// The volume is mounted at /etc/caddy in the Caddy container (see
 	// services.Manager.generateComposeConfig), alongside the base Caddyfile that
 	// imports every *.caddyfile written here.
-	return m.docker.WriteFileToVolume("alios_vhosts", projectName+".caddyfile", []byte(vhostConfig))
+	return m.docker.WriteFileToVolume("ingot_vhosts", projectName+".caddyfile", []byte(vhostConfig))
 }
 
 // Each project vhost ends with exactly one of these lines; see the
-// alios_wake and alios_stopped snippets in services.baseCaddyfile.
+// ingot_wake and ingot_stopped snippets in services.baseCaddyfile.
 const (
-	wakeImport    = "import alios_wake "
-	stoppedImport = "import alios_stopped "
+	wakeImport    = "import ingot_wake "
+	stoppedImport = "import ingot_stopped "
 )
 
 // SetProjectStopped switches a project's vhost between waking it on a visit
-// (asleep) and answering that it's stopped (stopped with `alios stop`). The
+// (asleep) and answering that it's stopped (stopped with `ingot stop`). The
 // vhost is the record of which: like a share, it's routing state that lives
 // where Caddy reads it, with no label or file of its own. A project without
 // a vhost, or with one from before scale to zero, is left alone.
 func (m *Manager) SetProjectStopped(projectName string, stopped bool) error {
 	file := projectName + ".caddyfile"
-	content, err := m.docker.ReadFileFromVolume("alios_vhosts", file)
+	content, err := m.docker.ReadFileFromVolume("ingot_vhosts", file)
 	if err == docker.ErrFileNotFound {
 		return nil
 	}
@@ -560,22 +560,22 @@ func (m *Manager) SetProjectStopped(projectName string, stopped bool) error {
 	if !changed {
 		return nil
 	}
-	if err := m.docker.WriteFileToVolume("alios_vhosts", file, []byte(updated)); err != nil {
+	if err := m.docker.WriteFileToVolume("ingot_vhosts", file, []byte(updated)); err != nil {
 		return err
 	}
-	if m.docker.IsContainerRunning("alios-reverse-proxy") {
+	if m.docker.IsContainerRunning("ingot_proxy") {
 		if err := m.reloadCaddy(); err != nil {
 			// Caddy keeps its old config, but the file it would load on
 			// its next start is the one it just rejected: put it back.
-			m.docker.WriteFileToVolume("alios_vhosts", file, []byte(content+"\n"))
+			m.docker.WriteFileToVolume("ingot_vhosts", file, []byte(content+"\n"))
 			return fmt.Errorf("Caddy rejected the change: %w", err)
 		}
 	}
 	return nil
 }
 
-// swapVhostEnding switches a vhost's final import between alios_wake and
-// alios_stopped. It matches the whole line, so a vhost that merely mentions
+// swapVhostEnding switches a vhost's final import between ingot_wake and
+// ingot_stopped. It matches the whole line, so a vhost that merely mentions
 // another project whose name starts with this one's can't be changed.
 func swapVhostEnding(content, projectName string, stopped bool) (string, bool) {
 	from, to := wakeImport+projectName, stoppedImport+projectName
@@ -592,10 +592,10 @@ func swapVhostEnding(content, projectName string, stopped bool) (string, bool) {
 	return content, false
 }
 
-// StoppedProjects returns the projects stopped with `alios stop`, read from
+// StoppedProjects returns the projects stopped with `ingot stop`, read from
 // every vhost with one throwaway container.
 func (m *Manager) StoppedProjects() (map[string]bool, error) {
-	output, err := m.docker.RunWithOutput("run", "--rm", "-v", "alios_vhosts:/vhosts:ro", "alpine:latest",
+	output, err := m.docker.RunWithOutput("run", "--rm", "-v", "ingot_vhosts:/vhosts:ro", "alpine:latest",
 		"sh", "-c", "cd /vhosts && grep -l '"+strings.TrimSpace(stoppedImport)+"' *.caddyfile 2>/dev/null; true")
 	if err != nil {
 		return nil, err
@@ -611,7 +611,7 @@ func (m *Manager) StoppedProjects() (map[string]bool, error) {
 }
 
 func (m *Manager) reloadCaddy() error {
-	return m.docker.Run("exec", "alios-reverse-proxy", "caddy", "reload", "--config", "/etc/caddy/Caddyfile")
+	return m.docker.Run("exec", "ingot_proxy", "caddy", "reload", "--config", "/etc/caddy/Caddyfile")
 }
 
 func (m *Manager) installCertMacOS(caPath string) error {
@@ -662,7 +662,7 @@ func (m *Manager) installCertLinux(caPath string) error {
 		}
 	} else {
 		// Copy to system certificate store
-		destPath := "/usr/local/share/ca-certificates/alios-ca.crt"
+		destPath := "/usr/local/share/ca-certificates/ingot-ca.crt"
 
 		cmd := exec.Command("sudo", "cp", caPath, destPath)
 		if err := cmd.Run(); err != nil {
@@ -765,9 +765,9 @@ func (m *Manager) installCertWindows(caPath string) error {
 
 // IsCertificateInstalled reports whether the CA certificate is trusted on
 // this host - distinct from CAExists, which only checks that the CA file
-// has been generated into the alios_certs volume. A CA can exist without
+// has been generated into the ingot_certs volume. A CA can exist without
 // being trusted (e.g. the user declined the install prompt, or a prior
-// `alios install` was interrupted between generating it and trusting it),
+// `ingot install` was interrupted between generating it and trusting it),
 // in which case every certificate it signs still shows as untrusted in the
 // browser even though every other setup step succeeded.
 func (m *Manager) IsCertificateInstalled() bool {
@@ -784,7 +784,7 @@ func (m *Manager) IsCertificateInstalled() bool {
 		if _, err := exec.LookPath("trust"); err == nil {
 			return m.isCertificateInstalledViaTrust()
 		}
-		return fileExists("/usr/local/share/ca-certificates/alios-ca.crt")
+		return fileExists("/usr/local/share/ca-certificates/ingot-ca.crt")
 	case "windows":
 		cmd := exec.Command("powershell", "-Command",
 			"Get-ChildItem -Path Cert:\\LocalMachine\\Root | Where-Object { $_.Subject -like '*AliasProjectCASelfSigned*' }")
@@ -814,7 +814,7 @@ func (m *Manager) isCertificateInstalledViaTrust() bool {
 // consults. See installCertIntoNSSDatabases for why the two can disagree.
 // ChromeNSSDBStatus reports whether Chrome/Chromium's per-user NSS database
 // exists on this machine (Linux only; needs certutil to inspect) and, if so,
-// whether the alios CA is in it. Chrome on Linux trusts this database, not
+// whether the ingot CA is in it. Chrome on Linux trusts this database, not
 // the system anchor store, so `cert verify` passing is not enough for it.
 //
 // Returns present=false when there is no database to check (non-Linux, or
@@ -839,7 +839,7 @@ func (m *Manager) ChromeNSSDBStatus() (present bool, checkable bool, installed b
 }
 
 // CertificateExists reports whether a per-domain cert and key exist in the
-// alios_certs volume.
+// ingot_certs volume.
 func (m *Manager) CertificateExists(domain string) bool {
 	return m.certificateExists(domain)
 }
@@ -869,7 +869,7 @@ func (m *Manager) showSystemCertificateInfo() {
 	case "linux":
 		if _, err := exec.LookPath("trust"); err == nil && m.isCertificateInstalledViaTrust() {
 			fmt.Println("  Location: p11-kit trust store (trust anchor)")
-		} else if fileExists("/usr/local/share/ca-certificates/alios-ca.crt") {
+		} else if fileExists("/usr/local/share/ca-certificates/ingot-ca.crt") {
 			fmt.Println("  Location: /usr/local/share/ca-certificates/")
 		}
 	case "windows":

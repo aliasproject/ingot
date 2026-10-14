@@ -2,15 +2,15 @@ package services
 
 import (
 	"fmt"
-	"github.com/aliasproject/alios-cli/internal/utils"
+	"github.com/aliasproject/ingot/internal/utils"
 	"net"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/aliasproject/alios-cli/internal/config"
-	"github.com/aliasproject/alios-cli/internal/docker"
-	"github.com/aliasproject/alios-cli/internal/ssl"
+	"github.com/aliasproject/ingot/internal/config"
+	"github.com/aliasproject/ingot/internal/docker"
+	"github.com/aliasproject/ingot/internal/ssl"
 )
 
 // Manager handles global services operations
@@ -22,7 +22,7 @@ type Manager struct {
 }
 
 // NewManager creates a new services manager. The SSL manager is needed
-// because the reverse proxy's base Caddyfile loads the alios CA for its
+// because the reverse proxy's base Caddyfile loads the ingot CA for its
 // catch-all site's on-demand certs, so the CA has to exist and be readable
 // before Caddy can start.
 func NewManager(dockerClient *docker.Client, sslManager *ssl.Manager) *Manager {
@@ -44,7 +44,7 @@ type Service struct {
 }
 
 // baseCaddyfile is the reverse proxy's root config. Per-project vhosts are
-// imported from the alios_vhosts volume; anything that doesn't match one of
+// imported from the ingot_vhosts volume; anything that doesn't match one of
 // them falls through to the host-less catch-all sites, which serve the
 // branded default page with a 404 instead of a bare TLS or connection error.
 // Caddy always routes host-matched sites ahead of host-less ones, so the
@@ -53,7 +53,7 @@ type Service struct {
 // TLS for unknown hosts: a static cert can't cover them - browsers (and
 // curl) reject a wildcard directly under a TLD like *.test - so the https://
 // catch-all uses on-demand issuance from Caddy's internal CA, with that CA
-// rooted at the same alios CA that signs every project cert (the pki block;
+// rooted at the same ingot CA that signs every project cert (the pki block;
 // see ssl.Manager.PrepareCAForCaddy for the key permissions). Caddy mints an
 // exact cert for whatever host was requested at handshake time, chained to
 // a root the browser already trusts, so the 404 page loads with no warning.
@@ -70,8 +70,8 @@ type Service struct {
 const baseCaddyfile = `{
 	skip_install_trust
 	pki {
-		ca alios {
-			name "Alios Local CA"
+		ca ingot {
+			name "Ingot Local CA"
 			root {
 				cert /etc/caddy/ssl/` + ssl.CACertFile + `
 				key /etc/caddy/ssl/` + ssl.CAKeyFile + `
@@ -80,9 +80,9 @@ const baseCaddyfile = `{
 	}
 }
 
-# Project vhosts end with "import alios_wake <project>". When the project's
+# Project vhosts end with "import ingot_wake <project>". When the project's
 # container is stopped, Caddy can't reach it and the request goes to
-# alios_idle instead, which starts the container and redirects the browser
+# ingot_idle instead, which starts the container and redirects the browser
 # back to the same URL. Scoped to upstream failures so the app's own error
 # pages, and a share's basic-auth 401, pass through untouched. Defined before
 # the import below, since Caddy needs a snippet declared before it's used.
@@ -91,26 +91,26 @@ const baseCaddyfile = `{
 # is always asked with a bodiless GET; forwarding a POST would fail on the
 # closed body. The browser resends the original method and body itself,
 # because the waker answers with a 307.
-(alios_wake) {
+(ingot_wake) {
 	handle_errors 502 503 504 {
 		request_header -Content-Length
 		request_header -Content-Type
 		request_header -Transfer-Encoding
 		reverse_proxy ` + IdleContainer + `:8080 {
 			method GET
-			header_up X-Alios-Project {args[0]}
+			header_up X-Ingot-Project {args[0]}
 		}
 	}
 }
 
-# "alios stop" swaps a vhost's alios_wake import for this one: a project
-# stopped by hand stays down until "alios start", rather than being started
+# "ingot stop" swaps a vhost's ingot_wake import for this one: a project
+# stopped by hand stays down until "ingot start", rather than being started
 # by the next visit (a polling tab would otherwise undo the stop at once).
-(alios_stopped) {
+(ingot_stopped) {
 	handle_errors 502 503 504 {
 		header Content-Type "text/plain; charset=utf-8"
 		header Cache-Control no-store
-		respond "{args[0]} is stopped. Run 'alios start' in the project to start it again." 503
+		respond "{args[0]} is stopped. Run 'ingot start' in the project to start it again." 503
 	}
 }
 
@@ -119,7 +119,7 @@ import /etc/caddy/*.caddyfile
 https:// {
 	tls {
 		issuer internal {
-			ca alios
+			ca ingot
 		}
 		on_demand
 	}
@@ -135,13 +135,13 @@ http:// {
 }
 `
 
-// GlobalServices defines the core global services. alios_idle isn't one of
+// GlobalServices defines the core global services. ingot_idle isn't one of
 // them: it's optional (see idle.go), so a missing image never takes down
 // DNS, Caddy and every project with it.
 var GlobalServices = []string{
-	"alios_dns",
-	"alios-reverse-proxy", // matches the name production uses for the same role
-	"alios_mail",
+	"ingot_dns",
+	"ingot_proxy",
+	"ingot_mail",
 }
 
 // Start starts all global services
@@ -156,7 +156,7 @@ func (m *Manager) Start() error {
 	}
 
 	// The base Caddyfile's catch-all site (see baseCaddyfile) issues certs
-	// for unknown hosts from the alios CA, which Caddy loads at startup - so
+	// for unknown hosts from the ingot CA, which Caddy loads at startup - so
 	// the CA has to exist and be readable before the container does. This
 	// also creates the CA on a fresh install, so ordering against
 	// ssl.SetupSSL doesn't matter.
@@ -184,7 +184,7 @@ func (m *Manager) Start() error {
 	// Caddy only reads /etc/caddy/Caddyfile at startup. If compose judged the
 	// container unchanged and left it running (same image, same mounts), the
 	// base Caddyfile just rewritten above is not yet live - e.g. right after
-	// an alios update that changed it - so reload explicitly. A no-op when
+	// an ingot update that changed it - so reload explicitly. A no-op when
 	// the container was freshly created or the config is unchanged.
 	if err := m.ssl.ReloadCaddy(); err != nil {
 		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: Failed to reload Caddy config: %v\n", err)
@@ -200,15 +200,15 @@ func (m *Manager) Start() error {
 // WriteBaseConfig writes the base Caddyfile and the default page into the
 // vhosts volume. The published caddy image's own baked-in Caddyfile only
 // serves a landing page and has no knowledge of per-project vhosts; mounting
-// alios_vhosts at /etc/caddy replaces that entirely, so this file must exist
+// ingot_vhosts at /etc/caddy replaces that entirely, so this file must exist
 // in the volume (even empty of any project) or Caddy has nothing to run.
 // Rewritten on every start, and before `cert repair` rewrites vhosts, so it
-// can't drift from what those vhosts expect (the alios_wake snippet).
+// can't drift from what those vhosts expect (the ingot_wake snippet).
 func (m *Manager) WriteBaseConfig() error {
-	if err := m.docker.WriteFileToVolume("alios_vhosts", "default/index.html", defaultPage); err != nil {
+	if err := m.docker.WriteFileToVolume("ingot_vhosts", "default/index.html", defaultPage); err != nil {
 		return fmt.Errorf("failed to write default page: %w", err)
 	}
-	if err := m.docker.WriteFileToVolume("alios_vhosts", "Caddyfile", []byte(baseCaddyfile)); err != nil {
+	if err := m.docker.WriteFileToVolume("ingot_vhosts", "Caddyfile", []byte(baseCaddyfile)); err != nil {
 		return fmt.Errorf("failed to write base Caddyfile: %w", err)
 	}
 	return nil
@@ -269,12 +269,12 @@ func (m *Manager) Status() ([]*Service, error) {
 
 	services := make([]*Service, 0)
 
-	// Check core services, plus the optional alios_idle so a stopped or
+	// Check core services, plus the optional ingot_idle so a stopped or
 	// crashed one shows up in status rather than silently disabling scale
 	// to zero.
 	for _, containerName := range append(GlobalServices[:len(GlobalServices):len(GlobalServices)], IdleContainer) {
-		displayName := strings.TrimPrefix(containerName, "alios_")
-		if displayName == "alios-reverse-proxy" {
+		displayName := strings.TrimPrefix(containerName, "ingot_")
+		if displayName == "proxy" {
 			displayName = "caddy"
 		}
 		service := &Service{
@@ -309,7 +309,7 @@ func (m *Manager) Status() ([]*Service, error) {
 	databases := m.config.GetDatabases()
 	for name := range databases {
 		displayName := name
-		dbContainer := "alios_" + name
+		dbContainer := "ingot_" + name
 		service := &Service{
 			Name:      displayName,
 			Container: dbContainer,
@@ -383,8 +383,8 @@ func (m *Manager) waitForContainers(containers []string, timeout time.Duration) 
 
 // ListManagedContainers enumerates every global-service container (dns,
 // the reverse proxy, mail, and any database): GlobalServices members by
-// exact name, everything else (databases) by the "alios_" name prefix,
-// excluding project containers ("alios_php_*"). Discovery is done by name
+// exact name, everything else (databases) by the "ingot_" name prefix,
+// excluding project containers ("ingot_php_*"). Discovery is done by name
 // rather than by label or in-process config because pause/resume run as
 // separate CLI invocations that don't share config.Config.Databases with
 // each other.
@@ -394,10 +394,9 @@ func (m *Manager) ListManagedContainers() ([]string, error) {
 		return nil, fmt.Errorf("failed to list containers: %w", err)
 	}
 
-	// The reverse proxy uses production's own name (alios-reverse-proxy),
-	// not the alios_ prefix everything else here follows, so it wouldn't
-	// match the prefix check below on its own - check GlobalServices
-	// membership explicitly first so it's still tracked for pause/resume.
+	// Global services all share the ingot_ prefix today; checking
+	// GlobalServices membership as well keeps one that ever doesn't
+	// tracked for pause/resume.
 	globalServiceNames := make(map[string]bool, len(GlobalServices))
 	for _, n := range GlobalServices {
 		globalServiceNames[n] = true
@@ -408,14 +407,14 @@ func (m *Manager) ListManagedContainers() ([]string, error) {
 		if name == "" {
 			continue
 		}
-		// Share tunnels (alios_share, alios_share_<project>) aren't global
+		// Share tunnels (ingot_share, ingot_share_<project>) aren't global
 		// services: restarting a quick tunnel gives it a new public URL, which
 		// would leave its vhost pointing at a host nothing routes to. They're
-		// ended by `alios pause` and `alios share stop` instead.
-		if strings.HasPrefix(name, "alios_share") {
+		// ended by `ingot pause` and `ingot share stop` instead.
+		if strings.HasPrefix(name, "ingot_share") {
 			continue
 		}
-		if globalServiceNames[name] || (strings.HasPrefix(name, "alios_") && !strings.HasPrefix(name, "alios_php_")) {
+		if globalServiceNames[name] || (strings.HasPrefix(name, "ingot_") && !strings.HasPrefix(name, "ingot_php_")) {
 			managed = append(managed, name)
 		}
 	}
@@ -497,10 +496,10 @@ func (m *Manager) Resume(containerNames []string) error {
 func (m *Manager) generateComposeConfig(hostIP string) string {
 	databases := m.config.GetDatabases()
 
-	compose := fmt.Sprintf(`name: alios
+	compose := fmt.Sprintf(`name: ingot
 services:
   dns:
-    container_name: alios_dns
+    container_name: ingot_dns
     image: ghcr.io/aliasproject/dns:latest
     restart: unless-stopped
     ports:
@@ -514,7 +513,7 @@ services:
       - 8.8.8.8
 
   caddy:
-    container_name: alios-reverse-proxy
+    container_name: ingot_proxy
     image: ghcr.io/aliasproject/caddy:2.10-alpine
     restart: unless-stopped
     volumes:
@@ -529,7 +528,7 @@ services:
       - dns
 
   mail:
-    container_name: alios_mail
+    container_name: ingot_mail
     image: mailhog/mailhog:latest
     platform: linux/amd64
     restart: on-failure
@@ -545,7 +544,7 @@ services:
 		if dbConfig.Type == "mysql" {
 			compose += fmt.Sprintf(`
   %s:
-    container_name: alios_%s
+    container_name: ingot_%s
     image: mysql:%s
     platform: linux/amd64
     restart: unless-stopped
@@ -562,13 +561,13 @@ services:
 		} else if dbConfig.Type == "postgresql" {
 			compose += fmt.Sprintf(`
   %s:
-    container_name: alios_%s
+    container_name: ingot_%s
     image: postgres:%s
     restart: unless-stopped
     environment:
-      - POSTGRES_USER=alios
-      - POSTGRES_PASSWORD=alios
-      - POSTGRES_DB=alios
+      - POSTGRES_USER=ingot
+      - POSTGRES_PASSWORD=ingot
+      - POSTGRES_DB=ingot
     ports:
       - "%s:5432"
     networks:
@@ -583,15 +582,15 @@ services:
 	compose += `
 volumes:
   certs:
-    name: alios_certs
+    name: ingot_certs
   vhosts:
-    name: alios_vhosts`
+    name: ingot_vhosts`
 
 	// Add volumes for each database
 	for name, dbConfig := range databases {
 		compose += fmt.Sprintf(`
   %s-%s:
-    name: alios_%s-%s`, name, dbConfig.Version, name, dbConfig.Version)
+    name: ingot_%s-%s`, name, dbConfig.Version, name, dbConfig.Version)
 	}
 
 	// Add networks
@@ -632,7 +631,7 @@ func (m *Manager) AddDatabase(name, dbType, version string) error {
 	}
 
 	// Create volume
-	volumeName := fmt.Sprintf("alios_%s-%s", name, version)
+	volumeName := fmt.Sprintf("ingot_%s-%s", name, version)
 	if err := m.docker.CreateVolume(volumeName); err != nil {
 		m.mu.Unlock()
 		return fmt.Errorf("failed to create volume: %w", err)
@@ -718,7 +717,7 @@ func (m *Manager) GetDatabases() ([]*Service, error) {
 	databases := m.config.GetDatabases()
 
 	for name, dbConfig := range databases {
-		container := "alios_" + name
+		container := "ingot_" + name
 
 		service := &Service{
 			Name:      name,
