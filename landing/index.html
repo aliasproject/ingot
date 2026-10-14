@@ -159,12 +159,13 @@
             <span class="w-12"></span>
           </div>
           <pre class="bg-panel px-6 py-5 overflow-x-auto font-mono text-[12.5px] leading-[1.8] text-dim m-0"><span class="text-subtle">$</span> <span class="text-ink">ingot start</span>
-
-<span class="text-ink">? How should this project's image be built?</span>
-  <span class="text-molten">&rsaquo; Use the project's Dockerfile</span>
-    Use the prebuilt Ingot image
-    Pull a different image
-
+<span class="text-ink">Select PHP Version:</span>
+1. 8.5
+2. 8.4
+3. 8.3
+<span class="text-subtle">&hellip;</span>
+Choice: <span class="text-molten">2</span>
+Enter server root path (default: /app/public): <span class="text-subtle">&#9166;</span>
 <span class="text-steel">[STARTING]</span> Starting project 'acme-shop' with PHP 8.4...
 <span class="text-ok">[SUCCESS]</span> Project started successfully with PHP 8.4
 <span class="text-steel">[WEB]</span> Access your project at: <span class="text-gold underline underline-offset-4">https://acme-shop.test</span></pre>
@@ -174,7 +175,7 @@
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#9CC795" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
               acme-shop.test
             </span>
-            <span class="text-subtle font-mono text-[11.5px]">FrankenPHP &middot; PHP 8.4 &middot; /app/public &middot; MySQL 8.0</span>
+            <span class="text-subtle font-mono text-[11.5px]">FrankenPHP &middot; PHP 8.4 &middot; /app/public</span>
           </div>
         </div>
       </section>
@@ -241,7 +242,7 @@
         </ol>
 
         <div class="flex gap-6 flex-wrap items-start mt-10">
-          <div class="flex-1 min-w-[280px] code-block">
+          <div class="flex-1 basis-[280px] min-w-0 code-block">
             <div class="code-label">shell</div>
             <div class="code-body">
               <div class="code-line"><span class="ln">1</span><span class="lc"><span class="text-molten">ingot idle</span>       <span class="text-subtle"># show this project's setting</span></span></div>
@@ -250,7 +251,7 @@
               <div class="code-line"><span class="ln">4</span><span class="lc"><span class="text-molten">ingot idle on</span>    <span class="text-subtle"># back to the default</span></span></div>
             </div>
           </div>
-          <div class="flex-1 min-w-[280px] code-block">
+          <div class="flex-1 basis-[280px] min-w-0 code-block">
             <div class="code-label">~/.bashrc</div>
             <div class="code-body">
               <div class="code-line"><span class="ln">1</span><span class="lc"><span class="text-subtle"># default for every project (30m, 2h, or off)</span></span></div>
@@ -289,7 +290,7 @@
           <span class="font-mono text-dim">ingot share</span> gives the project a public HTTPS URL through a Cloudflare Tunnel. No DNS, certificates or router changes. Add basic auth for anything that isn't throwaway.
         </p>
         <div class="flex gap-6 flex-wrap items-start mt-9">
-          <div class="flex-1 min-w-[280px] code-block">
+          <div class="flex-1 basis-[280px] min-w-0 code-block">
             <div class="code-label">shell</div>
             <div class="code-body">
               <div class="code-line"><span class="ln">1</span><span class="lc"><span class="text-molten">ingot share</span>                      <span class="text-subtle"># public URL</span></span></div>
@@ -298,7 +299,7 @@
               <div class="code-line"><span class="ln">4</span><span class="lc"><span class="text-molten">ingot share stop</span>                 <span class="text-subtle"># stop sharing this project</span></span></div>
             </div>
           </div>
-          <div class="flex-1 min-w-[280px] bg-panel border border-line/30 rounded-xl px-5 py-5 flex flex-col gap-3">
+          <div class="flex-1 basis-[280px] min-w-0 bg-panel border border-line/30 rounded-xl px-5 py-5 flex flex-col gap-3">
             <div class="flex items-center gap-2.5 bg-well border border-line/30 rounded-lg px-3.5 py-2.5 font-mono text-[12px] text-dim min-w-0">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#9CC795" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="flex-none"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
               <span class="truncate">https://&lt;random-words&gt;.trycloudflare.com</span>
@@ -403,8 +404,22 @@
       platform: "ingot-linux-amd64",
       init() {
         this.loadVersion();
+        this.detectPlatform();
+      },
+      // Preselects the likely binary. Browsers report "Intel Mac OS X" on
+      // every Mac, so only Chromium's client hints can tell the CPU apart;
+      // elsewhere a Mac defaults to Apple silicon and the picker stays visible.
+      async detectPlatform() {
         const ua = navigator.userAgent || "";
-        if (/Mac OS X/.test(ua)) this.platform = "ingot-darwin-arm64";
+        if (/iPhone|iPad|iPod|Android/.test(ua)) return;
+        const isMac = /Macintosh|Mac OS X/.test(ua);
+        if (!isMac && !/Linux/.test(ua)) return;
+        let arm = isMac;
+        try {
+          const hints = await navigator.userAgentData?.getHighEntropyValues(["architecture"]);
+          if (hints && hints.architecture) arm = hints.architecture === "arm";
+        } catch (e) {}
+        this.platform = "ingot-" + (isMac ? "darwin" : "linux") + "-" + (arm ? "arm64" : "amd64");
       },
       async loadVersion() {
         const cacheKey = "ingot_latest_version";

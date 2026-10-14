@@ -72,9 +72,8 @@ func New() *Updater {
 }
 
 // CheckForUpdate checks if a new version is available. Releases are
-// published to GitHub directly (see scripts/release.sh) -- this repo is
-// private, so a GitHub token is required; there's no other distribution
-// channel to fall back to.
+// published to GitHub directly (see scripts/release.sh); a GitHub token is
+// used when one is available, which also raises the API rate limit.
 func (u *Updater) CheckForUpdate() (*Release, bool, error) {
 	release, err := u.fetchLatestGitHubRelease()
 	if err != nil {
@@ -170,7 +169,9 @@ func (u *Updater) fetchLatestGitHubRelease() (*Release, error) {
 	for _, asset := range githubRelease.Assets {
 		platform := u.detectPlatformFromAssetName(asset.Name)
 		if platform != "" {
-			// For private repos, use API endpoint instead of direct download URL
+			// The API endpoint works for public and private repos alike
+			// (a direct browser_download_url needs no auth, but 404s on a
+			// private repo)
 			apiURL := fmt.Sprintf("https://api.github.com/repos/%s/releases/assets/%d", u.githubRepo, asset.ID)
 			release.Downloads[platform] = Binary{
 				URL:  apiURL,
@@ -417,12 +418,16 @@ func (u *Updater) downloadFile(url string, dest *os.File, expectedSHA256 string)
 		return err
 	}
 
-	// Add GitHub authentication if token is available and URL is from GitHub
-	if u.githubToken != "" && strings.Contains(url, "api.github.com") {
-		// For GitHub API asset downloads
-		req.Header.Set("Authorization", "token "+u.githubToken)
+	// Release assets are fetched through the GitHub API endpoint, which
+	// returns the asset's JSON metadata instead of the binary unless asked
+	// for application/octet-stream - with or without a token. Without this,
+	// an unauthenticated update would install that JSON as the binary.
+	if strings.Contains(url, "api.github.com") {
 		req.Header.Set("Accept", "application/octet-stream")
 		req.Header.Set("User-Agent", "ingot-updater")
+		if u.githubToken != "" {
+			req.Header.Set("Authorization", "token "+u.githubToken)
+		}
 	}
 
 	resp, err := u.httpClient.Do(req)

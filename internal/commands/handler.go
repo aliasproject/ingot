@@ -367,11 +367,9 @@ func (h *Handler) isFullySetUp() bool {
 	return h.config.IsInstalled() && h.services.IsRunning() && h.ssl.CAExists() && h.ssl.IsCertificateInstalled()
 }
 
-// ensureUpdaterAuthenticated makes sure the updater has a GitHub token before
-// checking/downloading a release. Releases are published to GitHub directly
-// and this is a private repo, so there's no other channel to fall back to if
-// authentication isn't available -- the caller's subsequent CheckForUpdate/
-// Update call will simply fail with a clear GitHub API error in that case.
+// ensureUpdaterAuthenticated gives the updater a GitHub token, when one is
+// available, before checking/downloading a release. The repo is public, so
+// updates also work without one; a token only raises the API rate limit.
 func (h *Handler) ensureUpdaterAuthenticated() {
 	if token := h.config.GetGithubToken(); token != "" {
 		h.updater.SetGitHubToken(token)
@@ -380,8 +378,8 @@ func (h *Handler) ensureUpdaterAuthenticated() {
 
 	fmt.Println("🔍 Checking for updates...")
 	if err := h.github.EnsureAuthenticated(); err != nil {
-		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow) + " Warning: No GitHub authentication available.\n")
-		fmt.Printf("   Run 'ingot github-auth' to authenticate for access to releases.\n\n")
+		fmt.Printf(utils.Colorize("[INFO]", utils.ColorBlue) + " No GitHub authentication found, checking without it.\n")
+		fmt.Printf("   Run 'ingot github-auth' if GitHub's API rate limit gets in the way.\n\n")
 		return
 	}
 

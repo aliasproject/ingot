@@ -245,7 +245,7 @@ INGOT_IDLE_TIMEOUT           Stop projects idle this long, e.g. 30m, 2h, or
 ## Building from source
 
 ```bash
-git clone git@github.com:aliasproject/ingot.git
+git clone https://github.com/aliasproject/ingot.git
 cd ingot
 go build -o ingot ./cmd    # build the binary
 go run ./cmd status        # or run directly without building
