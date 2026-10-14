@@ -117,7 +117,8 @@ func (u *Updater) Update(force bool) error {
 	return u.performUpdate(&binary)
 }
 
-// SetGitHubToken sets the GitHub token for accessing private repositories
+// SetGitHubToken sets an optional GitHub token for release requests, which
+// raises the API rate limit
 func (u *Updater) SetGitHubToken(token string) {
 	u.githubToken = token
 }
@@ -141,6 +142,15 @@ func (u *Updater) fetchLatestGitHubRelease() (*Release, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
+
+	// GitHub rejects an expired or revoked token with 401 even for a public
+	// repo. The token is optional here, so drop it (for the asset download
+	// too) and ask again without it.
+	if resp.StatusCode == http.StatusUnauthorized && u.githubToken != "" {
+		fmt.Println("GitHub rejected GITHUB_TOKEN, checking without it...")
+		u.githubToken = ""
+		return u.fetchLatestGitHubRelease()
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("failed to fetch GitHub release: %s", resp.Status)
@@ -267,7 +277,7 @@ func (u *Updater) performUpdate(binary *Binary) error {
 	defer os.Remove(tmpPath)
 
 	// Download binary
-	if err := u.downloadFile(binary.URL, tmpFile, binary.SHA256); err != nil {
+	if err := u.downloadFile(binary.URL, tmpFile, binary.SHA256, binary.Size); err != nil {
 		tmpFile.Close()
 		return fmt.Errorf("download failed: %w", err)
 	}
@@ -411,7 +421,7 @@ func (u *Updater) updateWithWindowsElevation(tmpPath, realPath string) error {
 }
 
 // downloadFile downloads a file and verifies its checksum
-func (u *Updater) downloadFile(url string, dest *os.File, expectedSHA256 string) error {
+func (u *Updater) downloadFile(url string, dest *os.File, expectedSHA256 string, expectedSize int64) error {
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -448,6 +458,13 @@ func (u *Updater) downloadFile(url string, dest *os.File, expectedSHA256 string)
 	written, err := io.Copy(writer, resp.Body)
 	if err != nil {
 		return err
+	}
+
+	// GitHub releases carry no checksum, so the size the release reported
+	// is what catches a 200 that isn't the binary (e.g. JSON metadata)
+	// before it replaces the installed one.
+	if expectedSize > 0 && written != expectedSize {
+		return fmt.Errorf("download size mismatch (expected %d bytes, got %d)", expectedSize, written)
 	}
 
 	// Verify checksum

@@ -252,7 +252,7 @@ go run ./cmd status        # or run directly without building
 go vet ./...               # static checks
 ```
 
-There's no test suite — `go build`/`go vet` are the verification available.
+Tests are sparse (`go test ./...` covers the updater); `go build`/`go vet` are the main verification.
 See [`CLAUDE.md`](CLAUDE.md) for an architecture overview if you're working
 on the CLI itself.
 

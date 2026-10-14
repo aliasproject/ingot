@@ -44,7 +44,7 @@ Releases are cut with `scripts/release.sh <version> [notes]`, which patches `int
 
 **Networking**: all ingot containers share one Docker bridge network (`ingot_internal`, see `config.GetNetworkConfig()`). The `ingot_dns` container resolves `*.test` to the host so `https://<project>.test` reaches Caddy, which reverse-proxies to `ingot_php_<project>` by container name (Caddy resolves Docker container names on the shared network natively — no explicit resolver directive needed). Project containers get `ingot_dns`'s live container IP injected as their DNS server (resolved at container-creation time, not hardcoded) so they can resolve other `.test` domains from inside.
 
-**Self-update** (`internal/updater/updater.go`): checks GitHub Releases (private repo, needs `GITHUB_TOKEN`) first, then falls back to a public S3/R2-hosted `manifest.json`. Replaces the running binary atomically, escalating to `sudo`/Windows UAC if the install path isn't writable.
+**Self-update** (`internal/updater/updater.go`): checks GitHub Releases (public repo; `GITHUB_TOKEN` is optional and only raises the rate limit) and checks each download against the size the release reports. Replaces the running binary atomically, escalating to `sudo`/Windows UAC if the install path isn't writable.
 
 ## Working in this codebase
 

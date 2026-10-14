@@ -414,7 +414,7 @@ Enter server root path (default: /app/public): <span class="text-subtle">&#9166;
         if (/iPhone|iPad|iPod|Android/.test(ua)) return;
         const isMac = /Macintosh|Mac OS X/.test(ua);
         if (!isMac && !/Linux/.test(ua)) return;
-        let arm = isMac;
+        let arm = isMac || /aarch64|arm64/i.test(ua);
         try {
           const hints = await navigator.userAgentData?.getHighEntropyValues(["architecture"]);
           if (hints && hints.architecture) arm = hints.architecture === "arm";
