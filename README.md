@@ -29,14 +29,11 @@ labels.
 
 ## Installation
 
-This is a private repository, so a plain `curl` against the release page
-won't work (GitHub returns a 404 body without authentication, and `curl`
-saves that silently as if it succeeded unless you pass `-f`). Use the
-[GitHub CLI](https://cli.github.com/) instead, which handles the
-authentication for you - e.g. for Linux/amd64:
+Download the binary for your platform from the latest release - e.g. for
+Linux/amd64:
 
 ```bash
-gh release download --repo aliasproject/ingot -p ingot-linux-amd64 -O ingot
+curl -fsSLo ingot https://github.com/aliasproject/ingot/releases/latest/download/ingot-linux-amd64
 chmod +x ingot
 ./ingot
 ```
