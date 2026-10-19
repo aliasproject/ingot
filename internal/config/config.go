@@ -22,6 +22,11 @@ const (
 	// IdleImage is the ingot_idle service's image, tagged with the CLI
 	// version so each CLI runs the service built from the same source.
 	IdleImage = "ghcr.io/aliasproject/ingot-idle:" + Version
+
+	// OpensslImage generates the CA and per-domain certificates
+	// (Dockerfile.openssl), tagged with the CLI version for the same reason:
+	// the CLI relies on the file names and certificate layout it writes.
+	OpensslImage = "ghcr.io/aliasproject/ingot-openssl:" + Version
 )
 
 // Config holds the application configuration

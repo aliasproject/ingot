@@ -94,6 +94,15 @@ docker buildx build \
     -t "ghcr.io/aliasproject/ingot-idle:${VERSION}" \
     --push \
     "$REPO_ROOT"
+
+# The certificate image (config.OpensslImage), versioned the same way.
+echo -e "${YELLOW}Building and pushing ghcr.io/aliasproject/ingot-openssl:${VERSION}...${NC}"
+docker buildx build \
+    --platform linux/amd64,linux/arm64 \
+    -f "$REPO_ROOT/Dockerfile.openssl" \
+    -t "ghcr.io/aliasproject/ingot-openssl:${VERSION}" \
+    --push \
+    "$REPO_ROOT"
 echo ""
 echo "Files in $BUILD_DIR:"
 ls -lh "$BUILD_DIR"

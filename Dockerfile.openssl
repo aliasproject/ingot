@@ -1,0 +1,30 @@
+# Generates the Ingot Local CA and per-domain certificates
+# (openssl/entrypoint.sh). Published as ghcr.io/aliasproject/ingot-openssl:<version>
+# by scripts/release.sh, tagged with the CLI version so a CLI always gets the
+# file names and certificate layout it was built against.
+#
+# Like Dockerfile.idle, this builds an arm64 image without emulation (QEMU)
+# on an amd64 machine: rather than RUN apk add on the target platform, the
+# fetch stage runs on the build platform, downloads the target
+# architecture's openssl packages and unpacks them onto the stock alpine
+# image.
+ARG ALPINE_VERSION=3.22
+
+FROM --platform=$BUILDPLATFORM alpine:${ALPINE_VERSION} AS fetch
+ARG TARGETARCH
+RUN case "$TARGETARCH" in \
+        amd64) arch=x86_64 ;; \
+        arm64) arch=aarch64 ;; \
+        *) echo "unsupported architecture: $TARGETARCH" >&2; exit 1 ;; \
+    esac \
+    && apk add --no-cache tar \
+    && mkdir /pkgs /rootfs && cd /pkgs \
+    && apk fetch --no-cache --keys-dir "/usr/share/apk/keys/$arch" --arch "$arch" openssl libcrypto3 libssl3 \
+    && for p in *.apk; do tar -xzf "$p" -C /rootfs --exclude='.*' 2>/dev/null; done \
+    && test -x /rootfs/usr/bin/openssl
+
+FROM alpine:${ALPINE_VERSION}
+LABEL org.opencontainers.image.source=https://github.com/aliasproject/ingot
+COPY --from=fetch /rootfs/ /
+COPY openssl/entrypoint.sh /entrypoint.sh
+ENTRYPOINT ["sh", "/entrypoint.sh"]
