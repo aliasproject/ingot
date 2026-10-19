@@ -13,6 +13,8 @@ set -e
 CERTS=/certificates
 CA_CERT="$CERTS/IngotLocalCA.pem"
 CA_KEY="$CERTS/IngotLocalCA.key"
+# These names and the CN below must match the constants in
+# internal/ssl/manager.go (CACertFile, CAKeyFile, CAName).
 
 # The CA browsers and the OS are asked to trust. Valid for ten years, like
 # mkcert's, so users don't have to re-trust it every two.
@@ -27,7 +29,10 @@ fi
 
 [ -n "$DOMAIN" ] || exit 0
 
+# A new key invalidates any csr and crt left over from the old one: signing
+# the stale csr would give a crt that doesn't match the key.
 if [ ! -f "$CERTS/$DOMAIN.key" ]; then
+	rm -f "$CERTS/$DOMAIN.csr" "$CERTS/$DOMAIN.crt"
 	openssl genrsa -out "$CERTS/$DOMAIN.key" 2048
 fi
 

@@ -71,7 +71,7 @@ const baseCaddyfile = `{
 	skip_install_trust
 	pki {
 		ca ingot {
-			name "Ingot Local CA"
+			name "` + ssl.CAName + `"
 			root {
 				cert /etc/caddy/ssl/` + ssl.CACertFile + `
 				key /etc/caddy/ssl/` + ssl.CAKeyFile + `

@@ -60,6 +60,13 @@ const (
 	CAName     = "Ingot Local CA"
 )
 
+// linuxCAFile is where the CA is installed on distros without p11-kit's
+// `trust` (Debian/Ubuntu). IsCertificateInstalled can only check that the
+// file exists, so the name is tied to the CA's: the "Alias Project" CA was
+// installed as ingot-ca.crt, and finding that file must not count as
+// trusting this one.
+const linuxCAFile = "/usr/local/share/ca-certificates/ingot-local-ca.crt"
+
 // PrepareCAForCaddy makes sure the CA exists and that Caddy's non-root user
 // can read its private key. The reverse proxy's catch-all site issues
 // on-demand certs signed by this CA (see services.baseCaddyfile), and Caddy
@@ -663,7 +670,7 @@ func (m *Manager) installCertLinux(caPath string) error {
 		}
 	} else {
 		// Copy to system certificate store
-		destPath := "/usr/local/share/ca-certificates/ingot-ca.crt"
+		destPath := linuxCAFile
 
 		cmd := exec.Command("sudo", "cp", caPath, destPath)
 		if err := cmd.Run(); err != nil {
@@ -785,7 +792,7 @@ func (m *Manager) IsCertificateInstalled() bool {
 		if _, err := exec.LookPath("trust"); err == nil {
 			return m.isCertificateInstalledViaTrust()
 		}
-		return fileExists("/usr/local/share/ca-certificates/ingot-ca.crt")
+		return fileExists(linuxCAFile)
 	case "windows":
 		// A pipeline that matches nothing still exits 0, so set the exit
 		// code from whether anything matched.
@@ -872,7 +879,7 @@ func (m *Manager) showSystemCertificateInfo() {
 	case "linux":
 		if _, err := exec.LookPath("trust"); err == nil && m.isCertificateInstalledViaTrust() {
 			fmt.Println("  Location: p11-kit trust store (trust anchor)")
-		} else if fileExists("/usr/local/share/ca-certificates/ingot-ca.crt") {
+		} else if fileExists(linuxCAFile) {
 			fmt.Println("  Location: /usr/local/share/ca-certificates/")
 		}
 	case "windows":
