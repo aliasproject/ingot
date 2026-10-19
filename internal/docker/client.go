@@ -472,11 +472,9 @@ func (c *Client) ImageExists(image string) bool {
 	return err == nil
 }
 
-// CheckRegistryAccess verifies the stored registry credentials can read the
-// given image, without downloading it (a manifest fetch is a few KB). This
-// is the cheap way to tell "docker login succeeded" apart from "docker can
-// actually pull" - GHCR accepts a login from any valid GitHub token, but
-// only serves a private package to one carrying the read:packages scope.
+// CheckRegistryAccess verifies Docker can read the given image from its
+// registry, with whatever credentials Docker has stored, without downloading
+// it (a manifest fetch is a few KB).
 func (c *Client) CheckRegistryAccess(image string) error {
 	if err := c.CheckAvailability(); err != nil {
 		return err

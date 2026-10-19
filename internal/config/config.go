@@ -35,7 +35,6 @@ type Config struct {
 
 	// Settings (loaded from environment variables)
 	Databases         map[string]DatabaseConfig
-	GithubToken       string
 	DefaultPHPVersion string
 	AutoStartGlobal   bool
 
@@ -125,20 +124,9 @@ func (c *Config) Save() error {
 
 // loadFromEnv overrides config values with environment variables
 func (c *Config) loadFromEnv() {
-	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
-		c.GithubToken = token
-	}
-
 	if phpVersion := os.Getenv("DEFAULT_PHP_VERSION"); phpVersion != "" {
 		c.DefaultPHPVersion = phpVersion
 	}
-}
-
-// SetGithubToken sets the GitHub token in environment variable
-func (c *Config) SetGithubToken(token string) error {
-	// Set environment variable
-	os.Setenv("GITHUB_TOKEN", token)
-	return nil
 }
 
 // AddDatabase adds a database configuration and saves
@@ -230,7 +218,8 @@ func (c *Config) ShareDomainValid() bool {
 	return true
 }
 
-// GetGithubToken returns the GitHub token from environment variable
+// GetGithubToken returns GITHUB_TOKEN, which only the self-updater uses (see
+// commands.ensureUpdaterAuthenticated). Image pulls need no GitHub auth.
 func (c *Config) GetGithubToken() string {
 	return os.Getenv("GITHUB_TOKEN")
 }

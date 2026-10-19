@@ -910,9 +910,10 @@ func (m *Manager) ImageReference(project *Project) string {
 // a copy is already present locally (offline work, a flaky registry). If
 // the pull fails *and* nothing is cached, it returns a real error instead
 // of letting `docker run` fail later with an opaque exit status 125 -- and
-// names the likely cause when the registry said "denied", which for GHCR
-// almost always means the GitHub token lacks the read:packages scope even
-// though `docker login` itself succeeded with it.
+// names the likely cause when the registry said "denied": ingot's images are
+// public, so that's almost always a stale ghcr.io login in Docker's config
+// (older ingot versions ran `docker login ghcr.io`) whose token has been
+// revoked or expired - Docker still sends it, and GHCR refuses it.
 func (m *Manager) pullOrUseLocal(image string) error {
 	err := m.docker.PullImage(image, nil)
 	if err == nil {
@@ -926,14 +927,14 @@ func (m *Manager) pullOrUseLocal(image string) error {
 	msg := fmt.Sprintf("image %s could not be pulled and is not available locally: %v", image, err)
 	lower := strings.ToLower(err.Error())
 	if strings.Contains(lower, "denied") || strings.Contains(lower, "unauthorized") {
-		msg += "\n  The registry refused access. Your GitHub token is probably missing the 'read:packages' scope" +
-			"\n  (docker login accepts any valid token, but GHCR only serves private images to one with read:packages)." +
-			"\n  Fix: gh auth refresh -h github.com -s read:packages   (or export GITHUB_TOKEN with read:packages)" +
+		msg += "\n  The registry refused access. Ingot's images are public, so this is usually a saved ghcr.io" +
+			"\n  login in Docker's config whose token has been revoked or expired - Docker still sends it." +
+			"\n  Fix: docker logout ghcr.io" +
 			"\n  Then run 'ingot doctor' to confirm registry access."
 	} else if strings.Contains(lower, "not found") || strings.Contains(lower, "manifest unknown") {
 		msg += "\n  The registry has no such tag. Run 'ingot doctor' to see which image this project resolves to."
 	} else {
-		msg += "\n  Run 'ingot doctor' to check Docker, GitHub, and registry access."
+		msg += "\n  Run 'ingot doctor' to check Docker and registry access."
 	}
 	return fmt.Errorf("%s", msg)
 }
