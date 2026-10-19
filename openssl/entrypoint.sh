@@ -40,15 +40,17 @@ if [ ! -f "$CERTS/$DOMAIN.key" ]; then
 	openssl genrsa -out "$CERTS/$DOMAIN.key" 2048
 fi
 
-if [ ! -f "$CERTS/$DOMAIN.csr" ]; then
-	openssl req -new -key "$CERTS/$DOMAIN.key" -out "$CERTS/$DOMAIN.csr" \
-		-subj "/CN=$DOMAIN"
-fi
-
+# A reissue rebuilds the csr too, so it picks up this script's subject
+# (certs from the old image's csr had an @aliasproject.ssl email address).
 crt="$CERTS/$DOMAIN.crt"
 if [ -f "$crt" ] && ! { openssl verify -CAfile "$CA_CERT" "$crt" >/dev/null 2>&1 &&
 	openssl x509 -in "$crt" -noout -checkend 2592000 >/dev/null; }; then
-	rm -f "$crt"
+	rm -f "$crt" "$CERTS/$DOMAIN.csr"
+fi
+
+if [ ! -f "$CERTS/$DOMAIN.csr" ]; then
+	openssl req -new -key "$CERTS/$DOMAIN.key" -out "$CERTS/$DOMAIN.csr" \
+		-subj "/CN=$DOMAIN"
 fi
 
 # 825 days is the longest validity Apple platforms accept for a TLS server
