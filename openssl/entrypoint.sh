@@ -2,8 +2,12 @@
 # Generates the Ingot Local CA and per-domain certificates into
 # /certificates (the ingot_certs volume). See internal/ssl/manager.go.
 #
-# Each file is only generated when it is missing, so re-running is safe and
-# the CA is never replaced. With DOMAIN unset only the CA is generated.
+# Files are generated when missing, so re-running is safe and the CA is
+# never replaced. A domain's csr and crt are also regenerated with a new key,
+# and its crt is reissued when it no longer verifies against the CA (the CA
+# was regenerated) or expires within 30 days. Ingot runs this on every
+# `ingot start` (ssl.SetupProjectSSL). With DOMAIN unset only the CA is
+# generated.
 #
 # No path length limit on the CA: Caddy's on-demand issuer for unknown
 # hosts (services.baseCaddyfile) signs through an intermediate it creates.
@@ -39,6 +43,12 @@ fi
 if [ ! -f "$CERTS/$DOMAIN.csr" ]; then
 	openssl req -new -key "$CERTS/$DOMAIN.key" -out "$CERTS/$DOMAIN.csr" \
 		-subj "/CN=$DOMAIN"
+fi
+
+crt="$CERTS/$DOMAIN.crt"
+if [ -f "$crt" ] && ! { openssl verify -CAfile "$CA_CERT" "$crt" >/dev/null 2>&1 &&
+	openssl x509 -in "$crt" -noout -checkend 2592000 >/dev/null; }; then
+	rm -f "$crt"
 fi
 
 # 825 days is the longest validity Apple platforms accept for a TLS server

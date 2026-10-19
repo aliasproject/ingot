@@ -96,7 +96,7 @@ func (m *Manager) SetupProjectSSL(projectName string) error {
 
 	// Check if CA certificate exists first
 	if !m.caExistsInVolume() {
-		return fmt.Errorf("CA certificate not found. Run 'ingot cert install' first")
+		return fmt.Errorf("CA certificate not found. Run 'ingot global start' first")
 	}
 
 	// Check if Caddy is running
@@ -149,7 +149,7 @@ func (m *Manager) SetupProjectSSL(projectName string) error {
 // successfully; per-project failures are collected but do not stop the rest.
 func (m *Manager) RepairVhosts(projectNames []string) (int, error) {
 	if !m.caExistsInVolume() {
-		return 0, fmt.Errorf("CA certificate not found. Run 'ingot cert install' first")
+		return 0, fmt.Errorf("CA certificate not found. Run 'ingot global start' first")
 	}
 
 	// Keep projects stopped with `ingot stop` stopped: a repair only fixes
@@ -210,11 +210,8 @@ func (m *Manager) ReloadCaddy() error {
 func (m *Manager) RemoveProjectSSL(projectName string) error {
 	domain := projectName + ".test"
 
-	// Remove certificate files directly from ingot_certs volume. Includes
-	// .csr alongside .crt/.key: the openssl image only (re)generates each of
-	// key/csr/crt when that specific file is missing, so leaving a stale
-	// .csr behind means a future generation reuses it as-is - signing it
-	// produces a .crt that doesn't match the freshly generated .key.
+	// Remove certificate files directly from ingot_certs volume, .csr
+	// included so nothing of the old certificate is left behind.
 	// This works regardless of Caddy container state
 	if err := m.docker.Run("run", "--rm", "-v", "ingot_certs:/certs", "alpine:latest",
 		"sh", "-c", fmt.Sprintf("rm -f /certs/%s.crt /certs/%s.key /certs/%s.csr", domain, domain, domain)); err != nil {
@@ -618,8 +615,11 @@ func (m *Manager) StoppedProjects() (map[string]bool, error) {
 	return stopped, nil
 }
 
+// reloadCaddy uses --force because Caddy skips a reload whose config text
+// is unchanged, and a reissued certificate keeps the same file paths: without
+// it Caddy would go on serving the old certificate from memory.
 func (m *Manager) reloadCaddy() error {
-	return m.docker.Run("exec", "ingot_proxy", "caddy", "reload", "--config", "/etc/caddy/Caddyfile")
+	return m.docker.Run("exec", "ingot_proxy", "caddy", "reload", "--force", "--config", "/etc/caddy/Caddyfile")
 }
 
 func (m *Manager) installCertMacOS(caPath string) error {
