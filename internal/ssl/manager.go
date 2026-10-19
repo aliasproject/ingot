@@ -52,11 +52,20 @@ func (m *Manager) SetupSSL() error {
 }
 
 // CACertFile and CAKeyFile are the CA's filenames inside the ingot_certs
-// volume, as written by the openssl image's entrypoint.
+// volume, and CAName is its common name, which is how the OS trust stores
+// and NSS databases find it. All three are set by openssl/entrypoint.sh.
 const (
-	CACertFile = "AliasProjectCASelfSigned.pem"
-	CAKeyFile  = "AliasProjectCASelfSigned.key"
+	CACertFile = "IngotLocalCA.pem"
+	CAKeyFile  = "IngotLocalCA.key"
+	CAName     = "Ingot Local CA"
 )
+
+// linuxCAFile is where the CA is installed on distros without p11-kit's
+// `trust` (Debian/Ubuntu). IsCertificateInstalled can only check that the
+// file exists, so the name is tied to the CA's: the "Alias Project" CA was
+// installed as ingot-ca.crt, and finding that file must not count as
+// trusting this one.
+const linuxCAFile = "/usr/local/share/ca-certificates/ingot-local-ca.crt"
 
 // PrepareCAForCaddy makes sure the CA exists and that Caddy's non-root user
 // can read its private key. The reverse proxy's catch-all site issues
@@ -87,7 +96,7 @@ func (m *Manager) SetupProjectSSL(projectName string) error {
 
 	// Check if CA certificate exists first
 	if !m.caExistsInVolume() {
-		return fmt.Errorf("CA certificate not found. Run 'ingot cert install' first")
+		return fmt.Errorf("CA certificate not found. Run 'ingot global start' first")
 	}
 
 	// Check if Caddy is running
@@ -140,7 +149,7 @@ func (m *Manager) SetupProjectSSL(projectName string) error {
 // successfully; per-project failures are collected but do not stop the rest.
 func (m *Manager) RepairVhosts(projectNames []string) (int, error) {
 	if !m.caExistsInVolume() {
-		return 0, fmt.Errorf("CA certificate not found. Run 'ingot cert install' first")
+		return 0, fmt.Errorf("CA certificate not found. Run 'ingot global start' first")
 	}
 
 	// Keep projects stopped with `ingot stop` stopped: a repair only fixes
@@ -201,11 +210,8 @@ func (m *Manager) ReloadCaddy() error {
 func (m *Manager) RemoveProjectSSL(projectName string) error {
 	domain := projectName + ".test"
 
-	// Remove certificate files directly from ingot_certs volume. Includes
-	// .csr alongside .crt/.key: the openssl image only (re)generates each of
-	// key/csr/crt when that specific file is missing, so leaving a stale
-	// .csr behind means a future generation reuses it as-is - signing it
-	// produces a .crt that doesn't match the freshly generated .key.
+	// Remove certificate files directly from ingot_certs volume, .csr
+	// included so nothing of the old certificate is left behind.
 	// This works regardless of Caddy container state
 	if err := m.docker.Run("run", "--rm", "-v", "ingot_certs:/certs", "alpine:latest",
 		"sh", "-c", fmt.Sprintf("rm -f /certs/%s.crt /certs/%s.key /certs/%s.csr", domain, domain, domain)); err != nil {
@@ -284,7 +290,7 @@ func (m *Manager) GenerateCertificate(domain string) error {
 	cmd := exec.Command("docker", "run", "--rm",
 		"-e", "DOMAIN="+domain,
 		"-v", "ingot_certs:/certificates",
-		"ghcr.io/aliasproject/openssl:latest")
+		config.OpensslImage)
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -454,7 +460,7 @@ func (m *Manager) caExistsInVolume() bool {
 	err := m.docker.Run("run", "--rm",
 		"-v", "ingot_certs:/certificates",
 		"alpine:latest",
-		"test", "-f", "/certificates/AliasProjectCASelfSigned.pem",
+		"test", "-f", "/certificates/"+CACertFile,
 	)
 	return err == nil
 }
@@ -479,9 +485,8 @@ func (m *Manager) certificateExists(domain string) bool {
 
 func (m *Manager) generateCA() error {
 	return m.docker.Run("run", "--rm",
-		"-e", "DOMAIN=init",
 		"-v", "ingot_certs:/certificates",
-		"ghcr.io/aliasproject/openssl:latest",
+		config.OpensslImage,
 	)
 }
 
@@ -492,7 +497,7 @@ func (m *Manager) copyCAToTempFile(tmpPath string) error {
 		"-v", "ingot_certs:/source",
 		"-v", filepath.Dir(tmpPath)+":/dest",
 		"alpine:latest",
-		"cp", "/source/AliasProjectCASelfSigned.pem", "/dest/"+filepath.Base(tmpPath),
+		"cp", "/source/"+CACertFile, "/dest/"+filepath.Base(tmpPath),
 	)
 }
 
@@ -610,13 +615,16 @@ func (m *Manager) StoppedProjects() (map[string]bool, error) {
 	return stopped, nil
 }
 
+// reloadCaddy uses --force because Caddy skips a reload whose config text
+// is unchanged, and a reissued certificate keeps the same file paths: without
+// it Caddy would go on serving the old certificate from memory.
 func (m *Manager) reloadCaddy() error {
-	return m.docker.Run("exec", "ingot_proxy", "caddy", "reload", "--config", "/etc/caddy/Caddyfile")
+	return m.docker.Run("exec", "ingot_proxy", "caddy", "reload", "--force", "--config", "/etc/caddy/Caddyfile")
 }
 
 func (m *Manager) installCertMacOS(caPath string) error {
 	// Remove old certificate if exists
-	exec.Command("sudo", "security", "delete-certificate", "-c", "AliasProjectCASelfSigned", "/Library/Keychains/System.keychain").Run()
+	exec.Command("sudo", "security", "delete-certificate", "-c", CAName, "/Library/Keychains/System.keychain").Run()
 
 	// Add new certificate
 	cmd := exec.Command("sudo", "security", "add-trusted-cert",
@@ -662,7 +670,7 @@ func (m *Manager) installCertLinux(caPath string) error {
 		}
 	} else {
 		// Copy to system certificate store
-		destPath := "/usr/local/share/ca-certificates/ingot-ca.crt"
+		destPath := linuxCAFile
 
 		cmd := exec.Command("sudo", "cp", caPath, destPath)
 		if err := cmd.Run(); err != nil {
@@ -718,7 +726,7 @@ func (m *Manager) installCertIntoNSSDatabases(caPath string) {
 
 		cmd := exec.Command(certutilPath, "-d", "sql:"+dir, "-A",
 			"-t", "C,,",
-			"-n", "Alias Project CA Self Signed CN",
+			"-n", CAName,
 			"-i", caPath)
 		if output, err := cmd.CombinedOutput(); err != nil {
 			fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: failed to trust certificate in %s: %v\n%s\n", dir, err, output)
@@ -773,7 +781,7 @@ func (m *Manager) installCertWindows(caPath string) error {
 func (m *Manager) IsCertificateInstalled() bool {
 	switch runtime.GOOS {
 	case "darwin":
-		cmd := exec.Command("security", "find-certificate", "-c", "AliasProjectCASelfSigned", "/Library/Keychains/System.keychain")
+		cmd := exec.Command("security", "find-certificate", "-c", CAName, "/Library/Keychains/System.keychain")
 		return cmd.Run() == nil
 	case "linux":
 		// installCertLinux uses `trust anchor` when available (Arch, Fedora,
@@ -784,10 +792,12 @@ func (m *Manager) IsCertificateInstalled() bool {
 		if _, err := exec.LookPath("trust"); err == nil {
 			return m.isCertificateInstalledViaTrust()
 		}
-		return fileExists("/usr/local/share/ca-certificates/ingot-ca.crt")
+		return fileExists(linuxCAFile)
 	case "windows":
-		cmd := exec.Command("powershell", "-Command",
-			"Get-ChildItem -Path Cert:\\LocalMachine\\Root | Where-Object { $_.Subject -like '*AliasProjectCASelfSigned*' }")
+		// A pipeline that matches nothing still exits 0, so set the exit
+		// code from whether anything matched.
+		cmd := exec.Command("powershell", "-NoProfile", "-Command",
+			"if (Get-ChildItem -Path Cert:\\LocalMachine\\Root | Where-Object { $_.Subject -like '*CN="+CAName+"*' }) { exit 0 } else { exit 1 }")
 		return cmd.Run() == nil
 	default:
 		return false
@@ -805,7 +815,7 @@ func (m *Manager) isCertificateInstalledViaTrust() bool {
 		return false
 	}
 	normalized := strings.ToLower(strings.Join(strings.Fields(string(output)), ""))
-	return strings.Contains(normalized, "aliasprojectcaselfsigned")
+	return strings.Contains(normalized, strings.ToLower(strings.ReplaceAll(CAName, " ", "")))
 }
 
 // isCertificateInstalledInChromeNSSDB checks Chrome/Chromium's default NSS
@@ -854,14 +864,14 @@ func (m *Manager) isCertificateInstalledInChromeNSSDB() bool {
 		return false
 	}
 	dir := filepath.Join(home, ".pki", "nssdb")
-	cmd := exec.Command(certutilPath, "-L", "-d", "sql:"+dir, "-n", "Alias Project CA Self Signed CN")
+	cmd := exec.Command(certutilPath, "-L", "-d", "sql:"+dir, "-n", CAName)
 	return cmd.Run() == nil
 }
 
 func (m *Manager) showSystemCertificateInfo() {
 	switch runtime.GOOS {
 	case "darwin":
-		cmd := exec.Command("security", "find-certificate", "-c", "AliasProjectCASelfSigned", "-p", "/Library/Keychains/System.keychain")
+		cmd := exec.Command("security", "find-certificate", "-c", CAName, "-p", "/Library/Keychains/System.keychain")
 		if output, err := cmd.Output(); err == nil && len(output) > 0 {
 			fmt.Println("  Location: System Keychain")
 			fmt.Println("  Trust: SSL, Basic X.509")
@@ -869,7 +879,7 @@ func (m *Manager) showSystemCertificateInfo() {
 	case "linux":
 		if _, err := exec.LookPath("trust"); err == nil && m.isCertificateInstalledViaTrust() {
 			fmt.Println("  Location: p11-kit trust store (trust anchor)")
-		} else if fileExists("/usr/local/share/ca-certificates/ingot-ca.crt") {
+		} else if fileExists(linuxCAFile) {
 			fmt.Println("  Location: /usr/local/share/ca-certificates/")
 		}
 	case "windows":
