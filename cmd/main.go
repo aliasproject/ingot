@@ -49,7 +49,7 @@ func main() {
 	// Check for first-time installation
 	if !cfg.IsInstalled() {
 		fmt.Println(utils.Colorize("[INGOT]", utils.ColorCyan) + " Welcome to Ingot! Installing for first-time use...")
-		installer := commands.NewInstaller(dockerClient, cfg, handler.GetServices(), handler.GetSSL(), handler.GetGitHub())
+		installer := commands.NewInstaller(dockerClient, cfg, handler.GetServices(), handler.GetSSL())
 		if err := installer.Install(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error during installation: %v\n", err)
 			fmt.Fprintln(os.Stderr, "Run 'ingot install' to retry - it resumes from wherever this left off.")

@@ -8,7 +8,6 @@ import (
 
 	"github.com/aliasproject/ingot/internal/config"
 	"github.com/aliasproject/ingot/internal/docker"
-	"github.com/aliasproject/ingot/internal/github"
 	"github.com/aliasproject/ingot/internal/services"
 	"github.com/aliasproject/ingot/internal/ssl"
 	"github.com/aliasproject/ingot/internal/utils"
@@ -20,17 +19,15 @@ type Installer struct {
 	config   *config.Config
 	services *services.Manager
 	ssl      *ssl.Manager
-	github   *github.Client
 }
 
 // NewInstaller creates a new installer
-func NewInstaller(dockerClient *docker.Client, cfg *config.Config, svc *services.Manager, sslMgr *ssl.Manager, gh *github.Client) *Installer {
+func NewInstaller(dockerClient *docker.Client, cfg *config.Config, svc *services.Manager, sslMgr *ssl.Manager) *Installer {
 	return &Installer{
 		docker:   dockerClient,
 		config:   cfg,
 		services: svc,
 		ssl:      sslMgr,
-		github:   gh,
 	}
 }
 
@@ -59,38 +56,31 @@ func (i *Installer) Install() error {
 		return fmt.Errorf("failed to configure database: %w", err)
 	}
 
-	// Step 3: Setup GitHub authentication
-	fmt.Println("\n" + utils.Colorize("[AUTH]", utils.ColorBlue) + " GitHub Authentication")
-	if err := i.setupGitHubAuth(); err != nil {
-		// Non-fatal error
-		utils.PrintWarning("GitHub authentication skipped: " + err.Error())
-	}
-
-	// Step 4: Install binary
+	// Step 3: Install binary
 	fmt.Println("\n" + utils.Colorize("[PACKAGE]", utils.ColorCyan) + " Installing binary...")
 	if err := i.installBinary(); err != nil {
 		return fmt.Errorf("failed to install binary: %w", err)
 	}
 
-	// Step 5: Start global services
+	// Step 4: Start global services
 	fmt.Println("\n" + utils.Colorize("[WEB]", utils.ColorBlue) + " Starting global services...")
 	if err := i.services.Start(); err != nil {
 		return fmt.Errorf("failed to start services: %w", err)
 	}
 
-	// Step 6: Setup DNS resolver
+	// Step 5: Setup DNS resolver
 	fmt.Println("\n" + utils.Colorize("[NETWORK]", utils.ColorCyan) + " Setting up DNS resolver...")
 	if err := utils.SetupTestDomainResolver(); err != nil {
 		utils.PrintWarning("Failed to setup DNS resolver: " + err.Error())
 	}
 
-	// Step 7: Setup SSL certificates
+	// Step 6: Setup SSL certificates
 	fmt.Println("\n🔒 Setting up SSL certificates...")
 	if err := i.ssl.SetupSSL(); err != nil {
 		utils.PrintWarning("Failed to setup SSL: " + err.Error())
 	}
 
-	// Step 8: Optional - Install CA certificate
+	// Step 7: Optional - Install CA certificate
 	if utils.PromptYesNo("\nInstall CA certificate to system?") {
 		if err := i.ssl.InstallCertificate(); err != nil {
 			utils.PrintWarning("Failed to install certificate: " + err.Error())
@@ -151,26 +141,6 @@ func (i *Installer) configureDatabase() error {
 
 	fmt.Printf("  "+utils.Colorize("[RUNNING]", utils.ColorGreen)+" Configured %s %s as '%s' database\n", selected, dbVersion, dbType)
 	return nil
-}
-
-// setupGitHubAuth handles GitHub authentication setup
-func (i *Installer) setupGitHubAuth() error {
-	// Check for an existing, working token before asking anything - on a
-	// resumed install (or a re-run of `ingot install`) this is almost always
-	// already done, and re-prompting for something already finished is
-	// exactly the friction resuming is supposed to avoid.
-	if err := i.github.EnsureAuthenticated(); err == nil {
-		fmt.Println("  [SUCCESS] Already authenticated")
-		return nil
-	}
-
-	fmt.Println("GitHub authentication enables access to private container images")
-
-	if !utils.PromptYesNo("Setup GitHub authentication now?") {
-		return fmt.Errorf("skipped by user")
-	}
-
-	return i.github.Authenticate()
 }
 
 // installBinary installs the ingot binary
@@ -304,7 +274,7 @@ func (i *Installer) Uninstall(removeConfig bool) error {
 	if removeConfig {
 		fmt.Println(utils.Colorize("[INFO]", utils.ColorBlue) + " Configuration is stored in environment variables and project directories only")
 		fmt.Println("   To completely remove ingot configuration:")
-		fmt.Println("   - Unset GITHUB_TOKEN environment variable")
+		fmt.Println("   - Unset any INGOT_* environment variables")
 	}
 
 	utils.PrintSuccess("Ingot uninstalled")

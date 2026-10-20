@@ -118,7 +118,8 @@ func (u *Updater) Update(force bool) error {
 	return u.performUpdate(&binary)
 }
 
-// SetGitHubToken sets the GitHub token for accessing private repositories
+// SetGitHubToken sets an optional GitHub token for release requests: needed
+// while the repo is private, and otherwise it only raises the API rate limit
 func (u *Updater) SetGitHubToken(token string) {
 	u.githubToken = token
 }
