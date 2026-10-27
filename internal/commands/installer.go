@@ -121,7 +121,7 @@ func (i *Installer) configureDatabase() error {
 		dbType = "postgresql"
 	}
 
-	versions := []string{"8.0", "5.7"}
+	versions := []string{"8.0"}
 	if dbType == "postgresql" {
 		versions = []string{"16", "15", "14", "13"}
 	}
