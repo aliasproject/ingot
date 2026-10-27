@@ -245,7 +245,7 @@ func (i *Installer) showSuccessMessage() {
 	// Show network info
 	if hostIP, err := services.GetHostIP(); err == nil {
 		fmt.Printf(utils.Colorize("[NETWORK]", utils.ColorCyan)+" Network: %s:5354 (DNS)\n", hostIP)
-		fmt.Printf(utils.Colorize("[MAIL]", utils.ColorBlue)+" MailHog: http://%s:8025\n", hostIP)
+		fmt.Printf(utils.Colorize("[MAIL]", utils.ColorBlue)+" Mailpit: http://%s:8025\n", hostIP)
 	}
 }
 

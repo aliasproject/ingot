@@ -527,11 +527,17 @@ services:
     depends_on:
       - dns
 
+  # Mailpit, not MailHog: MailHog only ships amd64 images, which can't
+  # run on arm64 Linux hosts without QEMU. Same ports (1025 SMTP, 8025 UI).
+  # Accept any SMTP credentials so apps configured with a username and
+  # password for production mail don't get rejected locally.
   mail:
     container_name: ingot_mail
-    image: mailhog/mailhog:latest
-    platform: linux/amd64
+    image: axllent/mailpit:v1.32
     restart: on-failure
+    environment:
+      - MP_SMTP_AUTH_ACCEPT_ANY=1
+      - MP_SMTP_AUTH_ALLOW_INSECURE=1
     ports:
       - "1025:1025"
       - "8025:8025"
@@ -542,11 +548,17 @@ services:
 	// Add databases
 	for name, dbConfig := range databases {
 		if dbConfig.Type == "mysql" {
+			// mysql:5.7 only ships amd64 images, so pin it and let Docker
+			// Desktop emulate it on Apple Silicon. 8.x is multi-arch and
+			// runs natively, including on arm64 Linux hosts without QEMU.
+			platform := ""
+			if dbConfig.Version == "5.7" {
+				platform = "\n    platform: linux/amd64"
+			}
 			compose += fmt.Sprintf(`
   %s:
     container_name: ingot_%s
-    image: mysql:%s
-    platform: linux/amd64
+    image: mysql:%s%s
     restart: unless-stopped
     environment:
       - MYSQL_ROOT_PASSWORD=
@@ -557,7 +569,7 @@ services:
       - internal
     volumes:
       - %s-%s:/var/lib/mysql
-`, name, name, dbConfig.Version, dbConfig.Port, name, dbConfig.Version)
+`, name, name, dbConfig.Version, platform, dbConfig.Port, name, dbConfig.Version)
 		} else if dbConfig.Type == "postgresql" {
 			compose += fmt.Sprintf(`
   %s:
