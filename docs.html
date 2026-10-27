@@ -542,7 +542,7 @@
                             local development environment using Docker
                             containers - PHP (FrankenPHP), a Caddy reverse proxy,
                             DNS for <code class="inline-code">.test</code>
-                            domains, MySQL/PostgreSQL, and MailHog for email
+                            domains, MySQL/PostgreSQL, and Mailpit for email
                             testing. It has no server component and no local
                             config files: every command shells out to Docker on
                             your machine, and all state lives in environment
@@ -612,7 +612,7 @@ chmod +x alios
 # - Install the binary to /usr/local/bin
 # - Optionally configure a database service
 # - Set up GitHub authentication
-# - Start the global services (DNS, Caddy, MailHog)</pre
+# - Start the global services (DNS, Caddy, Mailpit)</pre
                             >
                         </div>
 
@@ -778,7 +778,7 @@ alios shell --user=root    # Open a shell as root</pre
                     <section id="global-services">
                         <h2>Global Services</h2>
                         <p>
-                            DNS, Caddy (the reverse proxy), MailHog, and any
+                            DNS, Caddy (the reverse proxy), Mailpit, and any
                             configured databases are shared across every
                             project and managed as one group.
                         </p>

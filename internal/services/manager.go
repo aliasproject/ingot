@@ -548,10 +548,17 @@ services:
 	// Add databases
 	for name, dbConfig := range databases {
 		if dbConfig.Type == "mysql" {
+			// mysql:5.7 only ships amd64 images, so pin it and let Docker
+			// Desktop emulate it on Apple Silicon. 8.x is multi-arch and
+			// runs natively, including on arm64 Linux hosts without QEMU.
+			platform := ""
+			if dbConfig.Version == "5.7" {
+				platform = "\n    platform: linux/amd64"
+			}
 			compose += fmt.Sprintf(`
   %s:
     container_name: ingot_%s
-    image: mysql:%s
+    image: mysql:%s%s
     restart: unless-stopped
     environment:
       - MYSQL_ROOT_PASSWORD=
@@ -562,7 +569,7 @@ services:
       - internal
     volumes:
       - %s-%s:/var/lib/mysql
-`, name, name, dbConfig.Version, dbConfig.Port, name, dbConfig.Version)
+`, name, name, dbConfig.Version, platform, dbConfig.Port, name, dbConfig.Version)
 		} else if dbConfig.Type == "postgresql" {
 			compose += fmt.Sprintf(`
   %s:
