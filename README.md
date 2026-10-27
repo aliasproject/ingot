@@ -244,7 +244,7 @@ INGOT_IDLE_TIMEOUT           Stop projects idle this long, e.g. 30m, 2h, or
 ## Supported versions
 
 - **PHP:** 8.5, 8.4 (default), 8.3, 8.2, 8.1, 8.0, 7.4
-- **MySQL:** 8.0, 5.7
+- **MySQL:** 8.0
 - **PostgreSQL:** 16, 15, 14, 13
 
 ## Building from source
