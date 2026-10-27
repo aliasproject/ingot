@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Ingot (`ingot`) is a single-binary Go CLI that manages a local Docker-based PHP development environment: per-project PHP (FrankenPHP) containers, global shared services (DNS, Caddy reverse proxy, MailHog), optional MySQL/PostgreSQL databases, and locally-trusted SSL certificates for `*.test` domains. It has no server component — every command shells out to the `docker` CLI on the user's machine.
+Ingot (`ingot`) is a single-binary Go CLI that manages a local Docker-based PHP development environment: per-project PHP (FrankenPHP) containers, global shared services (DNS, Caddy reverse proxy, Mailpit), optional MySQL/PostgreSQL databases, and locally-trusted SSL certificates for `*.test` domains. It has no server component — every command shells out to the `docker` CLI on the user's machine.
 
 Ingot is a standalone tool for any PHP developer. It started as the local-dev companion to Alios, Alias Project's server-management platform, and was renamed and split out so it can be used without Alios. That's why some code comments refer to "production Alios" or "the Alios platform repo": the conventions here (image-selection vocabulary, Caddy as the reverse proxy, env injection) were copied from it so local projects look like production. There is no code dependency on Alios, and none should be added. Alios-specific features belong in a future Alios CLI that can build on Ingot.
 

@@ -18,7 +18,7 @@ labels.
 - Shared DNS so `*.test` resolves without touching `/etc/hosts`
 - A branded "No project here" page for any `*.test` domain that isn't running,
   instead of a bare connection error
-- Optional MySQL/PostgreSQL, and MailHog for email testing
+- Optional MySQL/PostgreSQL, and Mailpit for email testing
 - Automatic WordPress detection (extra extensions, hardening, live-reload)
 - A choice of prebuilt image, your project's own Dockerfile, or an arbitrary
   pulled image — per project, switchable any time
@@ -113,7 +113,7 @@ ingot shell --user=root    # shell as root
 
 ### Global services
 
-DNS, Caddy, MailHog, and any configured databases are shared across every
+DNS, Caddy, Mailpit, and any configured databases are shared across every
 project:
 
 ```
