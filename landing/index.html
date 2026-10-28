@@ -327,7 +327,7 @@ Enter server root path (default: /app/public): <span class="text-subtle">&#9166;
         </div>
         <div class="mt-7 flex flex-wrap gap-2.5 font-mono text-[11.5px] text-subtle">
           <span class="border border-line/30 rounded-full px-3 py-1.5">PHP 8.5 &middot; 8.4 &middot; 8.3 &middot; 8.2 &middot; 8.1 &middot; 8.0 &middot; 7.4</span>
-          <span class="border border-line/30 rounded-full px-3 py-1.5">MySQL 8.0 &middot; 5.7</span>
+          <span class="border border-line/30 rounded-full px-3 py-1.5">MySQL 8.0</span>
           <span class="border border-line/30 rounded-full px-3 py-1.5">PostgreSQL 16 &middot; 15 &middot; 14 &middot; 13</span>
           <span class="border border-line/30 rounded-full px-3 py-1.5">macOS &middot; Linux &middot; WSL2</span>
         </div>
@@ -480,7 +480,7 @@ Enter server root path (default: /app/public): <span class="text-subtle">&#9166;
         { title: "One container per project", desc: "Each project directory gets its own FrankenPHP container, bind-mounted so edits show up instantly.", color: "#E8A04C", icon: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M8 4v5"/>' },
         { title: "Trusted HTTPS on *.test", desc: "A locally trusted CA and shared DNS. No browser warnings, no editing /etc/hosts.", color: "#9CC795", icon: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>' },
         { title: "Scale to zero", desc: "Idle projects stop after 30 minutes. The next visit starts them again.", color: "#8DB8CC", icon: '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>' },
-        { title: "Databases and mail", desc: "Shared MySQL or PostgreSQL when you need them, and MailHog to catch outgoing email.", color: "#F2C27B", icon: '<ellipse cx="12" cy="5.5" rx="8" ry="3"/><path d="M4 5.5v13c0 1.7 3.6 3 8 3s8-1.3 8-3v-13"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/>' },
+        { title: "Databases and mail", desc: "Shared MySQL or PostgreSQL when you need them, and Mailpit to catch outgoing email.", color: "#F2C27B", icon: '<ellipse cx="12" cy="5.5" rx="8" ry="3"/><path d="M4 5.5v13c0 1.7 3.6 3 8 3s8-1.3 8-3v-13"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/>' },
         { title: "WordPress, detected", desc: "A wp-config.php switches to the WordPress image: extra extensions, hardening and live reload.", color: "#E08C78", icon: '<circle cx="12" cy="12" r="9"/><path d="M3.5 9h17M3.5 15h17M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>' },
         { title: "No config files", desc: "State lives in Docker container labels and a few environment variables. Nothing to commit or lose.", color: "#D2C9BC", icon: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/>' },
       ],

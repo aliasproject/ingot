@@ -236,8 +236,8 @@ shell environment:
 
 ```
 GITHUB_TOKEN                 Optional; only `ingot update` uses it (falls back to
-                             `gh auth token`), to read releases and raise
-                             GitHub's API rate limit
+                             `gh auth token`), to raise GitHub's API
+                             rate limit
 INGOT_DEFAULT_PHP_VERSION    Default PHP version for new projects
 INGOT_HOST_IP                Override auto-detected host IP
 INGOT_DNS_PORT               DNS listener port (default: 53)
@@ -265,8 +265,9 @@ go run ./cmd status        # or run directly without building
 go vet ./...               # static checks
 ```
 
-`go test ./...` covers a few packages (config, idle, share, ssl, updater); most
-changes are verified with `go build`/`go vet` and by running the CLI.
+`go test ./...` covers a few packages (config, docker, idle, project,
+services, share, ssl, updater); most changes are verified with
+`go build`/`go vet` and by running the CLI.
 See [`CLAUDE.md`](CLAUDE.md) for an architecture overview if you're working
 on the CLI itself.
 
