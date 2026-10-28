@@ -190,7 +190,7 @@ is built:
   same one you'd actually deploy. If it declares build args with no default
   (`ARG SOME_TOKEN`, no `=value`), you're prompted for each one explicitly —
   nothing is silently reused from your environment or anywhere else. Args
-  whose names look like credentials (containing `TOKEN`, `SECRET`,
+  whose names look like credentials (containing e.g. `TOKEN`, `SECRET`,
   `PASSWORD`, `PASSPHRASE` or `OAUTH`, or the word `AUTH`, `KEY`, `PASS`,
   `PAT` or `PWD` between underscores, e.g. `COMPOSER_AUTH`) are passed to `docker build` through its
   environment rather than its command line, and are never saved on the

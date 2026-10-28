@@ -256,9 +256,10 @@ func StoredSecretBuildArgs(labels map[string]string) []string {
 // say) is never fed to a build without being asked for.
 const BuildArgEnvPrefix = "INGOT_BUILD_ARG_"
 
-// SecretBuildArgFromEnv returns INGOT_BUILD_ARG_<key>, or "".
+// SecretBuildArgFromEnv returns INGOT_BUILD_ARG_<KEY>, or "". The key is
+// upper-cased, since IsSecretBuildArg matches names in any case.
 func SecretBuildArgFromEnv(key string) string {
-	return os.Getenv(BuildArgEnvPrefix + key)
+	return os.Getenv(BuildArgEnvPrefix + strings.ToUpper(key))
 }
 
 // resolveBuildArgs fills in secret build args that have no value (because
@@ -272,7 +273,7 @@ func resolveBuildArgs(args map[string]string) map[string]string {
 		if value == "" && IsSecretBuildArg(key) {
 			value = SecretBuildArgFromEnv(key)
 			if value == "" {
-				value = utils.GetInput(fmt.Sprintf("  %s for the image build (not saved; set %s%s to skip this prompt): ", key, BuildArgEnvPrefix, key))
+				value = utils.GetInput(fmt.Sprintf("  %s for the image build (not saved; set %s%s to skip this prompt): ", key, BuildArgEnvPrefix, strings.ToUpper(key)))
 			}
 			if value == "" {
 				fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Building without %s\n", key)
@@ -968,6 +969,9 @@ func (m *Manager) needsBuild(project *Project) bool {
 // the project with no container. A no-op unless createContainer will build.
 func (m *Manager) prepareBuild(project *Project) {
 	if project.buildArgValues == nil && m.needsBuild(project) {
+		// Pin the decision, so resolveImage builds with these values even
+		// if its own needsBuild check would now disagree.
+		project.rebuildImage = true
 		project.buildArgValues = resolveBuildArgs(project.BuildArgs)
 	}
 }

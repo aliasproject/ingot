@@ -629,7 +629,7 @@ func promptForBuildArgs(dockerfilePath string) map[string]string {
 	for _, name := range argNames {
 		if project.IsSecretBuildArg(name) {
 			if value := project.SecretBuildArgFromEnv(name); value != "" {
-				fmt.Printf("  %s: using %s%s\n", name, project.BuildArgEnvPrefix, name)
+				fmt.Printf("  %s: using %s%s\n", name, project.BuildArgEnvPrefix, strings.ToUpper(name))
 				buildArgs[name] = value
 				continue
 			}

@@ -102,3 +102,10 @@ func TestParseBuildArgsDropsSecretTails(t *testing.T) {
 		t.Fatalf("args = %v, want only COMPOSER_AUTH (empty) and APP_UID", args)
 	}
 }
+
+func TestSecretBuildArgFromEnvUpperCases(t *testing.T) {
+	t.Setenv("INGOT_BUILD_ARG_GITHUB_TOKEN", "v")
+	if got := SecretBuildArgFromEnv("github_token"); got != "v" {
+		t.Fatalf("SecretBuildArgFromEnv(github_token) = %q, want v", got)
+	}
+}
