@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -86,11 +88,20 @@ func (c *Client) CheckAvailability() error {
 // see *why* docker failed - "exit status 125" on its own hides the real
 // cause, e.g. a registry "denied" on pull or "Unable to find image" on run.
 func (c *Client) Run(args ...string) error {
+	return c.runWithEnv(nil, args...)
+}
+
+// runWithEnv is Run with extra KEY=VALUE pairs added to the docker CLI's
+// environment, for values that mustn't appear in argv (where `ps` shows them).
+func (c *Client) runWithEnv(env []string, args ...string) error {
 	if err := c.CheckAvailability(); err != nil {
 		return err
 	}
 
 	cmd := exec.Command(c.dockerPath, args...)
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	cmd.Stdout = io.Discard
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -472,11 +483,9 @@ func (c *Client) ImageExists(image string) bool {
 	return err == nil
 }
 
-// CheckRegistryAccess verifies the stored registry credentials can read the
-// given image, without downloading it (a manifest fetch is a few KB). This
-// is the cheap way to tell "docker login succeeded" apart from "docker can
-// actually pull" - GHCR accepts a login from any valid GitHub token, but
-// only serves a private package to one carrying the read:packages scope.
+// CheckRegistryAccess verifies Docker can read the given image from its
+// registry, with whatever credentials Docker has stored, without downloading
+// it (a manifest fetch is a few KB).
 func (c *Client) CheckRegistryAccess(image string) error {
 	if err := c.CheckAvailability(); err != nil {
 		return err
@@ -681,17 +690,29 @@ type BuildConfig struct {
 	DockerfilePath string            // path to the Dockerfile
 	Context        string            // build context directory
 	BuildArgs      map[string]string // values for ARGs the Dockerfile declares with no default
+	SecretArgs     map[string]string // like BuildArgs, but passed through the CLI's environment, not argv
 }
 
 // BuildImage builds a Docker image from a Dockerfile, for projects that choose
 // a custom build instead of a prebuilt image (see project.Manager.createContainer).
 func (c *Client) BuildImage(cfg *BuildConfig) error {
-	args := []string{"build", "-f", cfg.DockerfilePath, "-t", cfg.Tag}
-	for key, value := range cfg.BuildArgs {
-		args = append(args, "--build-arg", fmt.Sprintf("%s=%s", key, value))
+	args, env := buildCommand(cfg)
+	return c.runWithEnv(env, args...)
+}
+
+// buildCommand returns BuildImage's docker arguments and extra environment.
+// A secret arg is passed as a bare `--build-arg KEY`, which docker build
+// reads from its own environment, so the value never shows up in `ps`.
+func buildCommand(cfg *BuildConfig) (args, env []string) {
+	args = []string{"build", "-f", cfg.DockerfilePath, "-t", cfg.Tag}
+	for _, key := range slices.Sorted(maps.Keys(cfg.BuildArgs)) {
+		args = append(args, "--build-arg", key+"="+cfg.BuildArgs[key])
 	}
-	args = append(args, cfg.Context)
-	return c.Run(args...)
+	for _, key := range slices.Sorted(maps.Keys(cfg.SecretArgs)) {
+		args = append(args, "--build-arg", key)
+		env = append(env, key+"="+cfg.SecretArgs[key])
+	}
+	return append(args, cfg.Context), env
 }
 
 // ExecCommand executes a command in a running container.

@@ -71,7 +71,7 @@ const baseCaddyfile = `{
 	skip_install_trust
 	pki {
 		ca ingot {
-			name "Ingot Local CA"
+			name "` + ssl.CAName + `"
 			root {
 				cert /etc/caddy/ssl/` + ssl.CACertFile + `
 				key /etc/caddy/ssl/` + ssl.CAKeyFile + `
@@ -527,11 +527,17 @@ services:
     depends_on:
       - dns
 
+  # Mailpit, not MailHog: MailHog only ships amd64 images, which can't
+  # run on arm64 Linux hosts without QEMU. Same ports (1025 SMTP, 8025 UI).
+  # Accept any SMTP credentials so apps configured with a username and
+  # password for production mail don't get rejected locally.
   mail:
     container_name: ingot_mail
-    image: mailhog/mailhog:latest
-    platform: linux/amd64
+    image: axllent/mailpit:v1.32
     restart: on-failure
+    environment:
+      - MP_SMTP_AUTH_ACCEPT_ANY=1
+      - MP_SMTP_AUTH_ALLOW_INSECURE=1
     ports:
       - "1025:1025"
       - "8025:8025"
@@ -546,7 +552,6 @@ services:
   %s:
     container_name: ingot_%s
     image: mysql:%s
-    platform: linux/amd64
     restart: unless-stopped
     environment:
       - MYSQL_ROOT_PASSWORD=

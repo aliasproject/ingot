@@ -2,9 +2,13 @@ package project
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"os/user"
 	"path/filepath"
+	"regexp"
+	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -70,6 +74,15 @@ type Project struct {
 	// ingot.project.idle label (`ingot idle`): "" for the global
 	// INGOT_IDLE_TIMEOUT, "off" to never stop it, or its own timeout.
 	Idle string
+
+	// rebuildImage makes createContainer build a Dockerfile project's image
+	// even though one already exists (Rebuild, ChangeImage). Other recreates
+	// (env, idle, PHP version, server root) reuse it, so they never prompt
+	// for a secret build arg after the old container is gone.
+	rebuildImage bool
+	// buildArgValues, when set, are the build-arg values to build with,
+	// collected before the old container was removed.
+	buildArgValues map[string]string
 }
 
 // ImageChoice carries a project's first-init image and framework selection
@@ -177,17 +190,29 @@ func (m *Manager) GetCurrentProject() (*Project, error) {
 // single Docker label as comma-separated KEY=VALUE pairs, the same way every
 // other piece of project state here lives in labels instead of a config
 // file. Values containing a comma aren't supported by this simple encoding.
+// Secret-looking args (IsSecretBuildArg) are stored as a bare KEY, because
+// anything with Docker access can read labels; resolveBuildArgs fills their
+// values back in at build time.
 func serializeBuildArgs(args map[string]string) string {
 	if len(args) == 0 {
 		return ""
 	}
 	pairs := make([]string, 0, len(args))
-	for key, value := range args {
-		pairs = append(pairs, key+"="+value)
+	for _, key := range slices.Sorted(maps.Keys(args)) {
+		if IsSecretBuildArg(key) {
+			pairs = append(pairs, key)
+		} else {
+			pairs = append(pairs, key+"="+args[key])
+		}
 	}
 	return strings.Join(pairs, ",")
 }
 
+// parseBuildArgs returns secret args with an empty value. Labels written
+// before ALI-837 still carry KEY=VALUE for them; that value is ignored
+// rather than reused, because the fix for a leaked label is to rotate the
+// credential, which makes the stored one useless. The next build asks for
+// it, and the next recreate rewrites the label without it.
 func parseBuildArgs(encoded string) map[string]string {
 	if encoded == "" {
 		return nil
@@ -195,12 +220,88 @@ func parseBuildArgs(encoded string) map[string]string {
 	args := make(map[string]string)
 	for _, pair := range strings.Split(encoded, ",") {
 		key, value, found := strings.Cut(pair, "=")
-		if !found {
-			continue
+		switch {
+		case !buildArgNameRe.MatchString(key):
+			// The tail of a value that contained a comma (e.g. a JSON
+			// COMPOSER_AUTH), not an arg: skip it, so no piece of a
+			// secret becomes a plain arg.
+		case IsSecretBuildArg(key):
+			args[key] = ""
+		case found:
+			args[key] = value
 		}
-		args[key] = value
 	}
 	return args
+}
+
+var buildArgNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// StoredSecretBuildArgs returns the secret build args whose values a
+// container's labels still hold, from versions before ALI-837. For doctor.
+func StoredSecretBuildArgs(labels map[string]string) []string {
+	var keys []string
+	for _, pair := range strings.Split(labels["ingot.project.build_args"], ",") {
+		key, value, _ := strings.Cut(pair, "=")
+		if value != "" && IsSecretBuildArg(key) {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// BuildArgEnvPrefix names the env vars secret build-arg values are read
+// from, e.g. INGOT_BUILD_ARG_GITHUB_TOKEN. It's prefixed rather than the
+// bare KEY, so a GITHUB_TOKEN exported for something else (the self-updater,
+// say) is never fed to a build without being asked for.
+const BuildArgEnvPrefix = "INGOT_BUILD_ARG_"
+
+// SecretBuildArgFromEnv returns INGOT_BUILD_ARG_<KEY>, or "". The key is
+// upper-cased, since IsSecretBuildArg matches names in any case.
+func SecretBuildArgFromEnv(key string) string {
+	return os.Getenv(BuildArgEnvPrefix + strings.ToUpper(key))
+}
+
+// resolveBuildArgs fills in secret build args that have no value (because
+// the label only kept their names) from INGOT_BUILD_ARG_<KEY>, or else by
+// asking, the same way promptForBuildArgs did when the project was first set
+// up. A blank answer builds without the arg, with a warning.
+func resolveBuildArgs(args map[string]string) map[string]string {
+	resolved := make(map[string]string, len(args))
+	for _, key := range slices.Sorted(maps.Keys(args)) {
+		value := args[key]
+		if value == "" && IsSecretBuildArg(key) {
+			value = SecretBuildArgFromEnv(key)
+			if value == "" {
+				value = utils.GetInput(fmt.Sprintf("  %s for the image build (not saved; set %s%s to skip this prompt): ", key, BuildArgEnvPrefix, strings.ToUpper(key)))
+			}
+			if value == "" {
+				fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Building without %s\n", key)
+			}
+		}
+		if value != "" {
+			resolved[key] = value
+		}
+	}
+	return resolved
+}
+
+// splitBuildArgs separates secret build args, which docker.Client.BuildImage
+// passes through the docker CLI's environment to keep them out of argv, from
+// the rest, which stay on the command line so a plain arg named e.g.
+// DOCKER_HOST can't change how the CLI itself behaves.
+func splitBuildArgs(args map[string]string) (plain, secret map[string]string) {
+	for key, value := range args {
+		target := &plain
+		if IsSecretBuildArg(key) {
+			target = &secret
+		}
+		if *target == nil {
+			*target = make(map[string]string)
+		}
+		(*target)[key] = value
+	}
+	return plain, secret
 }
 
 // Initialize creates a new project in the current directory
@@ -307,6 +408,7 @@ func (m *Manager) Start(phpVersion string, imageChoice ImageChoice, serverRoot .
 					reasons = append(reasons, "a newer image is available")
 				}
 				fmt.Printf(utils.Colorize("[RESTARTING]", utils.ColorCyan)+" %s, recreating container...\n", strings.Join(reasons, " and "))
+				m.prepareBuild(project)
 				if err := m.docker.RemoveContainer(project.Container, true); err != nil {
 					return fmt.Errorf("failed to remove old container: %w", err)
 				}
@@ -323,9 +425,11 @@ func (m *Manager) Start(phpVersion string, imageChoice ImageChoice, serverRoot .
 			return fmt.Errorf("failed to start container: %w", err)
 		}
 	} else {
-		// Create new container
+		// Create new container. Build fresh: a local/<name> image left over
+		// from a removed project may predate this Dockerfile.
 		project.PHPVersion = desiredPHPVersion
 		project.ServerRoot = desiredServerRoot
+		project.rebuildImage = true
 		if err := m.createContainer(project); err != nil {
 			// Clean up any partially created container on failure
 			cleanupErr := m.docker.RemoveContainer(project.Container, true)
@@ -357,6 +461,9 @@ func (m *Manager) Rebuild() error {
 	if project.Status == "not initialized" {
 		return fmt.Errorf("no project to rebuild")
 	}
+
+	project.rebuildImage = true
+	m.prepareBuild(project)
 
 	if m.docker.ContainerExists(project.Container) {
 		fmt.Printf(utils.Colorize("[REBUILDING]", utils.ColorCyan)+" Recreating '%s'...\n", project.Container)
@@ -432,6 +539,7 @@ func (m *Manager) ChangePHPVersion(newVersion string) error {
 	}
 
 	// Stop and remove existing container
+	m.prepareBuild(project)
 	if err := m.docker.RemoveContainer(project.Container, true); err != nil {
 		return fmt.Errorf("failed to remove old container: %w", err)
 	}
@@ -473,6 +581,8 @@ func (m *Manager) ChangeImage(choice ImageChoice) error {
 	project.BuildContext = choice.BuildContext
 	project.BuildArgs = choice.BuildArgs
 	project.Framework = choice.Framework
+	project.rebuildImage = true
+	m.prepareBuild(project)
 
 	if err := m.docker.RemoveContainer(project.Container, true); err != nil {
 		return fmt.Errorf("failed to remove old container: %w", err)
@@ -508,6 +618,7 @@ func (m *Manager) ChangeServerRoot(newServerRoot string) error {
 
 	// Stop and remove existing container if running
 	if project.Status == "running" {
+		m.prepareBuild(project)
 		if err := m.docker.RemoveContainer(project.Container, true); err != nil {
 			return fmt.Errorf("failed to remove old container: %w", err)
 		}
@@ -593,6 +704,7 @@ func (m *Manager) UnsetEnv(keys []string) error {
 func (m *Manager) recreate(project *Project) error {
 	wasRunning := project.Status == "running"
 
+	m.prepareBuild(project)
 	if err := m.docker.RemoveContainer(project.Container, true); err != nil {
 		return fmt.Errorf("failed to remove old container: %w", err)
 	}
@@ -837,6 +949,33 @@ type ProjectStatus struct {
 	Uptime      string            `json:"uptime,omitempty"`
 }
 
+// localBuildImage is a Dockerfile project's image tag, mirroring
+// production's local/{site}:latest convention.
+func localBuildImage(project *Project) string {
+	return fmt.Sprintf("local/%s:latest", project.Name)
+}
+
+// needsBuild reports whether createContainer will build a Dockerfile
+// project's image: when asked to (rebuildImage) or when it's missing.
+func (m *Manager) needsBuild(project *Project) bool {
+	if project.ImageType != "custom" || project.ImageSource != "build" {
+		return false
+	}
+	return project.rebuildImage || !m.docker.ImageExists(localBuildImage(project))
+}
+
+// prepareBuild collects secret build-arg values (which may prompt) before a
+// caller removes the old container, so a Ctrl-C or blank answer can't leave
+// the project with no container. A no-op unless createContainer will build.
+func (m *Manager) prepareBuild(project *Project) {
+	if project.buildArgValues == nil && m.needsBuild(project) {
+		// Pin the decision, so resolveImage builds with these values even
+		// if its own needsBuild check would now disagree.
+		project.rebuildImage = true
+		project.buildArgValues = resolveBuildArgs(project.BuildArgs)
+	}
+}
+
 // resolveImage figures out which image a project's container should run,
 // pulling or building it as needed, and returns the reference to run it
 // with. Mirrors production Alios's image_type/custom_image_source decision
@@ -862,12 +1001,21 @@ func (m *Manager) resolveImage(project *Project) (string, error) {
 			// convention. No PullImage call at all: the Dockerfile itself
 			// encodes whatever the image needs, same as production skipping
 			// registry auth entirely for a local build.
-			image := fmt.Sprintf("local/%s:latest", project.Name)
+			image := localBuildImage(project)
+			if !m.needsBuild(project) {
+				return image, nil
+			}
+			values := project.buildArgValues
+			if values == nil {
+				values = resolveBuildArgs(project.BuildArgs)
+			}
+			plain, secret := splitBuildArgs(values)
 			if err := m.docker.BuildImage(&docker.BuildConfig{
 				Tag:            image,
 				DockerfilePath: filepath.Join(project.Path, project.DockerfilePath),
 				Context:        filepath.Join(project.Path, project.BuildContext),
-				BuildArgs:      project.BuildArgs,
+				BuildArgs:      plain,
+				SecretArgs:     secret,
 			}); err != nil {
 				return "", fmt.Errorf("failed to build image: %w", err)
 			}
@@ -910,9 +1058,10 @@ func (m *Manager) ImageReference(project *Project) string {
 // a copy is already present locally (offline work, a flaky registry). If
 // the pull fails *and* nothing is cached, it returns a real error instead
 // of letting `docker run` fail later with an opaque exit status 125 -- and
-// names the likely cause when the registry said "denied", which for GHCR
-// almost always means the GitHub token lacks the read:packages scope even
-// though `docker login` itself succeeded with it.
+// names the likely cause when the registry said "denied": ingot's images are
+// public, so that's almost always a stale ghcr.io login in Docker's config
+// (older ingot versions ran `docker login ghcr.io`) whose token has been
+// revoked or expired - Docker still sends it, and GHCR refuses it.
 func (m *Manager) pullOrUseLocal(image string) error {
 	err := m.docker.PullImage(image, nil)
 	if err == nil {
@@ -926,14 +1075,14 @@ func (m *Manager) pullOrUseLocal(image string) error {
 	msg := fmt.Sprintf("image %s could not be pulled and is not available locally: %v", image, err)
 	lower := strings.ToLower(err.Error())
 	if strings.Contains(lower, "denied") || strings.Contains(lower, "unauthorized") {
-		msg += "\n  The registry refused access. Your GitHub token is probably missing the 'read:packages' scope" +
-			"\n  (docker login accepts any valid token, but GHCR only serves private images to one with read:packages)." +
-			"\n  Fix: gh auth refresh -h github.com -s read:packages   (or export GITHUB_TOKEN with read:packages)" +
+		msg += "\n  The registry refused access. Ingot's images are public, so this is usually a saved ghcr.io" +
+			"\n  login in Docker's config whose token has been revoked or expired - Docker still sends it." +
+			"\n  Fix: docker logout ghcr.io" +
 			"\n  Then run 'ingot doctor' to confirm registry access."
 	} else if strings.Contains(lower, "not found") || strings.Contains(lower, "manifest unknown") {
 		msg += "\n  The registry has no such tag. Run 'ingot doctor' to see which image this project resolves to."
 	} else {
-		msg += "\n  Run 'ingot doctor' to check Docker, GitHub, and registry access."
+		msg += "\n  Run 'ingot doctor' to check Docker and registry access."
 	}
 	return fmt.Errorf("%s", msg)
 }
@@ -1115,7 +1264,7 @@ func (m *Manager) getRunningDatabases() ([]string, error) {
 	var databases []string
 	for _, container := range containers {
 		// Extract database name from container name (ingot_mysql -> mysql)
-		if strings.HasPrefix(container, "ingot_") && !strings.Contains(container, "_caddy") && !strings.Contains(container, "_mailhog") {
+		if strings.HasPrefix(container, "ingot_") && !strings.Contains(container, "_caddy") {
 			dbName := strings.TrimPrefix(container, "ingot_")
 			databases = append(databases, dbName)
 		}

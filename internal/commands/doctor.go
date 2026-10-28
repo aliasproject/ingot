@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/aliasproject/ingot/internal/config"
-	"github.com/aliasproject/ingot/internal/github"
 	"github.com/aliasproject/ingot/internal/project"
 	"github.com/aliasproject/ingot/internal/services"
 	"github.com/aliasproject/ingot/internal/utils"
@@ -117,11 +116,11 @@ func (h *Handler) handleDoctor() error {
 
 	h.doctorDocker(r)
 	h.doctorInstall(r)
-	tokenOK := h.doctorGitHub(r)
+	registryOK := h.doctorRegistry(r)
 	h.doctorNetwork(r)
 	h.doctorServices(r)
 	h.doctorSSL(r)
-	h.doctorProject(r, tokenOK)
+	h.doctorProject(r, registryOK)
 	h.doctorShare(r)
 	h.doctorIdle(r)
 
@@ -169,53 +168,21 @@ func (h *Handler) doctorInstall(r *doctorReport) {
 	}
 }
 
-// doctorGitHub verifies the full chain from "a token exists" through "the
-// registry will actually serve us an image", and returns whether the last
-// link holds so the project section can skip a doomed registry probe.
-func (h *Handler) doctorGitHub(r *doctorReport) bool {
-	r.section("GITHUB")
-
-	token, source := h.github.FindToken()
-	if token == "" {
-		r.fail("No GitHub token found (checked GITHUB_TOKEN and 'gh auth token')",
-			"ingot github-auth, or export GITHUB_TOKEN=<token with repo + read:packages>")
-		return false
-	}
-	r.ok("Token found via %s", source)
-
-	if err := h.github.ValidateToken(token); err != nil {
-		r.fail(fmt.Sprintf("Token rejected by GitHub: %v", err), "ingot github-auth (or 'gh auth login' again)")
-		return false
-	}
-	r.ok("Token valid for GitHub user %s", h.github.Username(token))
-
-	scopeOK := true
-	scopes, reported, err := h.github.TokenScopes(token)
-	switch {
-	case err != nil:
-		r.warn(fmt.Sprintf("Could not read token scopes: %v", err), "")
-	case !reported:
-		r.warn("Token does not report scopes (fine-grained token?) - can't confirm read:packages", "if pulls are denied, grant the token package read access")
-	case github.HasPackagesScope(scopes):
-		r.ok("Token scopes include package read access (%s)", strings.Join(scopes, ", "))
-	default:
-		scopeOK = false
-		r.fail(fmt.Sprintf("Token scopes (%s) lack read:packages - ghcr.io pulls will be denied", strings.Join(scopes, ", ")),
-			"gh auth refresh -h github.com -s read:packages   (or use a GITHUB_TOKEN that has read:packages)")
-	}
-
-	if dockerLoggedIntoGHCR() {
-		r.ok("Docker has stored credentials for ghcr.io")
-	} else {
-		r.fail("Docker is not logged into ghcr.io", "ingot github-auth (runs 'docker login ghcr.io' with your token)")
-	}
+// doctorRegistry checks that ghcr.io serves ingot's images, and returns
+// whether it does so the project section can skip a doomed registry probe.
+// The images are public, so no login is involved; the usual cause of a
+// refusal is a ghcr.io login left in Docker's config (older ingot versions
+// ran `docker login ghcr.io`) whose token has since been revoked or expired.
+// Docker sends stored credentials even for a public image, and GHCR answers
+// a bad one with "denied" rather than falling back to anonymous access.
+func (h *Handler) doctorRegistry(r *doctorReport) bool {
+	r.section("REGISTRY")
 
 	if err := h.docker.CheckRegistryAccess(doctorProbeImage); err != nil {
-		fix := "ingot github-auth"
-		if !scopeOK {
-			fix = "grant read:packages (see above), then ingot github-auth to re-login docker"
-		} else if strings.Contains(strings.ToLower(err.Error()), "denied") {
-			fix = "the token's owner may need access to the aliasproject packages, or SSO authorization for the org"
+		fix := "check this machine can reach ghcr.io"
+		lower := strings.ToLower(err.Error())
+		if dockerLoggedIntoGHCR() && (strings.Contains(lower, "denied") || strings.Contains(lower, "unauthorized")) {
+			fix = "docker logout ghcr.io   (Docker's saved ghcr.io login is being refused; ingot's images are public and need none)"
 		}
 		r.fail(fmt.Sprintf("Registry refused %s: %v", doctorProbeImage, err), fix)
 		return false
@@ -403,6 +370,13 @@ func (h *Handler) doctorProject(r *doctorReport, registryOK bool) {
 	}
 
 	if info, err := h.docker.InspectContainer(proj.Container); err == nil {
+		// Versions before ALI-837 stored every build-arg value in this
+		// label, credentials included.
+		if stored := project.StoredSecretBuildArgs(info.Labels); len(stored) > 0 {
+			r.warn(fmt.Sprintf("Container label stores the value of build arg %s (readable with docker inspect)", strings.Join(stored, ", ")),
+				"revoke that credential (the old image's history may hold it too), then ingot rebuild, which asks for the new value and doesn't save it")
+		}
+
 		bridge := config.GetNetworkConfig().BridgeName
 		if utils.StringSliceContains(info.Networks, bridge) {
 			r.ok("Container attached to %s", bridge)
@@ -452,7 +426,7 @@ func (h *Handler) doctorImage(r *doctorReport, image string, registryOK bool, ve
 	if !registryOK {
 		if !local {
 			r.fail(fmt.Sprintf("Image %s is not cached locally and registry access failed (%s)", image, verb),
-				"fix the GITHUB section above; ingot can't pull this image until then")
+				"fix the REGISTRY section above; ingot can't pull this image until then")
 		}
 		return
 	}

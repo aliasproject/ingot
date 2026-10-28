@@ -4,12 +4,12 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/aliasproject/ingot/internal/config"
 	"github.com/aliasproject/ingot/internal/docker"
-	"github.com/aliasproject/ingot/internal/github"
 	"github.com/aliasproject/ingot/internal/project"
 	"github.com/aliasproject/ingot/internal/services"
 	"github.com/aliasproject/ingot/internal/share"
@@ -26,7 +26,6 @@ type Handler struct {
 	services *services.Manager
 	ssl      *ssl.Manager
 	share    *share.Manager
-	github   *github.Client
 	updater  *updater.Updater
 }
 
@@ -40,7 +39,6 @@ func NewHandler(dockerClient *docker.Client, cfg *config.Config) *Handler {
 		services: services.NewManager(dockerClient, sslManager),
 		ssl:      sslManager,
 		share:    share.NewManager(dockerClient, cfg, sslManager),
-		github:   github.NewClient(cfg),
 		updater:  updater.New(),
 	}
 }
@@ -53,11 +51,6 @@ func (h *Handler) GetServices() *services.Manager {
 // GetSSL returns the SSL manager
 func (h *Handler) GetSSL() *ssl.Manager {
 	return h.ssl
-}
-
-// GetGitHub returns the GitHub client
-func (h *Handler) GetGitHub() *github.Client {
-	return h.github
 }
 
 // Execute processes the command line arguments and executes the appropriate command
@@ -144,13 +137,6 @@ func (h *Handler) Execute(args []string) error {
 		return h.handleDNSCleanup()
 	case "dns-setup":
 		return h.handleDNSSetup()
-
-	// GitHub authentication
-	case "github-auth", "auth":
-		return h.handleGitHubAuth()
-
-	case "github-verify":
-		return h.handleGitHubVerify()
 
 	case "doctor":
 		return h.handleDoctor()
@@ -344,7 +330,7 @@ func (h *Handler) handleInstall() error {
 		return h.showStatus()
 	}
 
-	installer := NewInstaller(h.docker, h.config, h.services, h.ssl, h.github)
+	installer := NewInstaller(h.docker, h.config, h.services, h.ssl)
 	return installer.Install()
 }
 
@@ -367,25 +353,20 @@ func (h *Handler) isFullySetUp() bool {
 	return h.config.IsInstalled() && h.services.IsRunning() && h.ssl.CAExists() && h.ssl.IsCertificateInstalled()
 }
 
-// ensureUpdaterAuthenticated gives the updater a GitHub token, when one is
-// available, before checking/downloading a release. The repo is public, so
-// updates also work without one; a token only raises the API rate limit.
+// ensureUpdaterAuthenticated hands the updater a GitHub token when one is
+// already available - GITHUB_TOKEN, or the GitHub CLI's - without ever asking
+// for one. The updater is the only part of ingot that uses a token, and it
+// only raises GitHub's API rate limit: the repo is public, so updates work
+// without one. Image pulls need none.
 func (h *Handler) ensureUpdaterAuthenticated() {
-	if token := h.config.GetGithubToken(); token != "" {
-		h.updater.SetGitHubToken(token)
-		return
+	token := h.config.GetGithubToken()
+	if token == "" {
+		if out, err := exec.Command("gh", "auth", "token").Output(); err == nil {
+			token = strings.TrimSpace(string(out))
+		}
 	}
-
-	fmt.Println("🔍 Checking for updates...")
-	if err := h.github.EnsureAuthenticated(); err != nil {
-		fmt.Printf(utils.Colorize("[INFO]", utils.ColorBlue) + " No GitHub authentication found, checking without it.\n")
-		fmt.Printf("   Run 'ingot github-auth' if GitHub's API rate limit gets in the way.\n\n")
-		return
-	}
-
-	if token := h.config.GetGithubToken(); token != "" {
+	if token != "" {
 		h.updater.SetGitHubToken(token)
-		fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " GitHub authentication found, checking for updates...")
 	}
 }
 
@@ -563,11 +544,6 @@ func (h *Handler) handleStart(args ...string) error {
 		return fmt.Errorf("failed to start global services: %w", err)
 	}
 
-	// Ensure GitHub authentication
-	if err := h.github.EnsureAuthenticated(); err != nil {
-		fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Warning: GitHub authentication failed: %v\n", err)
-	}
-
 	fmt.Printf(utils.Colorize("[STARTING]", utils.ColorCyan)+" Starting project '%s' with PHP %s...\n", proj.Name, phpVersion)
 
 	if err := h.projects.Start(phpVersion, imageChoice, serverRoot); err != nil {
@@ -637,8 +613,8 @@ func (h *Handler) handleStart(args ...string) error {
 }
 
 // promptForBuildArgs asks for a value for each ARG a Dockerfile declares
-// with no default, rather than silently feeding it something like the
-// current GitHub auth token - a build-arg's value (e.g. a credential for a
+// with no default, rather than silently feeding it something like a
+// GITHUB_TOKEN from the environment - a build-arg's value (e.g. a credential for a
 // private package registry) isn't necessarily something the user wants used
 // for an arbitrary local build without being asked first. Returns nil if the
 // Dockerfile declares no such ARGs.
@@ -651,6 +627,13 @@ func promptForBuildArgs(dockerfilePath string) map[string]string {
 	fmt.Println("This Dockerfile declares build arguments with no default value:")
 	buildArgs := make(map[string]string)
 	for _, name := range argNames {
+		if project.IsSecretBuildArg(name) {
+			if value := project.SecretBuildArgFromEnv(name); value != "" {
+				fmt.Printf("  %s: using %s%s\n", name, project.BuildArgEnvPrefix, strings.ToUpper(name))
+				buildArgs[name] = value
+				continue
+			}
+		}
 		value := utils.GetInput(fmt.Sprintf("  %s (leave blank to skip): ", name))
 		if value != "" {
 			buildArgs[name] = value
@@ -1264,48 +1247,6 @@ func (h *Handler) handleDNSSetup() error {
 	return nil
 }
 
-// handleGitHubAuth handles GitHub authentication
-func (h *Handler) handleGitHubAuth() error {
-	return h.github.Authenticate()
-}
-
-// handleGitHubVerify verifies GitHub authentication and GHCR access
-func (h *Handler) handleGitHubVerify() error {
-	fmt.Println("🔍 Verifying GitHub Authentication")
-	fmt.Println(strings.Repeat("-", 50))
-
-	// Check if token exists
-	token := h.config.GetGithubToken()
-	if token == "" {
-		fmt.Println(utils.Colorize("[ERROR]", utils.ColorRed) + " No GitHub token found")
-		fmt.Println("\nRun 'ingot github-auth' to authenticate")
-		return fmt.Errorf("not authenticated")
-	}
-
-	fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " GitHub token found in configuration")
-
-	// Verify we can pull from ghcr.io
-	fmt.Println("\n[AUTH] Testing access to ghcr.io...")
-
-	// Try to pull a small test image
-	testImage := "ghcr.io/aliasproject/dns:latest"
-	fmt.Printf("Attempting to pull: %s\n", testImage)
-
-	if err := h.docker.PullImage(testImage, nil); err != nil {
-		fmt.Printf(utils.Colorize("[ERROR]", utils.ColorRed)+" Failed to pull image: %v\n", err)
-		fmt.Println("\n[INFO] Troubleshooting:")
-		fmt.Println("   1. Verify Docker login: docker login ghcr.io")
-		fmt.Println("   2. Check token permissions: needs 'read:packages' scope")
-		fmt.Println("   3. Try re-authenticating: ingot github-auth")
-		return fmt.Errorf("ghcr.io access failed")
-	}
-
-	fmt.Println(utils.Colorize("[SUCCESS]", utils.ColorGreen) + " Successfully pulled image from ghcr.io")
-	fmt.Println("\n[COMPLETE] GitHub authentication is working correctly!")
-
-	return nil
-}
-
 // handleDatabaseAdd adds a database service
 func (h *Handler) handleDatabaseAdd() error {
 	// Show proper capitalization in UI
@@ -1322,7 +1263,7 @@ func (h *Handler) handleDatabaseAdd() error {
 		name = "mysql"
 	}
 
-	versions := []string{"8.0", "5.7"}
+	versions := []string{"8.0"}
 	if dbType == "postgresql" {
 		versions = []string{"16", "15", "14", "13"}
 	}
@@ -1448,7 +1389,6 @@ func (h *Handler) showStatus() error {
 	// Installation status
 	fmt.Printf("\n" + utils.Colorize("[PACKAGE]", utils.ColorCyan) + " Installation:\n")
 	fmt.Printf("  Binary: %s %s\n", config.IngotBinary, utils.BoolStatus(h.config.IsInstalled()))
-	fmt.Printf("  Config: Environment variables %s\n", utils.BoolStatus(h.config.GetGithubToken() != ""))
 
 	// Global services status
 	fmt.Printf("\n" + utils.Colorize("[WEB]", utils.ColorBlue) + " Global Services:\n")
@@ -1596,7 +1536,7 @@ COMMANDS:
     cert repair        Regenerate all vhosts (no container start) + restart Caddy
 
   System:
-    doctor             Check Docker, GitHub/GHCR access, DNS, services, SSL,
+    doctor             Check Docker, registry access, DNS, services, SSL,
                         and the current project, with a fix for each failure
     install            Install Ingot
     update             Update to latest version
@@ -1631,10 +1571,6 @@ EXAMPLES:
     network-help       Show network configuration help
     dns-setup          Set up DNS resolver for .test domains
     dns-cleanup        Clean up DNS configuration
-
-  Authentication:
-    github-auth        Setup GitHub authentication
-    github-verify      Verify GitHub authentication and GHCR access
 
   Other:
     logs [container]   Show container logs

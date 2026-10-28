@@ -18,7 +18,7 @@ labels.
 - Shared DNS so `*.test` resolves without touching `/etc/hosts`
 - A branded "No project here" page for any `*.test` domain that isn't running,
   instead of a bare connection error
-- Optional MySQL/PostgreSQL, and MailHog for email testing
+- Optional MySQL/PostgreSQL, and Mailpit for email testing
 - Automatic WordPress detection (extra extensions, hardening, live-reload)
 - A choice of prebuilt image, your project's own Dockerfile, or an arbitrary
   pulled image — per project, switchable any time
@@ -42,8 +42,7 @@ Other platforms: swap `ingot-linux-amd64` for `ingot-linux-arm64`,
 `ingot-darwin-amd64`, `ingot-darwin-arm64`, or `ingot-windows-amd64.exe`.
 
 On first run, `ingot` installs itself to `/usr/local/bin/ingot` and walks
-you through database configuration and GitHub authentication (needed to pull
-private images from GHCR). If it's interrupted partway through, just run
+you through database configuration. If it's interrupted partway through, just run
 `ingot install` again — every step is safe to repeat, so it picks up from
 wherever it left off rather than starting over.
 
@@ -51,7 +50,9 @@ wherever it left off rather than starting over.
 
 - Docker installed and running
 - macOS or Linux (Windows via WSL2)
-- A GitHub account (for pulling private container images)
+
+No GitHub account or registry login is needed: the container images on
+`ghcr.io/aliasproject` are public.
 
 ## Quick start
 
@@ -109,7 +110,7 @@ ingot shell --user=root    # shell as root
 
 ### Global services
 
-DNS, Caddy, MailHog, and any configured databases are shared across every
+DNS, Caddy, Mailpit, and any configured databases are shared across every
 project:
 
 ```
@@ -168,7 +169,6 @@ ingot cert repair     # Regenerate vhosts and restart Caddy
 
 ```
 ingot status          Full system status (services, network, install)
-ingot github-auth     (Re-)authenticate with GitHub
 ingot update          Update to the latest version
 ingot check-update    Check for an available update
 ingot uninstall       Uninstall Ingot
@@ -186,7 +186,18 @@ is built:
 - **Custom Dockerfile** — builds from the project's own `Dockerfile`, the
   same one you'd actually deploy. If it declares build args with no default
   (`ARG SOME_TOKEN`, no `=value`), you're prompted for each one explicitly —
-  nothing is silently reused from your GitHub auth or anything else.
+  nothing is silently reused from your environment or anywhere else. Args
+  whose names look like credentials (containing e.g. `TOKEN`, `SECRET`,
+  `PASSWORD`, `PASSPHRASE` or `OAUTH`, or the word `AUTH`, `KEY`, `PASS`,
+  `PAT` or `PWD` between underscores, e.g. `COMPOSER_AUTH`) are passed to `docker build` through its
+  environment rather than its command line, and are never saved on the
+  container: `ingot rebuild` asks for them again, unless you set
+  `INGOT_BUILD_ARG_<NAME>` (e.g. `INGOT_BUILD_ARG_GITHUB_TOKEN`), which the
+  first prompt also uses. Other recreates (`ingot env`, `ingot php`, ...)
+  reuse the built image, so they don't ask; run `ingot rebuild` after
+  editing the Dockerfile. An `ARG` value can still end up in the
+  image's history, so for credentials prefer a BuildKit secret
+  (`RUN --mount=type=secret,id=...`) in the Dockerfile.
 - **Custom pull** — pulls a specific image you name.
 
 Switch between them any time with `ingot image <mode>` — no need to remove
@@ -224,7 +235,9 @@ Ingot has no config file — these are the only settings, read from your
 shell environment:
 
 ```
-GITHUB_TOKEN                 GitHub token for pulling private images
+GITHUB_TOKEN                 Optional; only `ingot update` uses it (falls back to
+                             `gh auth token`), to read releases and raise
+                             GitHub's API rate limit
 INGOT_DEFAULT_PHP_VERSION    Default PHP version for new projects
 INGOT_HOST_IP                Override auto-detected host IP
 INGOT_DNS_PORT               DNS listener port (default: 53)
@@ -239,7 +252,7 @@ INGOT_IDLE_TIMEOUT           Stop projects idle this long, e.g. 30m, 2h, or
 ## Supported versions
 
 - **PHP:** 8.5, 8.4 (default), 8.3, 8.2, 8.1, 8.0, 7.4
-- **MySQL:** 8.0, 5.7
+- **MySQL:** 8.0
 - **PostgreSQL:** 16, 15, 14, 13
 
 ## Building from source
@@ -267,6 +280,7 @@ repair` if the CA isn't installed.
 **`ingot install` seems stuck partway through** — just run it again; every
 step is safe to repeat and picks up from where it stopped.
 
-**Container pull denied** — re-authenticate with `ingot github-auth`, or if
-you're on a fresh `gh` CLI login, make sure it has `read:packages` scope
-(`gh auth refresh -h github.com -s read:packages`).
+**Container pull denied** — the images are public, so this is almost always
+an old `ghcr.io` login saved in Docker's config whose token has been revoked
+or expired (Docker still sends it). Run `docker logout ghcr.io`, then
+`ingot doctor`.
