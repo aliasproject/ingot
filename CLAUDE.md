@@ -18,7 +18,7 @@ go vet ./...                         # static checks
 
 `go test ./...` covers only a few pure functions so far; there's no linter/Makefile. Most changes are verified with `go build`/`go vet` and by running the CLI.
 
-Releases are cut with `scripts/release.sh <version> [notes]`, which patches `internal/config.Version` via `sed`, cross-compiles for darwin/linux/windows, and generates `manifest.json` for the self-updater (see `docs/UPDATES.md` for the full update-distribution design).
+Releases are cut with `scripts/release.sh <version> [notes]` (run from `scripts/`, on a clean `main`). It patches `internal/config.Version` via `sed` and commits that to `main`, cross-compiles for darwin/linux/windows (amd64, plus arm64 for darwin/linux), builds and pushes the `ingot-idle` and `ingot-openssl` images for that version to GHCR (amd64+arm64), then pushes a `v<version>` tag and publishes a GitHub release with the binaries, which is what the self-updater reads. `docs/UPDATES.md` describes an older manifest/S3 design that the code no longer uses.
 
 ## Architecture
 
@@ -44,7 +44,7 @@ Releases are cut with `scripts/release.sh <version> [notes]`, which patches `int
 
 **Networking**: all ingot containers share one Docker bridge network (`ingot_internal`, see `config.GetNetworkConfig()`). The `ingot_dns` container resolves `*.test` to the host so `https://<project>.test` reaches Caddy, which reverse-proxies to `ingot_php_<project>` by container name (Caddy resolves Docker container names on the shared network natively — no explicit resolver directive needed). Project containers get `ingot_dns`'s live container IP injected as their DNS server (resolved at container-creation time, not hardcoded) so they can resolve other `.test` domains from inside.
 
-**Self-update** (`internal/updater/updater.go`): checks GitHub Releases (private repo, needs `GITHUB_TOKEN`) first, then falls back to a public S3/R2-hosted `manifest.json`. Replaces the running binary atomically, escalating to `sudo`/Windows UAC if the install path isn't writable.
+**Self-update** (`internal/updater/updater.go`): reads the latest GitHub Release and downloads the asset for this OS/arch. While the repo is private it needs a token (`GITHUB_TOKEN`, else `gh auth token`); there's no other update source. Replaces the running binary atomically, escalating to `sudo`/Windows UAC if the install path isn't writable.
 
 ## Working in this codebase
 
