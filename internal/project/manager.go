@@ -2,9 +2,12 @@ package project
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"os/user"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -195,7 +198,7 @@ func serializeBuildArgs(args map[string]string) string {
 		return ""
 	}
 	pairs := make([]string, 0, len(args))
-	for _, key := range sortedKeys(args) {
+	for _, key := range slices.Sorted(maps.Keys(args)) {
 		if IsSecretBuildArg(key) {
 			pairs = append(pairs, key)
 		} else {
@@ -218,16 +221,20 @@ func parseBuildArgs(encoded string) map[string]string {
 	for _, pair := range strings.Split(encoded, ",") {
 		key, value, found := strings.Cut(pair, "=")
 		switch {
+		case !buildArgNameRe.MatchString(key):
+			// The tail of a value that contained a comma (e.g. a JSON
+			// COMPOSER_AUTH), not an arg: skip it, so no piece of a
+			// secret becomes a plain arg.
 		case IsSecretBuildArg(key):
 			args[key] = ""
 		case found:
 			args[key] = value
 		}
-		// A bare non-secret fragment is the tail of a value that contained
-		// a comma; skip it rather than turn it into a bogus arg.
 	}
 	return args
 }
+
+var buildArgNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // StoredSecretBuildArgs returns the secret build args whose values a
 // container's labels still hold, from versions before ALI-837. For doctor.
@@ -260,7 +267,7 @@ func SecretBuildArgFromEnv(key string) string {
 // up. A blank answer builds without the arg, with a warning.
 func resolveBuildArgs(args map[string]string) map[string]string {
 	resolved := make(map[string]string, len(args))
-	for _, key := range sortedKeys(args) {
+	for _, key := range slices.Sorted(maps.Keys(args)) {
 		value := args[key]
 		if value == "" && IsSecretBuildArg(key) {
 			value = SecretBuildArgFromEnv(key)
@@ -294,15 +301,6 @@ func splitBuildArgs(args map[string]string) (plain, secret map[string]string) {
 		(*target)[key] = value
 	}
 	return plain, secret
-}
-
-func sortedKeys(m map[string]string) []string {
-	keys := make([]string, 0, len(m))
-	for key := range m {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 // Initialize creates a new project in the current directory
@@ -409,6 +407,7 @@ func (m *Manager) Start(phpVersion string, imageChoice ImageChoice, serverRoot .
 					reasons = append(reasons, "a newer image is available")
 				}
 				fmt.Printf(utils.Colorize("[RESTARTING]", utils.ColorCyan)+" %s, recreating container...\n", strings.Join(reasons, " and "))
+				m.prepareBuild(project)
 				if err := m.docker.RemoveContainer(project.Container, true); err != nil {
 					return fmt.Errorf("failed to remove old container: %w", err)
 				}
@@ -463,7 +462,7 @@ func (m *Manager) Rebuild() error {
 	}
 
 	project.rebuildImage = true
-	project.buildArgValues = resolveBuildArgs(project.BuildArgs)
+	m.prepareBuild(project)
 
 	if m.docker.ContainerExists(project.Container) {
 		fmt.Printf(utils.Colorize("[REBUILDING]", utils.ColorCyan)+" Recreating '%s'...\n", project.Container)
@@ -539,6 +538,7 @@ func (m *Manager) ChangePHPVersion(newVersion string) error {
 	}
 
 	// Stop and remove existing container
+	m.prepareBuild(project)
 	if err := m.docker.RemoveContainer(project.Container, true); err != nil {
 		return fmt.Errorf("failed to remove old container: %w", err)
 	}
@@ -581,6 +581,7 @@ func (m *Manager) ChangeImage(choice ImageChoice) error {
 	project.BuildArgs = choice.BuildArgs
 	project.Framework = choice.Framework
 	project.rebuildImage = true
+	m.prepareBuild(project)
 
 	if err := m.docker.RemoveContainer(project.Container, true); err != nil {
 		return fmt.Errorf("failed to remove old container: %w", err)
@@ -616,6 +617,7 @@ func (m *Manager) ChangeServerRoot(newServerRoot string) error {
 
 	// Stop and remove existing container if running
 	if project.Status == "running" {
+		m.prepareBuild(project)
 		if err := m.docker.RemoveContainer(project.Container, true); err != nil {
 			return fmt.Errorf("failed to remove old container: %w", err)
 		}
@@ -701,6 +703,7 @@ func (m *Manager) UnsetEnv(keys []string) error {
 func (m *Manager) recreate(project *Project) error {
 	wasRunning := project.Status == "running"
 
+	m.prepareBuild(project)
 	if err := m.docker.RemoveContainer(project.Container, true); err != nil {
 		return fmt.Errorf("failed to remove old container: %w", err)
 	}
@@ -955,6 +958,30 @@ type ProjectStatus struct {
 // already-running container for staleness (see imageIsStale) before
 // deciding whether starting it as-is is actually correct, and so Rebuild
 // can force the same resolution on demand.
+// localBuildImage is a Dockerfile project's image tag, mirroring
+// production's local/{site}:latest convention.
+func localBuildImage(project *Project) string {
+	return fmt.Sprintf("local/%s:latest", project.Name)
+}
+
+// needsBuild reports whether createContainer will build a Dockerfile
+// project's image: when asked to (rebuildImage) or when it's missing.
+func (m *Manager) needsBuild(project *Project) bool {
+	if project.ImageType != "custom" || project.ImageSource != "build" {
+		return false
+	}
+	return project.rebuildImage || !m.docker.ImageExists(localBuildImage(project))
+}
+
+// prepareBuild collects secret build-arg values (which may prompt) before a
+// caller removes the old container, so a Ctrl-C or blank answer can't leave
+// the project with no container. A no-op unless createContainer will build.
+func (m *Manager) prepareBuild(project *Project) {
+	if project.buildArgValues == nil && m.needsBuild(project) {
+		project.buildArgValues = resolveBuildArgs(project.BuildArgs)
+	}
+}
+
 func (m *Manager) resolveImage(project *Project) (string, error) {
 	switch project.ImageType {
 	case "custom":
@@ -970,8 +997,8 @@ func (m *Manager) resolveImage(project *Project) (string, error) {
 			// convention. No PullImage call at all: the Dockerfile itself
 			// encodes whatever the image needs, same as production skipping
 			// registry auth entirely for a local build.
-			image := fmt.Sprintf("local/%s:latest", project.Name)
-			if !project.rebuildImage && m.docker.ImageExists(image) {
+			image := localBuildImage(project)
+			if !m.needsBuild(project) {
 				return image, nil
 			}
 			values := project.buildArgValues

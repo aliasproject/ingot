@@ -190,8 +190,9 @@ is built:
   same one you'd actually deploy. If it declares build args with no default
   (`ARG SOME_TOKEN`, no `=value`), you're prompted for each one explicitly —
   nothing is silently reused from your environment or anywhere else. Args
-  that look like credentials (`*TOKEN*`, `*SECRET*`, `*PASSWORD*`, `*_AUTH`,
-  `*_KEY`, `*_PAT`, ...) are passed to `docker build` through its
+  whose names look like credentials (containing `TOKEN`, `SECRET`,
+  `PASSWORD`, `PASSPHRASE` or `OAUTH`, or the word `AUTH`, `KEY`, `PASS`,
+  `PAT` or `PWD` between underscores, e.g. `COMPOSER_AUTH`) are passed to `docker build` through its
   environment rather than its command line, and are never saved on the
   container: `ingot rebuild` asks for them again, unless you set
   `INGOT_BUILD_ARG_<NAME>` (e.g. `INGOT_BUILD_ARG_GITHUB_TOKEN`), which the

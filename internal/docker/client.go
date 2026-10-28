@@ -7,9 +7,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -704,23 +705,14 @@ func (c *Client) BuildImage(cfg *BuildConfig) error {
 // reads from its own environment, so the value never shows up in `ps`.
 func buildCommand(cfg *BuildConfig) (args, env []string) {
 	args = []string{"build", "-f", cfg.DockerfilePath, "-t", cfg.Tag}
-	for _, key := range sortedKeys(cfg.BuildArgs) {
+	for _, key := range slices.Sorted(maps.Keys(cfg.BuildArgs)) {
 		args = append(args, "--build-arg", key+"="+cfg.BuildArgs[key])
 	}
-	for _, key := range sortedKeys(cfg.SecretArgs) {
+	for _, key := range slices.Sorted(maps.Keys(cfg.SecretArgs)) {
 		args = append(args, "--build-arg", key)
 		env = append(env, key+"="+cfg.SecretArgs[key])
 	}
 	return append(args, cfg.Context), env
-}
-
-func sortedKeys(m map[string]string) []string {
-	keys := make([]string, 0, len(m))
-	for key := range m {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 // ExecCommand executes a command in a running container.

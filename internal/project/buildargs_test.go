@@ -6,12 +6,12 @@ import (
 )
 
 func TestIsSecretBuildArg(t *testing.T) {
-	for _, name := range []string{"GITHUB_TOKEN", "github_token", "COMPOSER_AUTH", "DB_PASSWORD", "APP_SECRET", "SSH_KEY", "KEY", "NPM_AUTH_TOKEN", "PRIVATE_REPO_URL", "GH_PAT", "REGISTRY_PASS", "APIKEY", "API_KEY", "NPMRC", "AUTH_HEADER"} {
+	for _, name := range []string{"GITHUB_TOKEN", "github_token", "COMPOSER_AUTH", "DB_PASSWORD", "APP_SECRET", "SSH_KEY", "KEY", "NPM_AUTH_TOKEN", "PRIVATE_REPO_URL", "GH_PAT", "REGISTRY_PASS", "APIKEY", "API_KEY", "NPMRC", "AUTH_HEADER", "SSH_PASSPHRASE", "GITHUB_OAUTH", "AUTHORIZATION", "DB_PWD"} {
 		if !IsSecretBuildArg(name) {
 			t.Errorf("IsSecretBuildArg(%q) = false, want true", name)
 		}
 	}
-	for _, name := range []string{"APP_UID", "PHP_VERSION", "NODE_ENV", "KEYBOARD_LAYOUT", "MONKEY_NAME", "AUTHOR", "PATH_PREFIX", "PASSPORT_URL", "COMPASS"} {
+	for _, name := range []string{"APP_UID", "PHP_VERSION", "NODE_ENV", "KEYBOARD_LAYOUT", "MONKEY_NAME", "AUTHOR", "PATH_PREFIX", "PASSPORT_URL", "COMPASS", "SSH_AUTH_SOCK"} {
 		if IsSecretBuildArg(name) {
 			t.Errorf("IsSecretBuildArg(%q) = true, want false", name)
 		}
@@ -91,5 +91,14 @@ func TestSplitBuildArgs(t *testing.T) {
 	}
 	if len(secret) != 1 || secret["GITHUB_TOKEN"] != "t" {
 		t.Errorf("secret = %v, want only GITHUB_TOKEN", secret)
+	}
+}
+
+// A legacy label whose secret value was JSON with commas in it must not
+// turn a piece of the secret into a plain arg.
+func TestParseBuildArgsDropsSecretTails(t *testing.T) {
+	args := parseBuildArgs(`COMPOSER_AUTH={"a":"b","c":"d==",APP_UID=1000`)
+	if len(args) != 2 || args["COMPOSER_AUTH"] != "" || args["APP_UID"] != "1000" {
+		t.Fatalf("args = %v, want only COMPOSER_AUTH (empty) and APP_UID", args)
 	}
 }
