@@ -1,5 +1,7 @@
 # Ingot Update System
 
+> **Outdated.** This describes an earlier manifest/S3 design. The current updater (`internal/updater/updater.go`) only reads GitHub Releases, which `scripts/release.sh` publishes. See CLAUDE.md's "Build & run" and "Self-update" notes.
+
 A minimal, efficient auto-update system for distributing Ingot binaries.
 
 ## Overview
