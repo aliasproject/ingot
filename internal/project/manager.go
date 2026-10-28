@@ -948,16 +948,6 @@ type ProjectStatus struct {
 	Uptime      string            `json:"uptime,omitempty"`
 }
 
-// resolveImage figures out which image a project's container should run,
-// pulling or building it as needed, and returns the reference to run it
-// with. Mirrors production Alios's image_type/custom_image_source decision
-// tree (ResolvePrebuiltImage.php, CreateApplication.php) - see the
-// Project/ImageChoice doc comments.
-//
-// Factored out of createContainer so Start can also call it to check an
-// already-running container for staleness (see imageIsStale) before
-// deciding whether starting it as-is is actually correct, and so Rebuild
-// can force the same resolution on demand.
 // localBuildImage is a Dockerfile project's image tag, mirroring
 // production's local/{site}:latest convention.
 func localBuildImage(project *Project) string {
@@ -982,6 +972,16 @@ func (m *Manager) prepareBuild(project *Project) {
 	}
 }
 
+// resolveImage figures out which image a project's container should run,
+// pulling or building it as needed, and returns the reference to run it
+// with. Mirrors production Alios's image_type/custom_image_source decision
+// tree (ResolvePrebuiltImage.php, CreateApplication.php) - see the
+// Project/ImageChoice doc comments.
+//
+// Factored out of createContainer so Start can also call it to check an
+// already-running container for staleness (see imageIsStale) before
+// deciding whether starting it as-is is actually correct, and so Rebuild
+// can force the same resolution on demand.
 func (m *Manager) resolveImage(project *Project) (string, error) {
 	switch project.ImageType {
 	case "custom":
