@@ -44,6 +44,17 @@ func DetectBuildArgs(dockerfilePath string) []string {
 	return names
 }
 
+// secretArgRe matches build-arg names that look like credentials, e.g.
+// GITHUB_TOKEN, NPM_AUTH, DB_PASSWORD, COMPOSER_AUTH, SSH_KEY.
+var secretArgRe = regexp.MustCompile(`(?i)(TOKEN|SECRET|PASSWORD|PASSWD|AUTH|CREDENTIAL|PRIVATE|(^|_)KEY$)`)
+
+// IsSecretBuildArg reports whether a build arg's value should be treated as
+// a credential: never stored in a container label, and asked for again (or
+// read from the same-named env var) when the image is rebuilt.
+func IsSecretBuildArg(name string) bool {
+	return secretArgRe.MatchString(name)
+}
+
 // DetectFramework inspects the project root for markers of a known framework.
 // Currently only WordPress is detected (wp-config.php covers stock WordPress
 // and Bedrock; wp-load.php covers stock WordPress installs that haven't been

@@ -86,11 +86,20 @@ func (c *Client) CheckAvailability() error {
 // see *why* docker failed - "exit status 125" on its own hides the real
 // cause, e.g. a registry "denied" on pull or "Unable to find image" on run.
 func (c *Client) Run(args ...string) error {
+	return c.runWithEnv(nil, args...)
+}
+
+// runWithEnv is Run with extra KEY=VALUE pairs added to the docker CLI's
+// environment, for values that mustn't appear in argv (where `ps` shows them).
+func (c *Client) runWithEnv(env []string, args ...string) error {
 	if err := c.CheckAvailability(); err != nil {
 		return err
 	}
 
 	cmd := exec.Command(c.dockerPath, args...)
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	cmd.Stdout = io.Discard
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -683,13 +692,17 @@ type BuildConfig struct {
 
 // BuildImage builds a Docker image from a Dockerfile, for projects that choose
 // a custom build instead of a prebuilt image (see project.Manager.createContainer).
+// Build-arg values go through the CLI's environment (`--build-arg KEY` with no
+// value reads KEY from it), not argv, since they're often credentials.
 func (c *Client) BuildImage(cfg *BuildConfig) error {
 	args := []string{"build", "-f", cfg.DockerfilePath, "-t", cfg.Tag}
+	var env []string
 	for key, value := range cfg.BuildArgs {
-		args = append(args, "--build-arg", fmt.Sprintf("%s=%s", key, value))
+		args = append(args, "--build-arg", key)
+		env = append(env, key+"="+value)
 	}
 	args = append(args, cfg.Context)
-	return c.Run(args...)
+	return c.runWithEnv(env, args...)
 }
 
 // ExecCommand executes a command in a running container.

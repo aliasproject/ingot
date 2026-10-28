@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -177,30 +178,100 @@ func (m *Manager) GetCurrentProject() (*Project, error) {
 // single Docker label as comma-separated KEY=VALUE pairs, the same way every
 // other piece of project state here lives in labels instead of a config
 // file. Values containing a comma aren't supported by this simple encoding.
+// Secret-looking args (IsSecretBuildArg) are stored as a bare KEY, because
+// anything with Docker access can read labels; resolveBuildArgs fills their
+// values back in at build time.
 func serializeBuildArgs(args map[string]string) string {
 	if len(args) == 0 {
 		return ""
 	}
+	keys := make([]string, 0, len(args))
+	for key := range args {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
 	pairs := make([]string, 0, len(args))
-	for key, value := range args {
-		pairs = append(pairs, key+"="+value)
+	for _, key := range keys {
+		if IsSecretBuildArg(key) {
+			pairs = append(pairs, key)
+		} else {
+			pairs = append(pairs, key+"="+args[key])
+		}
 	}
 	return strings.Join(pairs, ",")
 }
 
+// parseBuildArgs returns secret args with an empty value. Labels written
+// before ALI-837 still carry KEY=VALUE for them; that value is ignored
+// rather than reused, because the fix for a leaked label is to rotate the
+// credential, which makes the stored one useless. The next recreate asks
+// for it and rewrites the label without it.
 func parseBuildArgs(encoded string) map[string]string {
 	if encoded == "" {
 		return nil
 	}
 	args := make(map[string]string)
 	for _, pair := range strings.Split(encoded, ",") {
-		key, value, found := strings.Cut(pair, "=")
-		if !found {
+		key, value, _ := strings.Cut(pair, "=")
+		if key == "" {
 			continue
+		}
+		if IsSecretBuildArg(key) {
+			value = ""
 		}
 		args[key] = value
 	}
 	return args
+}
+
+// StoredSecretBuildArgs returns the secret build args whose values a
+// container's labels still hold, from versions before ALI-837. For doctor.
+func StoredSecretBuildArgs(labels map[string]string) []string {
+	var keys []string
+	for _, pair := range strings.Split(labels["ingot.project.build_args"], ",") {
+		key, value, _ := strings.Cut(pair, "=")
+		if value != "" && IsSecretBuildArg(key) {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// resolveBuildArgs fills in secret build args that have no value (because
+// the label only kept their names) from INGOT_BUILD_ARG_<KEY>, or else by
+// asking, the same way promptForBuildArgs did when the project was first set
+// up. A blank answer skips the arg. The env var is prefixed, not the bare
+// KEY, so a GITHUB_TOKEN exported for something else (the self-updater, say)
+// is never fed to a build without being asked for.
+// BuildArgEnvPrefix names the env vars resolveBuildArgs reads secret build
+// args from, e.g. INGOT_BUILD_ARG_GITHUB_TOKEN.
+const BuildArgEnvPrefix = "INGOT_BUILD_ARG_"
+
+func resolveBuildArgs(args map[string]string) map[string]string {
+	if len(args) == 0 {
+		return args
+	}
+	keys := make([]string, 0, len(args))
+	for key := range args {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	resolved := make(map[string]string, len(args))
+	for _, key := range keys {
+		value := args[key]
+		if value == "" && IsSecretBuildArg(key) {
+			envKey := BuildArgEnvPrefix + key
+			value = os.Getenv(envKey)
+			if value == "" {
+				value = utils.GetInput(fmt.Sprintf("  %s for the image build (not saved; set %s to skip this prompt, leave blank to skip): ", key, envKey))
+			}
+		}
+		if value != "" {
+			resolved[key] = value
+		}
+	}
+	return resolved
 }
 
 // Initialize creates a new project in the current directory
@@ -867,7 +938,7 @@ func (m *Manager) resolveImage(project *Project) (string, error) {
 				Tag:            image,
 				DockerfilePath: filepath.Join(project.Path, project.DockerfilePath),
 				Context:        filepath.Join(project.Path, project.BuildContext),
-				BuildArgs:      project.BuildArgs,
+				BuildArgs:      resolveBuildArgs(project.BuildArgs),
 			}); err != nil {
 				return "", fmt.Errorf("failed to build image: %w", err)
 			}

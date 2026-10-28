@@ -189,7 +189,14 @@ is built:
 - **Custom Dockerfile** — builds from the project's own `Dockerfile`, the
   same one you'd actually deploy. If it declares build args with no default
   (`ARG SOME_TOKEN`, no `=value`), you're prompted for each one explicitly —
-  nothing is silently reused from your environment or anywhere else.
+  nothing is silently reused from your environment or anywhere else. Values
+  are passed to `docker build` through its environment, not its command line.
+  Args that look like credentials (`*TOKEN*`, `*SECRET*`, `*PASSWORD*`,
+  `*AUTH*`, `*_KEY`, ...) are never saved on the container: rebuilds ask for
+  them again, unless you set `INGOT_BUILD_ARG_<NAME>` (e.g.
+  `INGOT_BUILD_ARG_GITHUB_TOKEN`). An `ARG` value can still end up in the
+  image's history, so for credentials prefer a BuildKit secret
+  (`RUN --mount=type=secret,id=...`) in the Dockerfile.
 - **Custom pull** — pulls a specific image you name.
 
 Switch between them any time with `ingot image <mode>` — no need to remove
