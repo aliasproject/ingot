@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -254,17 +255,67 @@ func lookupVia(name, server string) ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	resolver := &net.Resolver{}
-	if server != "" {
-		resolver = &net.Resolver{
-			PreferGo: true,
-			Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
-				d := net.Dialer{Timeout: 2 * time.Second}
-				return d.DialContext(ctx, "udp", server)
-			},
-		}
+	if server == "" {
+		return lookupSystem(ctx, name)
+	}
+	resolver := &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			d := net.Dialer{Timeout: 2 * time.Second}
+			return d.DialContext(ctx, "udp", server)
+		},
 	}
 	return resolver.LookupHost(ctx, name)
+}
+
+// lookupSystem resolves a name the way browsers and curl do. On Linux that
+// means glibc's NSS (getent), not Go's own resolver: the static release
+// builds have no cgo, and Go's resolver skips nsswitch's "resolve" source and
+// asks /etc/resolv.conf's nameservers directly. Where resolv.conf lists the
+// uplink servers instead of systemd-resolved's stub (aliasOS), that never
+// reaches the ~test route, so .test looks broken when it isn't (ALI-1295).
+func lookupSystem(ctx context.Context, name string) ([]string, error) {
+	if runtime.GOOS != "linux" || !utils.CommandExists(getentCommand) {
+		return net.DefaultResolver.LookupHost(ctx, name)
+	}
+	out, err := exec.CommandContext(ctx, getentCommand, "ahosts", name).Output()
+	if err != nil {
+		// Exit 2 is getent's "not found". Anything else (a getent without
+		// ahosts, e.g. some musl builds) says nothing about the name, so
+		// ask Go's resolver instead, unless the deadline already passed.
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 2 {
+			return nil, fmt.Errorf("getent ahosts %s: not found", name)
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return net.DefaultResolver.LookupHost(ctx, name)
+	}
+	addrs := parseGetentAhosts(string(out))
+	if len(addrs) == 0 {
+		return nil, fmt.Errorf("getent ahosts %s: no addresses", name)
+	}
+	return addrs, nil
+}
+
+// getentCommand is a variable so tests can substitute a fake getent.
+var getentCommand = "getent"
+
+// parseGetentAhosts returns the distinct addresses in `getent ahosts` output,
+// in order. Each address appears once per socket type (STREAM, DGRAM, RAW).
+func parseGetentAhosts(out string) []string {
+	var addrs []string
+	seen := map[string]bool{}
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 || net.ParseIP(fields[0]) == nil || seen[fields[0]] {
+			continue
+		}
+		seen[fields[0]] = true
+		addrs = append(addrs, fields[0])
+	}
+	return addrs
 }
 
 func (h *Handler) doctorServices(r *doctorReport) {
@@ -450,6 +501,7 @@ func probeHTTPS(url string) (int, error) {
 		Timeout: 5 * time.Second,
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			DialContext:     dialSystem,
 		},
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
@@ -459,6 +511,29 @@ func probeHTTPS(url string) (int, error) {
 	}
 	resp.Body.Close()
 	return resp.StatusCode, nil
+}
+
+// dialSystem dials addr with its host resolved by lookupSystem, so the
+// HTTPS probe reaches https://<project>.test the same way a browser would.
+func dialSystem(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	addrs := []string{host}
+	if net.ParseIP(host) == nil {
+		if addrs, err = lookupSystem(ctx, host); err != nil {
+			return nil, err
+		}
+	}
+	var d net.Dialer
+	for _, ip := range addrs {
+		var conn net.Conn
+		if conn, err = d.DialContext(ctx, network, net.JoinHostPort(ip, port)); err == nil {
+			return conn, nil
+		}
+	}
+	return nil, err
 }
 
 // doctorShare reports active shares and flags ones whose tunnel is gone, plus
