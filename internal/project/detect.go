@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 )
 
 // HasDockerfile checks whether the project root contains a Dockerfile at the
@@ -42,6 +43,25 @@ func DetectBuildArgs(dockerfilePath string) []string {
 		names = append(names, matches[1])
 	}
 	return names
+}
+
+// secretArgRe matches build-arg names that look like credentials, e.g.
+// GITHUB_TOKEN, COMPOSER_AUTH, DB_PASSWORD, SSH_PASSPHRASE, REGISTRY_PASS,
+// GH_PAT, DB_PWD, SSH_KEY, APIKEY. Short words only count as a whole
+// _-separated word, so AUTHOR and KEYBOARD_LAYOUT don't match. It's a name
+// heuristic, so it can miss.
+var secretArgRe = regexp.MustCompile(`(?i)(TOKEN|SECRET|PASSWORD|PASSWD|PASSPHRASE|CREDENTIAL|PRIVATE|APIKEY|NPMRC|OAUTH|AUTHORIZATION|(^|_)(PASS|PAT|PWD|KEY|AUTH)($|_))`)
+
+// notSecretArgs match secretArgRe but aren't credentials, and as secrets
+// would be passed through the docker CLI's own environment, where they'd
+// change how it behaves (SSH_AUTH_SOCK is the agent socket path).
+var notSecretArgs = map[string]bool{"SSH_AUTH_SOCK": true}
+
+// IsSecretBuildArg reports whether a build arg's value should be treated as
+// a credential: never stored in a container label, and asked for again (or
+// read from INGOT_BUILD_ARG_<name>) when the image is rebuilt.
+func IsSecretBuildArg(name string) bool {
+	return secretArgRe.MatchString(name) && !notSecretArgs[strings.ToUpper(name)]
 }
 
 // DetectFramework inspects the project root for markers of a known framework.

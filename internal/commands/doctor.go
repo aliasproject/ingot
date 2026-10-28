@@ -370,6 +370,13 @@ func (h *Handler) doctorProject(r *doctorReport, registryOK bool) {
 	}
 
 	if info, err := h.docker.InspectContainer(proj.Container); err == nil {
+		// Versions before ALI-837 stored every build-arg value in this
+		// label, credentials included.
+		if stored := project.StoredSecretBuildArgs(info.Labels); len(stored) > 0 {
+			r.warn(fmt.Sprintf("Container label stores the value of build arg %s (readable with docker inspect)", strings.Join(stored, ", ")),
+				"revoke that credential (the old image's history may hold it too), then ingot rebuild, which asks for the new value and doesn't save it")
+		}
+
 		bridge := config.GetNetworkConfig().BridgeName
 		if utils.StringSliceContains(info.Networks, bridge) {
 			r.ok("Container attached to %s", bridge)
