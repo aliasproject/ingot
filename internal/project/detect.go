@@ -45,8 +45,10 @@ func DetectBuildArgs(dockerfilePath string) []string {
 }
 
 // secretArgRe matches build-arg names that look like credentials, e.g.
-// GITHUB_TOKEN, NPM_AUTH, DB_PASSWORD, COMPOSER_AUTH, SSH_KEY.
-var secretArgRe = regexp.MustCompile(`(?i)(TOKEN|SECRET|PASSWORD|PASSWD|AUTH|CREDENTIAL|PRIVATE|(^|_)KEY$)`)
+// GITHUB_TOKEN, COMPOSER_AUTH, DB_PASSWORD, REGISTRY_PASS, GH_PAT, SSH_KEY,
+// APIKEY. Short words only count as a whole _-separated word, so AUTHOR and
+// KEYBOARD_LAYOUT don't match. It's a name heuristic, so it can miss.
+var secretArgRe = regexp.MustCompile(`(?i)(TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|PRIVATE|APIKEY|NPMRC|(^|_)(PASS|PAT|KEY|AUTH)($|_))`)
 
 // IsSecretBuildArg reports whether a build arg's value should be treated as
 // a credential: never stored in a container label, and asked for again (or

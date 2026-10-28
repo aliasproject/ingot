@@ -6,12 +6,12 @@ import (
 )
 
 func TestIsSecretBuildArg(t *testing.T) {
-	for _, name := range []string{"GITHUB_TOKEN", "github_token", "COMPOSER_AUTH", "DB_PASSWORD", "APP_SECRET", "SSH_KEY", "KEY", "NPM_AUTH_TOKEN", "PRIVATE_REPO_URL"} {
+	for _, name := range []string{"GITHUB_TOKEN", "github_token", "COMPOSER_AUTH", "DB_PASSWORD", "APP_SECRET", "SSH_KEY", "KEY", "NPM_AUTH_TOKEN", "PRIVATE_REPO_URL", "GH_PAT", "REGISTRY_PASS", "APIKEY", "API_KEY", "NPMRC", "AUTH_HEADER"} {
 		if !IsSecretBuildArg(name) {
 			t.Errorf("IsSecretBuildArg(%q) = false, want true", name)
 		}
 	}
-	for _, name := range []string{"APP_UID", "PHP_VERSION", "NODE_ENV", "KEYBOARD_LAYOUT", "MONKEY_NAME"} {
+	for _, name := range []string{"APP_UID", "PHP_VERSION", "NODE_ENV", "KEYBOARD_LAYOUT", "MONKEY_NAME", "AUTHOR", "PATH_PREFIX", "PASSPORT_URL", "COMPASS"} {
 		if IsSecretBuildArg(name) {
 			t.Errorf("IsSecretBuildArg(%q) = true, want false", name)
 		}
@@ -69,5 +69,27 @@ func TestResolveBuildArgsReadsSecretsFromEnv(t *testing.T) {
 	}
 	if resolved["APP_UID"] != "1000" {
 		t.Errorf("APP_UID = %q, want 1000", resolved["APP_UID"])
+	}
+}
+
+// A bare non-secret fragment in a label is the tail of a value that had a
+// comma in it, not an arg.
+func TestParseBuildArgsSkipsCommaFragments(t *testing.T) {
+	args := parseBuildArgs("FOO=a,b,GITHUB_TOKEN")
+	if _, ok := args["b"]; ok {
+		t.Errorf("parsed bogus arg %q from a comma in a value: %v", "b", args)
+	}
+	if _, ok := args["GITHUB_TOKEN"]; !ok {
+		t.Errorf("bare secret key GITHUB_TOKEN missing: %v", args)
+	}
+}
+
+func TestSplitBuildArgs(t *testing.T) {
+	plain, secret := splitBuildArgs(map[string]string{"GITHUB_TOKEN": "t", "APP_UID": "1000"})
+	if len(plain) != 1 || plain["APP_UID"] != "1000" {
+		t.Errorf("plain = %v, want only APP_UID", plain)
+	}
+	if len(secret) != 1 || secret["GITHUB_TOKEN"] != "t" {
+		t.Errorf("secret = %v, want only GITHUB_TOKEN", secret)
 	}
 }

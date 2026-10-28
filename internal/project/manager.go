@@ -71,6 +71,15 @@ type Project struct {
 	// ingot.project.idle label (`ingot idle`): "" for the global
 	// INGOT_IDLE_TIMEOUT, "off" to never stop it, or its own timeout.
 	Idle string
+
+	// rebuildImage makes createContainer build a Dockerfile project's image
+	// even though one already exists (Rebuild, ChangeImage). Other recreates
+	// (env, idle, PHP version, server root) reuse it, so they never prompt
+	// for a secret build arg after the old container is gone.
+	rebuildImage bool
+	// buildArgValues, when set, are the build-arg values to build with,
+	// collected before the old container was removed.
+	buildArgValues map[string]string
 }
 
 // ImageChoice carries a project's first-init image and framework selection
@@ -185,13 +194,8 @@ func serializeBuildArgs(args map[string]string) string {
 	if len(args) == 0 {
 		return ""
 	}
-	keys := make([]string, 0, len(args))
-	for key := range args {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
 	pairs := make([]string, 0, len(args))
-	for _, key := range keys {
+	for _, key := range sortedKeys(args) {
 		if IsSecretBuildArg(key) {
 			pairs = append(pairs, key)
 		} else {
@@ -204,22 +208,23 @@ func serializeBuildArgs(args map[string]string) string {
 // parseBuildArgs returns secret args with an empty value. Labels written
 // before ALI-837 still carry KEY=VALUE for them; that value is ignored
 // rather than reused, because the fix for a leaked label is to rotate the
-// credential, which makes the stored one useless. The next recreate asks
-// for it and rewrites the label without it.
+// credential, which makes the stored one useless. The next build asks for
+// it, and the next recreate rewrites the label without it.
 func parseBuildArgs(encoded string) map[string]string {
 	if encoded == "" {
 		return nil
 	}
 	args := make(map[string]string)
 	for _, pair := range strings.Split(encoded, ",") {
-		key, value, _ := strings.Cut(pair, "=")
-		if key == "" {
-			continue
+		key, value, found := strings.Cut(pair, "=")
+		switch {
+		case IsSecretBuildArg(key):
+			args[key] = ""
+		case found:
+			args[key] = value
 		}
-		if IsSecretBuildArg(key) {
-			value = ""
-		}
-		args[key] = value
+		// A bare non-secret fragment is the tail of a value that contained
+		// a comma; skip it rather than turn it into a bogus arg.
 	}
 	return args
 }
@@ -238,33 +243,32 @@ func StoredSecretBuildArgs(labels map[string]string) []string {
 	return keys
 }
 
+// BuildArgEnvPrefix names the env vars secret build-arg values are read
+// from, e.g. INGOT_BUILD_ARG_GITHUB_TOKEN. It's prefixed rather than the
+// bare KEY, so a GITHUB_TOKEN exported for something else (the self-updater,
+// say) is never fed to a build without being asked for.
+const BuildArgEnvPrefix = "INGOT_BUILD_ARG_"
+
+// SecretBuildArgFromEnv returns INGOT_BUILD_ARG_<key>, or "".
+func SecretBuildArgFromEnv(key string) string {
+	return os.Getenv(BuildArgEnvPrefix + key)
+}
+
 // resolveBuildArgs fills in secret build args that have no value (because
 // the label only kept their names) from INGOT_BUILD_ARG_<KEY>, or else by
 // asking, the same way promptForBuildArgs did when the project was first set
-// up. A blank answer skips the arg. The env var is prefixed, not the bare
-// KEY, so a GITHUB_TOKEN exported for something else (the self-updater, say)
-// is never fed to a build without being asked for.
-// BuildArgEnvPrefix names the env vars resolveBuildArgs reads secret build
-// args from, e.g. INGOT_BUILD_ARG_GITHUB_TOKEN.
-const BuildArgEnvPrefix = "INGOT_BUILD_ARG_"
-
+// up. A blank answer builds without the arg, with a warning.
 func resolveBuildArgs(args map[string]string) map[string]string {
-	if len(args) == 0 {
-		return args
-	}
-	keys := make([]string, 0, len(args))
-	for key := range args {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
 	resolved := make(map[string]string, len(args))
-	for _, key := range keys {
+	for _, key := range sortedKeys(args) {
 		value := args[key]
 		if value == "" && IsSecretBuildArg(key) {
-			envKey := BuildArgEnvPrefix + key
-			value = os.Getenv(envKey)
+			value = SecretBuildArgFromEnv(key)
 			if value == "" {
-				value = utils.GetInput(fmt.Sprintf("  %s for the image build (not saved; set %s to skip this prompt, leave blank to skip): ", key, envKey))
+				value = utils.GetInput(fmt.Sprintf("  %s for the image build (not saved; set %s%s to skip this prompt): ", key, BuildArgEnvPrefix, key))
+			}
+			if value == "" {
+				fmt.Printf(utils.Colorize("[WARNING]", utils.ColorYellow)+" Building without %s\n", key)
 			}
 		}
 		if value != "" {
@@ -272,6 +276,33 @@ func resolveBuildArgs(args map[string]string) map[string]string {
 		}
 	}
 	return resolved
+}
+
+// splitBuildArgs separates secret build args, which docker.Client.BuildImage
+// passes through the docker CLI's environment to keep them out of argv, from
+// the rest, which stay on the command line so a plain arg named e.g.
+// DOCKER_HOST can't change how the CLI itself behaves.
+func splitBuildArgs(args map[string]string) (plain, secret map[string]string) {
+	for key, value := range args {
+		target := &plain
+		if IsSecretBuildArg(key) {
+			target = &secret
+		}
+		if *target == nil {
+			*target = make(map[string]string)
+		}
+		(*target)[key] = value
+	}
+	return plain, secret
+}
+
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // Initialize creates a new project in the current directory
@@ -394,9 +425,11 @@ func (m *Manager) Start(phpVersion string, imageChoice ImageChoice, serverRoot .
 			return fmt.Errorf("failed to start container: %w", err)
 		}
 	} else {
-		// Create new container
+		// Create new container. Build fresh: a local/<name> image left over
+		// from a removed project may predate this Dockerfile.
 		project.PHPVersion = desiredPHPVersion
 		project.ServerRoot = desiredServerRoot
+		project.rebuildImage = true
 		if err := m.createContainer(project); err != nil {
 			// Clean up any partially created container on failure
 			cleanupErr := m.docker.RemoveContainer(project.Container, true)
@@ -428,6 +461,9 @@ func (m *Manager) Rebuild() error {
 	if project.Status == "not initialized" {
 		return fmt.Errorf("no project to rebuild")
 	}
+
+	project.rebuildImage = true
+	project.buildArgValues = resolveBuildArgs(project.BuildArgs)
 
 	if m.docker.ContainerExists(project.Container) {
 		fmt.Printf(utils.Colorize("[REBUILDING]", utils.ColorCyan)+" Recreating '%s'...\n", project.Container)
@@ -544,6 +580,7 @@ func (m *Manager) ChangeImage(choice ImageChoice) error {
 	project.BuildContext = choice.BuildContext
 	project.BuildArgs = choice.BuildArgs
 	project.Framework = choice.Framework
+	project.rebuildImage = true
 
 	if err := m.docker.RemoveContainer(project.Container, true); err != nil {
 		return fmt.Errorf("failed to remove old container: %w", err)
@@ -934,11 +971,20 @@ func (m *Manager) resolveImage(project *Project) (string, error) {
 			// encodes whatever the image needs, same as production skipping
 			// registry auth entirely for a local build.
 			image := fmt.Sprintf("local/%s:latest", project.Name)
+			if !project.rebuildImage && m.docker.ImageExists(image) {
+				return image, nil
+			}
+			values := project.buildArgValues
+			if values == nil {
+				values = resolveBuildArgs(project.BuildArgs)
+			}
+			plain, secret := splitBuildArgs(values)
 			if err := m.docker.BuildImage(&docker.BuildConfig{
 				Tag:            image,
 				DockerfilePath: filepath.Join(project.Path, project.DockerfilePath),
 				Context:        filepath.Join(project.Path, project.BuildContext),
-				BuildArgs:      resolveBuildArgs(project.BuildArgs),
+				BuildArgs:      plain,
+				SecretArgs:     secret,
 			}); err != nil {
 				return "", fmt.Errorf("failed to build image: %w", err)
 			}

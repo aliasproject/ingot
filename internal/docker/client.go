@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -688,21 +689,38 @@ type BuildConfig struct {
 	DockerfilePath string            // path to the Dockerfile
 	Context        string            // build context directory
 	BuildArgs      map[string]string // values for ARGs the Dockerfile declares with no default
+	SecretArgs     map[string]string // like BuildArgs, but passed through the CLI's environment, not argv
 }
 
 // BuildImage builds a Docker image from a Dockerfile, for projects that choose
 // a custom build instead of a prebuilt image (see project.Manager.createContainer).
-// Build-arg values go through the CLI's environment (`--build-arg KEY` with no
-// value reads KEY from it), not argv, since they're often credentials.
 func (c *Client) BuildImage(cfg *BuildConfig) error {
-	args := []string{"build", "-f", cfg.DockerfilePath, "-t", cfg.Tag}
-	var env []string
-	for key, value := range cfg.BuildArgs {
-		args = append(args, "--build-arg", key)
-		env = append(env, key+"="+value)
-	}
-	args = append(args, cfg.Context)
+	args, env := buildCommand(cfg)
 	return c.runWithEnv(env, args...)
+}
+
+// buildCommand returns BuildImage's docker arguments and extra environment.
+// A secret arg is passed as a bare `--build-arg KEY`, which docker build
+// reads from its own environment, so the value never shows up in `ps`.
+func buildCommand(cfg *BuildConfig) (args, env []string) {
+	args = []string{"build", "-f", cfg.DockerfilePath, "-t", cfg.Tag}
+	for _, key := range sortedKeys(cfg.BuildArgs) {
+		args = append(args, "--build-arg", key+"="+cfg.BuildArgs[key])
+	}
+	for _, key := range sortedKeys(cfg.SecretArgs) {
+		args = append(args, "--build-arg", key)
+		env = append(env, key+"="+cfg.SecretArgs[key])
+	}
+	return append(args, cfg.Context), env
+}
+
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // ExecCommand executes a command in a running container.
