@@ -72,9 +72,8 @@ func New() *Updater {
 }
 
 // CheckForUpdate checks if a new version is available. Releases are
-// published to GitHub directly (see scripts/release.sh) -- this repo is
-// private, so a GitHub token is required; there's no other distribution
-// channel to fall back to.
+// published to GitHub directly (see scripts/release.sh); a GitHub token is
+// used when one is available, which also raises the API rate limit.
 func (u *Updater) CheckForUpdate() (*Release, bool, error) {
 	release, err := u.fetchLatestGitHubRelease()
 	if err != nil {
@@ -118,8 +117,8 @@ func (u *Updater) Update(force bool) error {
 	return u.performUpdate(&binary)
 }
 
-// SetGitHubToken sets an optional GitHub token for release requests: needed
-// while the repo is private, and otherwise it only raises the API rate limit
+// SetGitHubToken sets an optional GitHub token for release requests, which
+// raises the API rate limit
 func (u *Updater) SetGitHubToken(token string) {
 	u.githubToken = token
 }
@@ -143,6 +142,15 @@ func (u *Updater) fetchLatestGitHubRelease() (*Release, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
+
+	// GitHub rejects an expired or revoked token with 401 even for a public
+	// repo. The token is optional here, so drop it (for the asset download
+	// too) and ask again without it.
+	if resp.StatusCode == http.StatusUnauthorized && u.githubToken != "" {
+		fmt.Println("GitHub rejected GITHUB_TOKEN, checking without it...")
+		u.githubToken = ""
+		return u.fetchLatestGitHubRelease()
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("failed to fetch GitHub release: %s", resp.Status)
@@ -171,7 +179,9 @@ func (u *Updater) fetchLatestGitHubRelease() (*Release, error) {
 	for _, asset := range githubRelease.Assets {
 		platform := u.detectPlatformFromAssetName(asset.Name)
 		if platform != "" {
-			// For private repos, use API endpoint instead of direct download URL
+			// The API endpoint works for public and private repos alike
+			// (a direct browser_download_url needs no auth, but 404s on a
+			// private repo)
 			apiURL := fmt.Sprintf("https://api.github.com/repos/%s/releases/assets/%d", u.githubRepo, asset.ID)
 			release.Downloads[platform] = Binary{
 				URL:  apiURL,
@@ -267,7 +277,7 @@ func (u *Updater) performUpdate(binary *Binary) error {
 	defer os.Remove(tmpPath)
 
 	// Download binary
-	if err := u.downloadFile(binary.URL, tmpFile, binary.SHA256); err != nil {
+	if err := u.downloadFile(binary.URL, tmpFile, binary.SHA256, binary.Size); err != nil {
 		tmpFile.Close()
 		return fmt.Errorf("download failed: %w", err)
 	}
@@ -411,19 +421,23 @@ func (u *Updater) updateWithWindowsElevation(tmpPath, realPath string) error {
 }
 
 // downloadFile downloads a file and verifies its checksum
-func (u *Updater) downloadFile(url string, dest *os.File, expectedSHA256 string) error {
+func (u *Updater) downloadFile(url string, dest *os.File, expectedSHA256 string, expectedSize int64) error {
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return err
 	}
 
-	// Add GitHub authentication if token is available and URL is from GitHub
-	if u.githubToken != "" && strings.Contains(url, "api.github.com") {
-		// For GitHub API asset downloads
-		req.Header.Set("Authorization", "token "+u.githubToken)
+	// Release assets are fetched through the GitHub API endpoint, which
+	// returns the asset's JSON metadata instead of the binary unless asked
+	// for application/octet-stream - with or without a token. Without this,
+	// an unauthenticated update would install that JSON as the binary.
+	if strings.Contains(url, "api.github.com") {
 		req.Header.Set("Accept", "application/octet-stream")
 		req.Header.Set("User-Agent", "ingot-updater")
+		if u.githubToken != "" {
+			req.Header.Set("Authorization", "token "+u.githubToken)
+		}
 	}
 
 	resp, err := u.httpClient.Do(req)
@@ -444,6 +458,13 @@ func (u *Updater) downloadFile(url string, dest *os.File, expectedSHA256 string)
 	written, err := io.Copy(writer, resp.Body)
 	if err != nil {
 		return err
+	}
+
+	// GitHub releases carry no checksum, so the size the release reported
+	// is what catches a 200 that isn't the binary (e.g. JSON metadata)
+	// before it replaces the installed one.
+	if expectedSize > 0 && written != expectedSize {
+		return fmt.Errorf("download size mismatch (expected %d bytes, got %d)", expectedSize, written)
 	}
 
 	// Verify checksum

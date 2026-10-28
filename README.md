@@ -29,14 +29,11 @@ labels.
 
 ## Installation
 
-This is a private repository, so a plain `curl` against the release page
-won't work (GitHub returns a 404 body without authentication, and `curl`
-saves that silently as if it succeeded unless you pass `-f`). Use the
-[GitHub CLI](https://cli.github.com/) instead, which handles the
-authentication for you - e.g. for Linux/amd64:
+Download the binary for your platform from the latest release - e.g. for
+Linux/amd64:
 
 ```bash
-gh release download --repo aliasproject/ingot -p ingot-linux-amd64 -O ingot
+curl -fsSLo ingot https://github.com/aliasproject/ingot/releases/latest/download/ingot-linux-amd64
 chmod +x ingot
 ./ingot
 ```
@@ -239,8 +236,8 @@ shell environment:
 
 ```
 GITHUB_TOKEN                 Optional; only `ingot update` uses it (falls back to
-                             `gh auth token`), to read releases and raise
-                             GitHub's API rate limit
+                             `gh auth token`), to raise GitHub's API
+                             rate limit
 INGOT_DEFAULT_PHP_VERSION    Default PHP version for new projects
 INGOT_HOST_IP                Override auto-detected host IP
 INGOT_DNS_PORT               DNS listener port (default: 53)
@@ -261,14 +258,16 @@ INGOT_IDLE_TIMEOUT           Stop projects idle this long, e.g. 30m, 2h, or
 ## Building from source
 
 ```bash
-git clone git@github.com:aliasproject/ingot.git
+git clone https://github.com/aliasproject/ingot.git
 cd ingot
 go build -o ingot ./cmd    # build the binary
 go run ./cmd status        # or run directly without building
 go vet ./...               # static checks
 ```
 
-There's no test suite — `go build`/`go vet` are the verification available.
+`go test ./...` covers a few packages (config, docker, idle, project,
+services, share, ssl, updater); most changes are verified with
+`go build`/`go vet` and by running the CLI.
 See [`CLAUDE.md`](CLAUDE.md) for an architecture overview if you're working
 on the CLI itself.
 

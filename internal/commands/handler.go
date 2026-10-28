@@ -355,9 +355,9 @@ func (h *Handler) isFullySetUp() bool {
 
 // ensureUpdaterAuthenticated hands the updater a GitHub token when one is
 // already available - GITHUB_TOKEN, or the GitHub CLI's - without ever asking
-// for one. The updater is the only part of ingot that uses a token: reading
-// aliasproject/ingot's releases needs one while the repo is private, and
-// otherwise it only raises GitHub's API rate limit. Image pulls need none.
+// for one. The updater is the only part of ingot that uses a token, and it
+// only raises GitHub's API rate limit: the repo is public, so updates work
+// without one. Image pulls need none.
 func (h *Handler) ensureUpdaterAuthenticated() {
 	token := h.config.GetGithubToken()
 	if token == "" {
