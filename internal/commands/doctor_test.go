@@ -82,6 +82,13 @@ func TestDockerPermissionFixes(t *testing.T) {
 	if got := strings.Join(DockerPermissionFixes("/run/custom.sock"), "\n"); !strings.Contains(got, "rw /run/custom.sock") {
 		t.Errorf("DockerPermissionFixes should name the socket the CLI tried, got:\n%s", got)
 	}
+	t.Setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+	if got := strings.Join(DockerPermissionFixes("/run/user/1000/docker.sock"), "\n"); strings.Contains(got, "rootless") {
+		t.Errorf("rootless hint shown for a denied rootless socket:\n%s", got)
+	}
+	if got := strings.Join(DockerPermissionFixes("/var/run/docker.sock"), "\n"); !strings.Contains(got, "rootless") {
+		t.Errorf("rootless hint missing for the system socket:\n%s", got)
+	}
 }
 
 func TestDockerFixForPicksPermissionFixes(t *testing.T) {

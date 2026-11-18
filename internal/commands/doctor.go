@@ -115,11 +115,16 @@ func DockerPermissionFixes(socket string) []string {
 	if runtime.GOOS != "linux" {
 		return []string{fmt.Sprintf("make sure your user can read and write %s (restarting Docker Desktop usually resets it)", socket)}
 	}
-	return []string{
-		"sudo usermod -aG docker $USER, then log out and back in (or run 'newgrp docker' in this shell)",
-		fmt.Sprintf("sudo setfacl -m u:$USER:rw %s for immediate access until the daemon restarts", socket),
-		"if you run rootless Docker, point the CLI at your own daemon: export DOCKER_HOST=unix://$XDG_RUNTIME_DIR/docker.sock",
+	fixes := []string{
+		"sudo usermod -aG docker $USER, then log out and back in (or run 'newgrp docker' in this shell); note the docker group is root-equivalent",
+		fmt.Sprintf("sudo setfacl -m u:$USER:rw %s for immediate access until the socket is recreated (daemon or docker.socket restart)", socket),
 	}
+	// The rootless hint only helps when the denied socket isn't already
+	// the user's own rootless one.
+	if rt := os.Getenv("XDG_RUNTIME_DIR"); rt == "" || !strings.HasPrefix(socket, rt+"/") {
+		fixes = append(fixes, "if you run rootless Docker, point the CLI at your own daemon: export DOCKER_HOST=unix://$XDG_RUNTIME_DIR/docker.sock")
+	}
+	return fixes
 }
 
 // dockerFixFor picks the fix to show for a failed daemon check: socket

@@ -38,6 +38,12 @@ func TestDaemonErrorClassifiesPermissionDenied(t *testing.T) {
 			notWant: ErrPermissionDenied,
 		},
 		{
+			name:    "ssh transport auth failure",
+			stderr:  "error during connect: Get \"http://docker.example.com/v1.47/version\": command [ssh -- me@docker.example.com docker system dial-stdio] has exited with exit status 255, make sure the URL is valid, and Docker 18.09 or later is installed on the remote host: stderr=me@docker.example.com: Permission denied (publickey).\n",
+			want:    ErrDockerNotRunning,
+			notWant: ErrPermissionDenied,
+		},
+		{
 			name:    "no stderr (timeout)",
 			stderr:  "",
 			want:    ErrDockerNotRunning,
