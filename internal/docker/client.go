@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -43,9 +44,10 @@ func NewClient() (*Client, error) {
 	}
 	client.composePath = composePath
 
-	// Verify Docker is running
+	// Verify the daemon is reachable. The error already says why not:
+	// ErrPermissionDenied or ErrDockerNotRunning.
 	if err := client.CheckAvailability(); err != nil {
-		return nil, fmt.Errorf("docker is not running: %w", err)
+		return nil, err
 	}
 
 	return client, nil
@@ -65,10 +67,12 @@ func (c *Client) CheckAvailability() error {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, c.dockerPath, "version", "--format", "json")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	output, err := cmd.Output()
 	if err != nil {
 		c.isAvailable = false
-		return fmt.Errorf("docker daemon not responding: %w", err)
+		return daemonError(err, stderr.String())
 	}
 
 	// Verify we got valid JSON response
@@ -840,4 +844,53 @@ var (
 	ErrContainerNotFound = fmt.Errorf("container not found")
 	ErrDockerNotRunning  = fmt.Errorf("docker daemon is not running")
 	ErrFileNotFound      = fmt.Errorf("file not found")
+
+	// ErrPermissionDenied means the daemon's socket exists but this user
+	// can't open it, typically because they aren't in the docker group.
+	// The daemon itself may be fine, so this must not be reported as "not
+	// running".
+	ErrPermissionDenied = errors.New("permission denied connecting to the docker socket")
 )
+
+// daemonError classifies a failed daemon check from the docker CLI's
+// stderr: a permission error on a unix socket becomes ErrPermissionDenied,
+// anything else (missing socket, refused connection, timeout) becomes
+// ErrDockerNotRunning. Both "permission denied" and the unix:// socket
+// must be on the same line: an ssh:// DOCKER_HOST failing with
+// "Permission denied (publickey)", or an unreadable ~/.docker/config.json
+// warning next to a missing socket, doesn't get socket advice. The CLI's
+// own message is kept as detail, since it names the socket it tried.
+func daemonError(err error, stderr string) error {
+	kind := ErrDockerNotRunning
+	for _, line := range strings.Split(strings.ToLower(stderr), "\n") {
+		if strings.Contains(line, "permission denied") && strings.Contains(line, "unix://") {
+			kind = ErrPermissionDenied
+			break
+		}
+	}
+	if detail := summarizeStderr(stderr); detail != "" {
+		return fmt.Errorf("%w: %s", kind, detail)
+	}
+	return fmt.Errorf("%w: %v", kind, err)
+}
+
+// SocketFromError returns the unix socket path named in a docker CLI
+// error such as "permission denied while trying to connect to the docker
+// API at unix:///var/run/docker.sock", or "" if there isn't one.
+func SocketFromError(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	i := strings.Index(msg, "unix://")
+	if i < 0 {
+		return ""
+	}
+	path := msg[i+len("unix://"):]
+	if j := strings.IndexAny(path, " \t\n;|,\"'"); j >= 0 {
+		path = path[:j]
+	}
+	// Sentence punctuation, as in "...docker.sock. Is the docker daemon
+	// running?", isn't part of the path.
+	return strings.TrimRight(path, ".:")
+}
