@@ -2,12 +2,15 @@ package commands
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strings"
 	"testing"
 
+	"github.com/aliasproject/ingot/internal/docker"
 	"github.com/aliasproject/ingot/internal/utils"
 )
 
@@ -63,5 +66,31 @@ func TestLookupSystemFallsBackWhenGetentBreaks(t *testing.T) {
 	fake("2")
 	if _, err := lookupSystem(context.Background(), "localhost"); err == nil {
 		t.Fatal("getent exit 2 (not found): lookupSystem succeeded, want an error")
+	}
+}
+
+func TestDockerPermissionFixes(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux fixes")
+	}
+	fixes := strings.Join(DockerPermissionFixes(""), "\n")
+	for _, want := range []string{"usermod -aG docker", "newgrp docker", "setfacl -m u:$USER:rw /var/run/docker.sock", "DOCKER_HOST=unix://$XDG_RUNTIME_DIR/docker.sock"} {
+		if !strings.Contains(fixes, want) {
+			t.Errorf("DockerPermissionFixes(\"\") missing %q:\n%s", want, fixes)
+		}
+	}
+	if got := strings.Join(DockerPermissionFixes("/run/custom.sock"), "\n"); !strings.Contains(got, "rw /run/custom.sock") {
+		t.Errorf("DockerPermissionFixes should name the socket the CLI tried, got:\n%s", got)
+	}
+}
+
+func TestDockerFixForPicksPermissionFixes(t *testing.T) {
+	denied := fmt.Errorf("%w: permission denied while trying to connect to the docker API at unix:///var/run/docker.sock", docker.ErrPermissionDenied)
+	if got := dockerFixFor(denied); got == dockerFix() || !strings.Contains(got, "/var/run/docker.sock") {
+		t.Errorf("dockerFixFor(permission denied) = %q, want the socket access fixes", got)
+	}
+	notRunning := fmt.Errorf("%w: connection refused", docker.ErrDockerNotRunning)
+	if got := dockerFixFor(notRunning); got != dockerFix() {
+		t.Errorf("dockerFixFor(not running) = %q, want %q", got, dockerFix())
 	}
 }

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/aliasproject/ingot/internal/config"
+	"github.com/aliasproject/ingot/internal/docker"
 	"github.com/aliasproject/ingot/internal/project"
 	"github.com/aliasproject/ingot/internal/services"
 	"github.com/aliasproject/ingot/internal/utils"
@@ -91,10 +92,43 @@ func DoctorWithoutDocker(dockerErr error) {
 	r.section("DOCKER")
 	if _, err := exec.LookPath("docker"); err != nil {
 		r.fail("docker binary not found in PATH", "install Docker (https://docs.docker.com/get-docker/) and make sure 'docker' is on your PATH")
+	} else if errors.Is(dockerErr, docker.ErrPermissionDenied) {
+		r.fail(fmt.Sprintf("Docker socket not accessible: %v", dockerErr), dockerFixFor(dockerErr))
 	} else {
 		r.fail(fmt.Sprintf("Docker daemon not reachable: %v", dockerErr), dockerFix())
 	}
 	r.summary()
+}
+
+// defaultDockerSocket is where the daemon listens unless DOCKER_HOST or a
+// docker context points elsewhere.
+const defaultDockerSocket = "/var/run/docker.sock"
+
+// DockerPermissionFixes lists ways to get access to the docker socket when
+// the daemon is up but this user can't open it, most commonly because they
+// aren't in the docker group (aliasOS leaves users out of it on purpose).
+// socket is the path the docker CLI tried; "" means the default.
+func DockerPermissionFixes(socket string) []string {
+	if socket == "" {
+		socket = defaultDockerSocket
+	}
+	if runtime.GOOS != "linux" {
+		return []string{fmt.Sprintf("make sure your user can read and write %s (restarting Docker Desktop usually resets it)", socket)}
+	}
+	return []string{
+		"sudo usermod -aG docker $USER, then log out and back in (or run 'newgrp docker' in this shell)",
+		fmt.Sprintf("sudo setfacl -m u:$USER:rw %s for immediate access until the daemon restarts", socket),
+		"if you run rootless Docker, point the CLI at your own daemon: export DOCKER_HOST=unix://$XDG_RUNTIME_DIR/docker.sock",
+	}
+}
+
+// dockerFixFor picks the fix to show for a failed daemon check: socket
+// access fixes for a permission error, otherwise how to start Docker.
+func dockerFixFor(err error) string {
+	if errors.Is(err, docker.ErrPermissionDenied) {
+		return strings.Join(DockerPermissionFixes(docker.SocketFromError(err)), "\n         or:  ")
+	}
+	return dockerFix()
 }
 
 func dockerFix() string {
@@ -133,6 +167,9 @@ func (h *Handler) doctorDocker(r *doctorReport) {
 
 	if version, err := h.docker.ServerVersion(); err == nil {
 		r.ok("Docker daemon responding (server %s, cli at %s)", version, h.docker.Path())
+	} else if errors.Is(err, docker.ErrPermissionDenied) {
+		r.fail(fmt.Sprintf("Docker socket not accessible: %v", err), dockerFixFor(err))
+		return
 	} else {
 		r.fail(fmt.Sprintf("Docker daemon not responding: %v", err), dockerFix())
 		return

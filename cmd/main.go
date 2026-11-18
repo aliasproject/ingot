@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -27,6 +28,14 @@ func main() {
 		// is the problem, so it must still produce a report without it.
 		if len(os.Args) > 1 && os.Args[1] == "doctor" {
 			commands.DoctorWithoutDocker(err)
+			os.Exit(1)
+		}
+		if errors.Is(err, docker.ErrPermissionDenied) {
+			fmt.Fprintf(os.Stderr, "Error: the Docker socket exists, but your user doesn't have permission to use it\n")
+			fmt.Fprintf(os.Stderr, "To fix, either:\n")
+			for _, fix := range commands.DockerPermissionFixes(docker.SocketFromError(err)) {
+				fmt.Fprintf(os.Stderr, "  - %s\n", fix)
+			}
 			os.Exit(1)
 		}
 		fmt.Fprintf(os.Stderr, "Error: Docker is not installed or not running\n")
