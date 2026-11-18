@@ -855,15 +855,18 @@ var (
 // daemonError classifies a failed daemon check from the docker CLI's
 // stderr: a permission error on a unix socket becomes ErrPermissionDenied,
 // anything else (missing socket, refused connection, timeout) becomes
-// ErrDockerNotRunning. Only unix sockets count, so an ssh:// DOCKER_HOST
-// failing with "Permission denied (publickey)" doesn't get socket advice.
-// The CLI's own message is kept as detail, since it names the socket it
-// tried.
+// ErrDockerNotRunning. Both "permission denied" and the unix:// socket
+// must be on the same line: an ssh:// DOCKER_HOST failing with
+// "Permission denied (publickey)", or an unreadable ~/.docker/config.json
+// warning next to a missing socket, doesn't get socket advice. The CLI's
+// own message is kept as detail, since it names the socket it tried.
 func daemonError(err error, stderr string) error {
 	kind := ErrDockerNotRunning
-	lower := strings.ToLower(stderr)
-	if strings.Contains(lower, "permission denied") && strings.Contains(lower, "unix://") {
-		kind = ErrPermissionDenied
+	for _, line := range strings.Split(strings.ToLower(stderr), "\n") {
+		if strings.Contains(line, "permission denied") && strings.Contains(line, "unix://") {
+			kind = ErrPermissionDenied
+			break
+		}
 	}
 	if detail := summarizeStderr(stderr); detail != "" {
 		return fmt.Errorf("%w: %s", kind, detail)

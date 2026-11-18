@@ -44,6 +44,18 @@ func TestDaemonErrorClassifiesPermissionDenied(t *testing.T) {
 			notWant: ErrPermissionDenied,
 		},
 		{
+			name:    "unreadable config next to a missing socket",
+			stderr:  "WARNING: Error loading config file: open /home/me/.docker/config.json: permission denied\nfailed to connect to the docker API at unix:///var/run/docker.sock; check if the path is correct and if the daemon is running: dial unix /var/run/docker.sock: connect: no such file or directory\n",
+			want:    ErrDockerNotRunning,
+			notWant: ErrPermissionDenied,
+		},
+		{
+			name:    "unreadable config next to a denied socket",
+			stderr:  "WARNING: Error loading config file: open /home/me/.docker/config.json: permission denied\npermission denied while trying to connect to the docker API at unix:///var/run/docker.sock\n",
+			want:    ErrPermissionDenied,
+			notWant: ErrDockerNotRunning,
+		},
+		{
 			name:    "no stderr (timeout)",
 			stderr:  "",
 			want:    ErrDockerNotRunning,
