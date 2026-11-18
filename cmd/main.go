@@ -32,7 +32,7 @@ func main() {
 		}
 		if errors.Is(err, docker.ErrPermissionDenied) {
 			fmt.Fprintf(os.Stderr, "Error: the Docker socket exists, but your user doesn't have permission to use it\n")
-			fmt.Fprintf(os.Stderr, "To fix, either:\n")
+			fmt.Fprintf(os.Stderr, "To fix, use one of these (most secure first):\n")
 			for _, fix := range commands.DockerPermissionFixes(docker.SocketFromError(err)) {
 				fmt.Fprintf(os.Stderr, "  - %s\n", fix)
 			}

@@ -73,21 +73,41 @@ func TestDockerPermissionFixes(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("Linux fixes")
 	}
-	fixes := strings.Join(DockerPermissionFixes(""), "\n")
-	for _, want := range []string{"usermod -aG docker", "newgrp docker", "setfacl -m u:$USER:rw /var/run/docker.sock", "DOCKER_HOST=unix://$XDG_RUNTIME_DIR/docker.sock"} {
-		if !strings.Contains(fixes, want) {
-			t.Errorf("DockerPermissionFixes(\"\") missing %q:\n%s", want, fixes)
+
+	// No rootless daemon: ACL first, docker group last with its warning.
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
+	fixes := DockerPermissionFixes("")
+	if len(fixes) != 2 {
+		t.Fatalf("DockerPermissionFixes(\"\") = %q, want ACL and group fixes only", fixes)
+	}
+	if !strings.Contains(fixes[0], "setfacl -m u:$USER:rw /var/run/docker.sock") {
+		t.Errorf("first fix = %q, want the setfacl ACL", fixes[0])
+	}
+	for _, want := range []string{"usermod -aG docker", "newgrp docker", "root-equivalent"} {
+		if !strings.Contains(fixes[1], want) {
+			t.Errorf("last fix = %q, missing %q", fixes[1], want)
 		}
 	}
 	if got := strings.Join(DockerPermissionFixes("/run/custom.sock"), "\n"); !strings.Contains(got, "rw /run/custom.sock") {
 		t.Errorf("DockerPermissionFixes should name the socket the CLI tried, got:\n%s", got)
 	}
-	t.Setenv("XDG_RUNTIME_DIR", "/run/user/1000")
-	if got := strings.Join(DockerPermissionFixes("/run/user/1000/docker.sock"), "\n"); strings.Contains(got, "rootless") {
-		t.Errorf("rootless hint shown for a denied rootless socket:\n%s", got)
+
+	// A rootless socket exists: pointing DOCKER_HOST at it comes first.
+	rt := t.TempDir()
+	rootless := filepath.Join(rt, "docker.sock")
+	if err := os.WriteFile(rootless, nil, 0o600); err != nil {
+		t.Fatal(err)
 	}
-	if got := strings.Join(DockerPermissionFixes("/var/run/docker.sock"), "\n"); !strings.Contains(got, "rootless") {
-		t.Errorf("rootless hint missing for the system socket:\n%s", got)
+	t.Setenv("XDG_RUNTIME_DIR", rt)
+	fixes = DockerPermissionFixes("/var/run/docker.sock")
+	if len(fixes) != 3 || !strings.Contains(fixes[0], "DOCKER_HOST=unix://"+rootless) ||
+		!strings.Contains(fixes[1], "setfacl") || !strings.Contains(fixes[2], "usermod") {
+		t.Errorf("with a rootless socket, fixes = %q, want DOCKER_HOST, setfacl, usermod in that order", fixes)
+	}
+
+	// The denied socket is the rootless one: don't suggest it again.
+	if got := strings.Join(DockerPermissionFixes(rootless), "\n"); strings.Contains(got, "DOCKER_HOST") {
+		t.Errorf("rootless hint shown for a denied rootless socket:\n%s", got)
 	}
 }
 

@@ -105,8 +105,13 @@ func DoctorWithoutDocker(dockerErr error) {
 const defaultDockerSocket = "/var/run/docker.sock"
 
 // DockerPermissionFixes lists ways to get access to the docker socket when
-// the daemon is up but this user can't open it, most commonly because they
-// aren't in the docker group (aliasOS leaves users out of it on purpose).
+// the daemon is up but this user can't open it, most secure first. aliasOS
+// deliberately keeps users out of the docker group (ALI-305), so that
+// root-equivalent option comes last:
+//  1. use the user's own rootless daemon, when its socket exists;
+//  2. a per-user ACL on the socket, which lasts until it's recreated;
+//  3. the docker group.
+//
 // socket is the path the docker CLI tried; "" means the default.
 func DockerPermissionFixes(socket string) []string {
 	if socket == "" {
@@ -115,16 +120,28 @@ func DockerPermissionFixes(socket string) []string {
 	if runtime.GOOS != "linux" {
 		return []string{fmt.Sprintf("make sure your user can read and write %s (restarting Docker Desktop usually resets it)", socket)}
 	}
-	fixes := []string{
-		"sudo usermod -aG docker $USER, then log out and back in (or run 'newgrp docker' in this shell); note the docker group is root-equivalent",
-		fmt.Sprintf("sudo setfacl -m u:$USER:rw %s for immediate access until the socket is recreated (daemon or docker.socket restart)", socket),
+	var fixes []string
+	if rootless := rootlessDockerSocket(); rootless != "" && rootless != socket {
+		fixes = append(fixes, fmt.Sprintf("use your rootless Docker daemon instead: export DOCKER_HOST=unix://%s", rootless))
 	}
-	// The rootless hint only helps when the denied socket isn't already
-	// the user's own rootless one.
-	if rt := os.Getenv("XDG_RUNTIME_DIR"); rt == "" || !strings.HasPrefix(socket, rt+"/") {
-		fixes = append(fixes, "if you run rootless Docker, point the CLI at your own daemon: export DOCKER_HOST=unix://$XDG_RUNTIME_DIR/docker.sock")
+	return append(fixes,
+		fmt.Sprintf("sudo setfacl -m u:$USER:rw %s for access until the socket is recreated (daemon or docker.socket restart)", socket),
+		"sudo usermod -aG docker $USER, then log out and back in (or run 'newgrp docker' in this shell); the docker group is root-equivalent, so prefer the options above",
+	)
+}
+
+// rootlessDockerSocket returns the user's rootless Docker socket
+// ($XDG_RUNTIME_DIR/docker.sock) if it exists, else "".
+func rootlessDockerSocket() string {
+	rt := os.Getenv("XDG_RUNTIME_DIR")
+	if rt == "" {
+		return ""
 	}
-	return fixes
+	path := filepath.Join(rt, "docker.sock")
+	if _, err := os.Stat(path); err != nil {
+		return ""
+	}
+	return path
 }
 
 // dockerFixFor picks the fix to show for a failed daemon check: socket
