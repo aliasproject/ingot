@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -92,22 +93,38 @@ func TestDockerPermissionFixes(t *testing.T) {
 		t.Errorf("DockerPermissionFixes should name the socket the CLI tried, got:\n%s", got)
 	}
 
-	// A rootless socket exists: pointing DOCKER_HOST at it comes first.
+	// A regular file where the rootless socket would be isn't a daemon.
 	rt := t.TempDir()
 	rootless := filepath.Join(rt, "docker.sock")
 	if err := os.WriteFile(rootless, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("XDG_RUNTIME_DIR", rt)
+	if got := strings.Join(DockerPermissionFixes("/var/run/docker.sock"), "\n"); strings.Contains(got, "DOCKER_HOST") {
+		t.Errorf("rootless hint shown for a non-socket file:\n%s", got)
+	}
+
+	// A rootless socket exists: pointing DOCKER_HOST at it comes first.
+	if err := os.Remove(rootless); err != nil {
+		t.Fatal(err)
+	}
+	l, err := net.Listen("unix", rootless)
+	if err != nil {
+		t.Skipf("can't create a unix socket here: %v", err)
+	}
+	defer l.Close()
 	fixes = DockerPermissionFixes("/var/run/docker.sock")
 	if len(fixes) != 3 || !strings.Contains(fixes[0], "DOCKER_HOST=unix://"+rootless) ||
 		!strings.Contains(fixes[1], "setfacl") || !strings.Contains(fixes[2], "usermod") {
 		t.Errorf("with a rootless socket, fixes = %q, want DOCKER_HOST, setfacl, usermod in that order", fixes)
 	}
 
-	// The denied socket is the rootless one: don't suggest it again.
-	if got := strings.Join(DockerPermissionFixes(rootless), "\n"); strings.Contains(got, "DOCKER_HOST") {
-		t.Errorf("rootless hint shown for a denied rootless socket:\n%s", got)
+	// The denied socket is the rootless one: don't suggest it again,
+	// however the CLI spelled the path.
+	for _, denied := range []string{rootless, filepath.Join(rt, ".", "docker.sock") + "", rt + "//docker.sock"} {
+		if got := strings.Join(DockerPermissionFixes(denied), "\n"); strings.Contains(got, "DOCKER_HOST") {
+			t.Errorf("rootless hint shown for denied rootless socket %q:\n%s", denied, got)
+		}
 	}
 }
 

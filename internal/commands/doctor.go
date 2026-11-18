@@ -121,7 +121,7 @@ func DockerPermissionFixes(socket string) []string {
 		return []string{fmt.Sprintf("make sure your user can read and write %s (restarting Docker Desktop usually resets it)", socket)}
 	}
 	var fixes []string
-	if rootless := rootlessDockerSocket(); rootless != "" && rootless != socket {
+	if rootless := rootlessDockerSocket(); rootless != "" && rootless != filepath.Clean(socket) {
 		fixes = append(fixes, fmt.Sprintf("use your rootless Docker daemon instead: export DOCKER_HOST=unix://%s", rootless))
 	}
 	return append(fixes,
@@ -131,14 +131,14 @@ func DockerPermissionFixes(socket string) []string {
 }
 
 // rootlessDockerSocket returns the user's rootless Docker socket
-// ($XDG_RUNTIME_DIR/docker.sock) if it exists, else "".
+// ($XDG_RUNTIME_DIR/docker.sock) if a unix socket exists there, else "".
 func rootlessDockerSocket() string {
 	rt := os.Getenv("XDG_RUNTIME_DIR")
 	if rt == "" {
 		return ""
 	}
 	path := filepath.Join(rt, "docker.sock")
-	if _, err := os.Stat(path); err != nil {
+	if fi, err := os.Stat(path); err != nil || fi.Mode()&os.ModeSocket == 0 {
 		return ""
 	}
 	return path
