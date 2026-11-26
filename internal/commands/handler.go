@@ -302,9 +302,9 @@ func (h *Handler) handleCertRepair() error {
 
 	fmt.Printf(utils.Colorize("[RESTARTING]", utils.ColorCyan)+" Repairing SSL/vhost configuration for %d project(s)...\n", len(names))
 
-	// The vhosts import the ingot_wake snippet from the base Caddyfile;
-	// rewrite it first, or a base file from an older ingot would leave Caddy
-	// unable to start on the new vhosts.
+	// The vhosts import the ingot_wake and ingot_empty_500 snippets from the
+	// base Caddyfile; rewrite it first, or a base file from an older ingot
+	// would leave Caddy unable to start on the new vhosts.
 	if err := h.services.WriteBaseConfig(); err != nil {
 		return fmt.Errorf("failed to write the base Caddyfile: %w", err)
 	}

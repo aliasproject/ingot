@@ -505,7 +505,9 @@ func (h *Handler) doctorProject(r *doctorReport, registryOK bool) {
 		case !strings.Contains(vhost, "import ingot_wake"):
 			r.warn("Vhost predates scale to zero, so visiting the project while it's asleep won't start it",
 				"ingot cert repair")
-		case !strings.Contains(vhost, ssl.Empty500Import):
+		}
+		// Checked on its own: a stopped or pre-scale-to-zero vhost can lack it too.
+		if !strings.Contains(vhost, ssl.Empty500Import) {
 			r.warn("Vhost predates the empty 500 page, so a PHP error with no output shows a blank browser error",
 				"ingot cert repair")
 		}
