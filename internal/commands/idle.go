@@ -131,8 +131,8 @@ func (h *Handler) hintVhostsWithoutWake() {
 		return
 	}
 	// Output can include docker's own pull messages, so count only file
-	// names. Share vhosts are skipped: cert repair doesn't rewrite them (the
-	// next `ingot share` does), so counting them would repeat the hint.
+	// names. Share vhosts are skipped: cert repair doesn't rewrite them (a new
+	// share after `ingot share stop` does), so counting them would repeat the hint.
 	n := 0
 	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)

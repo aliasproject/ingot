@@ -61,6 +61,13 @@ func (h *Handler) handleShare(args []string) error {
 	}
 	fmt.Printf(utils.Colorize("[STARTING]", utils.ColorCyan)+" Sharing '%s' via Cloudflare %s...\n", project.Name, mode)
 
+	// The share vhost imports snippets from the base Caddyfile; rewrite it
+	// first, or services started by an older ingot would make Caddy reject
+	// the new vhost.
+	if err := h.services.WriteBaseConfig(); err != nil {
+		return fmt.Errorf("failed to update the base Caddyfile: %w", err)
+	}
+
 	sh, started, err := h.share.Start(project.Name, creds)
 	if err != nil {
 		return fmt.Errorf("failed to share project: %w", err)

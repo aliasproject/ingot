@@ -284,8 +284,8 @@ repair` if the CA isn't installed.
 failed before printing anything. `ingot logs` shows the error; a missing
 `vendor/` (`composer install`) or `.env`/`APP_KEY` is the usual cause.
 Projects set up by an older ingot get this page after `ingot cert repair` or
-the next `ingot start`; an active share gets it the next time you run
-`ingot share`.
+the next `ingot start`; an active share gets it after `ingot share stop`
+and `ingot share`.
 
 **`ingot install` seems stuck partway through** — just run it again; every
 step is safe to repeat and picks up from where it stopped.
