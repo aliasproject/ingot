@@ -267,6 +267,11 @@ func (h *Handler) handleCertCommand(args []string) error {
 		}
 
 		fmt.Printf("🔒 Removing SSL certificate for project '%s'...\n", proj.Name)
+		// The HTTP vhost written next imports snippets from the base
+		// Caddyfile; rewrite it first in case services predate them.
+		if err := h.services.WriteBaseConfig(); err != nil {
+			return fmt.Errorf("failed to update the base Caddyfile: %w", err)
+		}
 		if err := h.ssl.RemoveProjectSSL(proj.Name); err != nil {
 			return fmt.Errorf("failed to remove SSL certificate: %w", err)
 		}
