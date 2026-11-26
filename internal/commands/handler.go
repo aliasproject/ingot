@@ -267,6 +267,11 @@ func (h *Handler) handleCertCommand(args []string) error {
 		}
 
 		fmt.Printf("🔒 Removing SSL certificate for project '%s'...\n", proj.Name)
+		// The HTTP vhost written next imports snippets from the base
+		// Caddyfile; rewrite it first in case services predate them.
+		if err := h.services.WriteBaseConfig(); err != nil {
+			return fmt.Errorf("failed to update the base Caddyfile: %w", err)
+		}
 		if err := h.ssl.RemoveProjectSSL(proj.Name); err != nil {
 			return fmt.Errorf("failed to remove SSL certificate: %w", err)
 		}
@@ -302,9 +307,9 @@ func (h *Handler) handleCertRepair() error {
 
 	fmt.Printf(utils.Colorize("[RESTARTING]", utils.ColorCyan)+" Repairing SSL/vhost configuration for %d project(s)...\n", len(names))
 
-	// The vhosts import the ingot_wake snippet from the base Caddyfile;
-	// rewrite it first, or a base file from an older ingot would leave Caddy
-	// unable to start on the new vhosts.
+	// The vhosts import the ingot_wake and ingot_empty_500 snippets from the
+	// base Caddyfile; rewrite it first, or a base file from an older ingot
+	// would leave Caddy unable to start on the new vhosts.
 	if err := h.services.WriteBaseConfig(); err != nil {
 		return fmt.Errorf("failed to write the base Caddyfile: %w", err)
 	}

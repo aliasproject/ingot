@@ -466,24 +466,7 @@ func (m *Manager) teardownTunnel(projectName, mode string) {
 }
 
 func (m *Manager) writeVhost(projectName, host, mode, authLine string) error {
-	vhost := fmt.Sprintf(`# ingot share: mode=%s
-http://%s {
-%s    reverse_proxy ingot_php_%s:80 {
-        header_up Host {host}
-        header_up X-Forwarded-Host {host}
-        header_up X-Forwarded-Proto https
-        header_up X-Real-IP {header.Cf-Connecting-Ip}
-        header_up X-Forwarded-For {header.Cf-Connecting-Ip}
-        # Tells the image or app that the request came through a share.
-        # Set here, so visitors can't forge or strip it.
-        header_up X-Ingot-Share 1
-    }
-
-    # Wakes the project if it's asleep. The snippet only handles upstream
-    # failures, so basic_auth's 401 and its challenge pass through.
-    import ingot_wake %s
-}
-`, mode, host, authLine, projectName, projectName)
+	vhost := shareVhost(projectName, host, mode, authLine)
 
 	if err := m.docker.WriteFileToVolume(vhostVolume, projectName+vhostSuffix, []byte(vhost)); err != nil {
 		return fmt.Errorf("failed to write share vhost: %w", err)
@@ -496,6 +479,30 @@ http://%s {
 	}
 
 	return nil
+}
+
+// shareVhost renders the site block writeVhost writes.
+func shareVhost(projectName, host, mode, authLine string) string {
+	return fmt.Sprintf(`# ingot share: mode=%s
+http://%s {
+%s    reverse_proxy ingot_php_%s:80 {
+        header_up Host {host}
+        header_up X-Forwarded-Host {host}
+        header_up X-Forwarded-Proto https
+        header_up X-Real-IP {header.Cf-Connecting-Ip}
+        header_up X-Forwarded-For {header.Cf-Connecting-Ip}
+        # Tells the image or app that the request came through a share.
+        # Set here, so visitors can't forge or strip it.
+        header_up X-Ingot-Share 1
+
+        `+ssl.Empty500Import+`%s
+    }
+
+    # Wakes the project if it's asleep. The snippet only handles upstream
+    # failures, so basic_auth's 401 and its challenge pass through.
+    import ingot_wake %s
+}
+`, mode, host, authLine, projectName, projectName, projectName)
 }
 
 // reloadCaddy applies vhost changes. A stopped Caddy isn't serving anything,

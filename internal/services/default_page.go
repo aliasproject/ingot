@@ -11,3 +11,11 @@ import _ "embed"
 //
 //go:embed default_page.html
 var defaultPage []byte
+
+// empty500Page replaces a project's 500 response when it has no body (see
+// the ingot_empty_500 snippet in baseCaddyfile). Caddy runs it through its
+// templates handler to fill in the project name, and writes it to the
+// ingot_vhosts volume alongside the default page.
+//
+//go:embed empty_500.html
+var empty500Page []byte

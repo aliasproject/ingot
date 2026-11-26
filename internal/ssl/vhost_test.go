@@ -32,3 +32,26 @@ func TestSwapVhostEndingMatchesWholeLine(t *testing.T) {
 		t.Fatal("pre-scale-to-zero vhost was changed")
 	}
 }
+
+// The empty-500 import has to sit inside reverse_proxy (handle_response is
+// one of its subdirectives), and must survive an ingot stop/start round trip.
+func TestCaddyVhostImportsEmpty500InsideReverseProxy(t *testing.T) {
+	vhost := caddyVhost("shop", "shop.test", false)
+	proxy := strings.Index(vhost, "reverse_proxy ingot_php_shop:80 {")
+	imp := strings.Index(vhost, "        "+Empty500Import+"shop\n    }\n")
+	wake := strings.Index(vhost, "    "+wakeImport+"shop\n")
+	if proxy < 0 || imp < proxy || wake < imp {
+		t.Fatalf("empty-500 import missing or outside reverse_proxy:\n%s", vhost)
+	}
+
+	stopped, changed := swapVhostEnding(vhost, "shop", true)
+	if !changed || !strings.Contains(stopped, Empty500Import+"shop\n") {
+		t.Fatalf("stop dropped the empty-500 import:\n%s", stopped)
+	}
+	if back, _ := swapVhostEnding(stopped, "shop", false); back != vhost {
+		t.Fatalf("start didn't restore the vhost:\n%s", back)
+	}
+	if got := caddyVhost("shop", "shop.test", true); got != stopped {
+		t.Fatalf("stopped vhost differs from a swapped one:\n%s", got)
+	}
+}

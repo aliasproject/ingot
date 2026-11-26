@@ -114,6 +114,35 @@ const baseCaddyfile = `{
 	}
 }
 
+# Imported inside each project's reverse_proxy block as
+# "import ingot_empty_500 <project>". When PHP dies before writing any
+# output (a fatal error on a missing vendor/autoload.php, say), the app
+# answers 500 with an empty body and the browser shows only its own bare
+# "HTTP ERROR 500", which looks the same as Ingot itself being broken. This
+# serves a page that says the app errored and where to find the error.
+# Only empty 500s: a 500 with a body (Laravel's or WordPress's error page)
+# is the useful part and passes through untouched. Unrelated to ingot_wake,
+# which handles 502-504 from failing to reach the container at all.
+(ingot_empty_500) {
+	@ingot_empty_500 {
+		status 500
+		header Content-Length 0
+	}
+	handle_response @ingot_empty_500 {
+		vars ingot_project {args[0]}
+		# file_server only answers GET and HEAD; a failed POST gets the page too.
+		method GET
+		root * /etc/caddy/errors
+		rewrite * /empty_500.html
+		header Content-Type "text/html; charset=utf-8"
+		header Cache-Control no-store
+		templates
+		file_server {
+			status 500
+		}
+	}
+}
+
 import /etc/caddy/*.caddyfile
 
 https:// {
@@ -197,16 +226,21 @@ func (m *Manager) Start() error {
 	return nil
 }
 
-// WriteBaseConfig writes the base Caddyfile and the default page into the
-// vhosts volume. The published caddy image's own baked-in Caddyfile only
-// serves a landing page and has no knowledge of per-project vhosts; mounting
-// ingot_vhosts at /etc/caddy replaces that entirely, so this file must exist
-// in the volume (even empty of any project) or Caddy has nothing to run.
+// WriteBaseConfig writes the base Caddyfile, the default page and the empty
+// 500 page into the vhosts volume. The published caddy image's own baked-in
+// Caddyfile only serves a landing page and has no knowledge of per-project
+// vhosts; mounting ingot_vhosts at /etc/caddy replaces that entirely, so this
+// file must exist in the volume (even empty of any project) or Caddy has
+// nothing to run.
 // Rewritten on every start, and before `cert repair` rewrites vhosts, so it
-// can't drift from what those vhosts expect (the ingot_wake snippet).
+// can't drift from what those vhosts expect (the ingot_wake and
+// ingot_empty_500 snippets).
 func (m *Manager) WriteBaseConfig() error {
 	if err := m.docker.WriteFileToVolume("ingot_vhosts", "default/index.html", defaultPage); err != nil {
 		return fmt.Errorf("failed to write default page: %w", err)
+	}
+	if err := m.docker.WriteFileToVolume("ingot_vhosts", "errors/empty_500.html", empty500Page); err != nil {
+		return fmt.Errorf("failed to write the empty 500 page: %w", err)
 	}
 	if err := m.docker.WriteFileToVolume("ingot_vhosts", "Caddyfile", []byte(baseCaddyfile)); err != nil {
 		return fmt.Errorf("failed to write base Caddyfile: %w", err)

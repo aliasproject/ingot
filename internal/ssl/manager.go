@@ -264,10 +264,12 @@ func (m *Manager) updateVhostToHTTP(projectName string) error {
         header_up X-Real-IP {remote}
         header_up X-Forwarded-For {remote}
         header_up X-Forwarded-Proto {scheme}
+
+        `+Empty500Import+`%s
     }
     `+ending+`%s
 }
-`, projectName, projectName, projectName)
+`, projectName, projectName, projectName, projectName)
 
 	// Write HTTP vhost configuration to volume
 	if err := m.docker.WriteFileToVolume("ingot_vhosts", projectName+".caddyfile", []byte(httpVhostConfig)); err != nil {
@@ -511,24 +513,7 @@ func (m *Manager) copyCAToTempFile(tmpPath string) error {
 // handles WebSocket upgrade automatically, so neither needs the manual
 // resolver/upgrade-header wiring the old nginx vhost required.
 func (m *Manager) createCaddyVhost(projectName, domain string, stopped bool) error {
-	ending := wakeImport
-	if stopped {
-		ending = stoppedImport
-	}
-
-	vhostConfig := fmt.Sprintf(`%s {
-    tls /etc/caddy/ssl/%s.crt /etc/caddy/ssl/%s.key
-
-    reverse_proxy ingot_php_%s:80 {
-        header_up Host {host}
-        header_up X-Real-IP {remote}
-        header_up X-Forwarded-For {remote}
-        header_up X-Forwarded-Proto {scheme}
-    }
-
-    `+ending+`%s
-}
-`, domain, domain, domain, projectName, projectName)
+	vhostConfig := caddyVhost(projectName, domain, stopped)
 
 	// Write directly to the ingot_vhosts volume rather than docker exec-ing into
 	// the Caddy container, so vhosts can be written/repaired even when Caddy isn't
@@ -539,12 +524,41 @@ func (m *Manager) createCaddyVhost(projectName, domain string, stopped bool) err
 	return m.docker.WriteFileToVolume("ingot_vhosts", projectName+".caddyfile", []byte(vhostConfig))
 }
 
+// caddyVhost renders the site block createCaddyVhost writes.
+func caddyVhost(projectName, domain string, stopped bool) string {
+	ending := wakeImport
+	if stopped {
+		ending = stoppedImport
+	}
+
+	return fmt.Sprintf(`%s {
+    tls /etc/caddy/ssl/%s.crt /etc/caddy/ssl/%s.key
+
+    reverse_proxy ingot_php_%s:80 {
+        header_up Host {host}
+        header_up X-Real-IP {remote}
+        header_up X-Forwarded-For {remote}
+        header_up X-Forwarded-Proto {scheme}
+
+        `+Empty500Import+`%s
+    }
+
+    `+ending+`%s
+}
+`, domain, domain, domain, projectName, projectName, projectName)
+}
+
 // Each project vhost ends with exactly one of these lines; see the
 // ingot_wake and ingot_stopped snippets in services.baseCaddyfile.
 const (
 	wakeImport    = "import ingot_wake "
 	stoppedImport = "import ingot_stopped "
 )
+
+// Empty500Import goes inside a project's reverse_proxy block, in project and
+// share vhosts alike: it swaps an empty 500 from the app for a page that
+// points at the logs (the ingot_empty_500 snippet in services.baseCaddyfile).
+const Empty500Import = "import ingot_empty_500 "
 
 // SetProjectStopped switches a project's vhost between waking it on a visit
 // (asleep) and answering that it's stopped (stopped with `ingot stop`). The
