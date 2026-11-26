@@ -18,6 +18,8 @@ labels.
 - Shared DNS so `*.test` resolves without touching `/etc/hosts`
 - A branded "No project here" page for any `*.test` domain that isn't running,
   instead of a bare connection error
+- An Ingot error page, pointing at `ingot logs`, when a project's PHP dies
+  with no output, instead of the browser's blank "HTTP ERROR 500"
 - Optional MySQL/PostgreSQL, and Mailpit for email testing
 - Automatic WordPress detection (extra extensions, hardening, live-reload)
 - A choice of prebuilt image, your project's own Dockerfile, or an arbitrary
@@ -277,6 +279,12 @@ on the CLI itself.
 
 **SSL warnings in the browser** — `ingot cert verify`, then `ingot cert
 repair` if the CA isn't installed.
+
+**"The app returned an empty error"** — Ingot reached the project, but PHP
+failed before printing anything. `ingot logs` shows the error; a missing
+`vendor/` (`composer install`) or `.env`/`APP_KEY` is the usual cause.
+Projects set up by an older ingot get this page after `ingot cert repair` or
+the next `ingot start`.
 
 **`ingot install` seems stuck partway through** — just run it again; every
 step is safe to repeat and picks up from where it stopped.

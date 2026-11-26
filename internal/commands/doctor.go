@@ -18,6 +18,7 @@ import (
 	"github.com/aliasproject/ingot/internal/docker"
 	"github.com/aliasproject/ingot/internal/project"
 	"github.com/aliasproject/ingot/internal/services"
+	"github.com/aliasproject/ingot/internal/ssl"
 	"github.com/aliasproject/ingot/internal/utils"
 )
 
@@ -503,6 +504,9 @@ func (h *Handler) doctorProject(r *doctorReport, registryOK bool) {
 			r.info("Stopped with 'ingot stop': visits won't start it until 'ingot start'")
 		case !strings.Contains(vhost, "import ingot_wake"):
 			r.warn("Vhost predates scale to zero, so visiting the project while it's asleep won't start it",
+				"ingot cert repair")
+		case !strings.Contains(vhost, ssl.Empty500Import):
+			r.warn("Vhost predates the empty 500 page, so a PHP error with no output shows a blank browser error",
 				"ingot cert repair")
 		}
 	} else {

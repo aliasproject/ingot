@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <title>The app returned an empty error</title>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <style>
+            * {
+                box-sizing: border-box;
+                padding: 0;
+                margin: 0;
+            }
+
+            body {
+                font-family: sans-serif;
+                font-size: 14px;
+                -webkit-font-smoothing: antialiased;
+                background: #fff;
+                color: #666;
+                min-height: 100vh;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+
+            body::after {
+                content: "";
+                position: fixed;
+                inset: 0;
+                z-index: -1;
+                pointer-events: none;
+                background: radial-gradient(
+                    at top,
+                    rgba(226, 232, 240, 0.5) 60%,
+                    rgba(203, 213, 225, 0.5) 80%
+                );
+            }
+
+            .shell {
+                width: 100%;
+                max-width: 600px;
+                margin: 30px 10px;
+                padding: 30px 20px 60px;
+                text-align: center;
+                background: linear-gradient(
+                    0deg,
+                    rgba(255, 255, 255, 0) 0%,
+                    rgba(255, 255, 255, 1) 50%,
+                    rgba(255, 255, 255, 0) 100%
+                );
+            }
+
+            .ingot-logo {
+                display: block;
+                margin: 0 auto 40px;
+                font: 600 28px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+                letter-spacing: -0.02em;
+                color: #000;
+                text-decoration: none;
+            }
+
+            h1 {
+                font-size: 20px;
+                font-weight: 600;
+                color: #000;
+                margin-bottom: 12px;
+            }
+
+            p {
+                line-height: 1.6;
+                margin-bottom: 8px;
+            }
+
+            b,
+            code {
+                color: #000;
+            }
+
+            code {
+                font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                font-size: 13px;
+                background: rgba(15, 125, 195, 0.1);
+                padding: 2px 6px;
+                border-radius: 3px;
+            }
+
+            h2 {
+                font-size: 14px;
+                font-weight: 600;
+                color: #000;
+                margin: 24px 0 8px;
+            }
+
+            ul {
+                display: inline-block;
+                text-align: left;
+                padding-left: 20px;
+                line-height: 1.6;
+            }
+
+            li {
+                margin-bottom: 4px;
+            }
+
+            @media (prefers-color-scheme: dark) {
+                body {
+                    color: #999;
+                }
+                body::after {
+                    background: radial-gradient(
+                        at top,
+                        rgba(0, 15, 30, 1) 40%,
+                        rgba(0, 0, 0, 1) 80%
+                    );
+                }
+                .shell {
+                    background: linear-gradient(
+                        0deg,
+                        rgba(0, 0, 0, 0) 0%,
+                        rgba(0, 0, 0, 0.15) 50%,
+                        rgba(0, 0, 0, 0) 100%
+                    );
+                }
+                .ingot-logo {
+                    color: #fff;
+                }
+                h1,
+                h2,
+                b,
+                code {
+                    color: #fff;
+                }
+            }
+        </style>
+    </head>
+
+    <body>
+        <div class="shell">
+            <div class="ingot-logo">ingot</div>
+
+            <h1>The app returned an empty error</h1>
+            <p>
+                Ingot reached <b>{{placeholder "http.vars.ingot_project" | html}}</b>,
+                but the app itself answered with a 500 error and no output.
+                DNS, the proxy and HTTPS are working.
+            </p>
+            <p>
+                To see the PHP error, run <code>ingot logs</code> from the
+                project's directory, or
+                <code>docker logs ingot_php_{{placeholder "http.vars.ingot_project" | html}}</code>.
+            </p>
+
+            <h2>Common causes</h2>
+            <ul>
+                <li>
+                    Dependencies aren't installed (no <code>vendor/</code>
+                    directory): run <code>composer install</code>.
+                </li>
+                <li>
+                    No <code>.env</code> file, or no <code>APP_KEY</code> in
+                    it.
+                </li>
+            </ul>
+        </div>
+    </body>
+</html>
