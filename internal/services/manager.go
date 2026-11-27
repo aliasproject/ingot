@@ -564,7 +564,10 @@ services:
   # Mailpit, not MailHog: MailHog only ships amd64 images, which can't
   # run on arm64 Linux hosts without QEMU. Same ports (1025 SMTP, 8025 UI).
   # Accept any SMTP credentials so apps configured with a username and
-  # password for production mail don't get rejected locally.
+  # password for production mail don't get rejected locally. Published on
+  # localhost only (ALI-1242): with any credentials accepted, anyone on the
+  # same network could read every captured email or send into it. Projects
+  # reach it over the internal network by name, not these ports.
   mail:
     container_name: ingot_mail
     image: axllent/mailpit:v1.32
@@ -573,8 +576,8 @@ services:
       - MP_SMTP_AUTH_ACCEPT_ANY=1
       - MP_SMTP_AUTH_ALLOW_INSECURE=1
     ports:
-      - "1025:1025"
-      - "8025:8025"
+      - "127.0.0.1:1025:1025"
+      - "127.0.0.1:8025:8025"
     networks:
       - internal
 `, hostIP)
@@ -590,8 +593,9 @@ services:
     environment:
       - MYSQL_ROOT_PASSWORD=
       - MYSQL_ALLOW_EMPTY_PASSWORD=yes
+    # Localhost only: the root password is empty (ALI-1242).
     ports:
-      - "%s:3306"
+      - "127.0.0.1:%s:3306"
     networks:
       - internal
     volumes:
@@ -607,8 +611,9 @@ services:
       - POSTGRES_USER=ingot
       - POSTGRES_PASSWORD=ingot
       - POSTGRES_DB=ingot
+    # Localhost only: the password is the well-known "ingot" (ALI-1242).
     ports:
-      - "%s:5432"
+      - "127.0.0.1:%s:5432"
     networks:
       - internal
     volumes:
