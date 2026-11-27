@@ -30,6 +30,36 @@ func TestComposeHasNoPlatformPins(t *testing.T) {
 	}
 }
 
+// Mailpit accepts any SMTP credentials and the databases have empty or
+// well-known passwords, so their ports are published on localhost only,
+// never on every interface (ALI-1242).
+func TestComposePublishesMailAndDatabasesOnLocalhostOnly(t *testing.T) {
+	m := &Manager{config: &config.Config{}}
+	if err := m.config.AddDatabase("mysql", "mysql", "8.0", "3307"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.config.AddDatabase("postgresql", "postgresql", "16", "5433"); err != nil {
+		t.Fatal(err)
+	}
+	compose := m.generateComposeConfig("192.0.2.10")
+
+	for _, want := range []string{
+		`- "127.0.0.1:1025:1025"`,
+		`- "127.0.0.1:8025:8025"`,
+		`- "127.0.0.1:3307:3306"`,
+		`- "127.0.0.1:5433:5432"`,
+	} {
+		if !strings.Contains(compose, want) {
+			t.Errorf("compose config is missing %s:\n%s", want, compose)
+		}
+	}
+	for _, unwanted := range []string{`- "1025:1025"`, `- "8025:8025"`, `- "3307:3306"`, `- "5433:5432"`, "192.0.2.10:1025", "192.0.2.10:8025", "192.0.2.10:3307", "192.0.2.10:5433"} {
+		if strings.Contains(compose, unwanted) {
+			t.Errorf("compose config publishes %s beyond localhost:\n%s", unwanted, compose)
+		}
+	}
+}
+
 // Caddy needs a snippet declared before the vhosts that import it, and the
 // page it serves must be written to the path the snippet reads.
 func TestBaseCaddyfileEmpty500Snippet(t *testing.T) {
